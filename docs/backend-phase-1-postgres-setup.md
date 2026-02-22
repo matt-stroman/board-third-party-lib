@@ -99,7 +99,10 @@ If the container fails to start:
 
 If you want me to perform more setup directly with fewer manual steps, these integrations help a lot:
 
-1. **Keep backend/frontend submodules initialized in this repo** so I can modify them directly.
+1. **Initialize backend/frontend submodules after clone** so their files are checked out locally and I can edit code inside them.
+   - Why this matters: a submodule being *defined* in `.gitmodules` is not the same thing as being *initialized* in your working tree.
+   - Run: `git submodule update --init --recursive`
+   - Verify: `git submodule status` should show entries without a leading `-`.
 2. **Store setup scripts in-repo** (e.g., `scripts/dev-up.sh`) so I can edit and improve them incrementally.
 3. **Use `.env.example` files** for each service; I can maintain these while you keep real `.env` private.
 4. **Use CI (GitHub Actions)** for checks; I can adapt code/scripts to pass the same checks locally and in CI.

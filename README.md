@@ -12,6 +12,12 @@ Initialize them after clone:
 git submodule update --init --recursive
 ```
 
+Check that submodules are initialized (no leading `-` in status output):
+
+```bash
+git submodule status
+```
+
 ## Docs
 
 - Technology recommendation: `docs/technology-fit-recommendation.md`
