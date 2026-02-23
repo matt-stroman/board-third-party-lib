@@ -4,3 +4,6 @@
 [submodule "backend"]
 	path = backend
 	url = https://github.com/matt-stroman/board_third-party-lib_backend.git
+[submodule "api"]
+	path = api
+	url = https://github.com/matt-stroman/board-third-party-lib_api.git

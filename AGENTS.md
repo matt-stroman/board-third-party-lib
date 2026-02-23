@@ -33,10 +33,25 @@ Board has also not yet provided a monetization solution for third party develope
 
 ## Repository Structure
 
-This repository houses both the backend and frontend for the Board Third Party Library as git submodules:
+This repository houses the API, backend, and frontend for the Board Third Party Library as git submodules:
 
-Backend path: /backend
-Frontend path /frontend
+### API
+
+Path: `api/`
+
+A [Postman](https://learning.postman.com/docs/design-apis/overview) API-first design using the Postman API Builder, collections, and environments.
+
+### Backend
+
+Path: `backend/`
+
+An ASP.NET Core Web API using PostgresSQL.
+
+### Frontend
+
+Path `frontend/`
+
+TBD; will most likely be a .NET Maui application in order to provide C# consistency and cross-platform compatibility.
 
 ## Technologies and Architecture
 
@@ -51,4 +66,5 @@ See the [docs folder](docs/).
 - Never commit to the `main` branch. Always work via PRs.
 - In docs, when providing links, do so with the `[]()` link syntax so that they are proper clickable links. Also add any anchors and such so that users can easily navigate through the documents. Favor doc usability, and make them look nice.
 - Keep repository concerns separated: project-wide docs/scripts/config belong in the root repository, while backend-only/frontend-only docs/scripts/config belong in their respective submodule folders (e.g. `backend/docs`, `frontend/docs`, submodule-local compose/config files).
+- Stage changes in logical sets, and provide a concise descriptive note/summary for each staged set (and corresponding commit) so reviewers can clearly understand what changed and why.
 - You may update `AGENTS.md` files (root and submodules) as needed to improve project context, clarify standards, and preserve useful working guidance as the project evolves.
