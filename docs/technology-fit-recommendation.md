@@ -112,6 +112,11 @@ Single deployable backend with internal modules, exposed through an API-first in
 
 Each module owns its schema segment and public interfaces.
 
+Identity/access direction note (future, not MVP):
+
+- Plan for an API key capability for external application integrations and partner/server-side usage (project/app identification, quotas, revocation, usage tracking).
+- Do not use API keys as the primary protection for end-user `/identity/me/*` operations; those should require end-user bearer authentication (and later app/client authorization on top, if needed).
+
 ### API-first UI principle (developer + player)
 
 - Treat all business operations as backend application services exposed via API.
