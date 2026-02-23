@@ -67,4 +67,5 @@ See the [docs folder](docs/).
 - In docs, when providing links, do so with the `[]()` link syntax so that they are proper clickable links. Also add any anchors and such so that users can easily navigate through the documents. Favor doc usability, and make them look nice.
 - Keep repository concerns separated: project-wide docs/scripts/config belong in the root repository, while backend-only/frontend-only docs/scripts/config belong in their respective submodule folders (e.g. `backend/docs`, `frontend/docs`, submodule-local compose/config files).
 - Stage changes in logical sets, and provide a concise descriptive note/summary for each staged set (and corresponding commit) so reviewers can clearly understand what changed and why.
+- When providing a commit summary, do not include filename/line references from the changelist; instead provide a markdown-friendly commit subject line and a markdown-friendly commit description.
 - You may update `AGENTS.md` files (root and submodules) as needed to improve project context, clarify standards, and preserve useful working guidance as the project evolves.
