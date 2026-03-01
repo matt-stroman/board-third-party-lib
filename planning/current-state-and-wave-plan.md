@@ -83,6 +83,16 @@ Organizations and memberships.
 
 Titles and versioned metadata.
 
+Implemented Wave 3 behavior includes:
+
+- storefront-style public routing via `/catalog/{organizationSlug}/{titleSlug}`
+- separate lifecycle and visibility controls
+- `draft`, `testing`, `published`, and `archived` lifecycle states
+- `private`, `unlisted`, and `listed` visibility states
+- mutable draft metadata that becomes frozen history once the title leaves draft
+
+See [`backend/docs/title-catalog-schema.md`](../backend/docs/title-catalog-schema.md) for the maintained Wave 3 schema and lifecycle reference.
+
 ### Wave 4 (next)
 
 Media, releases, and APK artifacts.

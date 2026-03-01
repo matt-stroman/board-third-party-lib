@@ -104,6 +104,12 @@ python ./scripts/dev.py api-lint
 python ./scripts/dev.py api-test
 ```
 
+Important for live local runs:
+
+- the committed local environment file contains placeholder values for authenticated and persistence-backed success paths such as `accessToken`, `organizationId`, `organizationSlug`, `titleId`, and `titleSlug`
+- the collection skips those success-path assertions until you replace the placeholders with real local values
+- health and unauthenticated/public catalog coverage still runs with the committed template as-is
+
 If the backend is not already running, start it automatically for the test run:
 
 ```bash
@@ -193,6 +199,12 @@ API workflow commands also expose workflow-specific overrides. Common examples:
 - `api-lint`
 - `api-mock --mode shared|ephemeral`
 - `api-sync --skip-mock`
+
+For live API contract execution, the default environment template is:
+
+- `api/postman/environments/board-third-party-library_local.postman_environment.json`
+
+Populate the placeholder auth and resource IDs in a private copy when you want full authenticated create/update coverage against a local backend.
 
 ## Notes
 

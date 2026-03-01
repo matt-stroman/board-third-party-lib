@@ -845,7 +845,10 @@ def run_api_contract_tests(
 
     Args:
         config: CLI configuration containing API asset paths.
-        environment_path: Environment template path to use for the run.
+        environment_path: Environment template path to use for the run. The
+            committed local template intentionally ships with placeholder auth
+            and resource identifiers, so authenticated success-path requests are
+            skipped until a developer supplies real local values.
         base_url: Runtime base URL override.
         contract_execution_mode: `live` or `mock`.
         report_path: JUnit report output path.
