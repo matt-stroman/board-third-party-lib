@@ -58,11 +58,22 @@ TBD; will most likely be a .NET Maui application in order to provide C# consiste
 - Developer-facing documentation lives in the [docs folder](docs/).
 - Planning, recommendations, and implementation-tracking artifacts live in the [planning folder](planning/).
 
+## Current Architecture Alignment
+
+- Treat the current implemented surface as a Keycloak-backed API foundation, not as completed relational Wave 1 schema work.
+- Keep the maintained API contract aligned only to behavior that is implemented now or being actively delivered in the same change set.
+- Keycloak owns authentication lifecycle concerns such as self-registration, password reset, email verification, account linking, and brokered SSO providers.
+- The application database should own only application data and local projections keyed to Keycloak subject identifiers.
+- New externally visible features must follow API-first and TDD order: contract/examples/tests first, implementation second.
+
 ## Coding Standard
 
 - Prefer abstractions and interfaces for modular implementations that can easily be swapped out with dependency injection.
 - Unit tests must be written to public API/interface only. Never make assumptions based on implementation details or members/types that are not accessible.
 - New code will not be accepted without corresponding unit tests.
+- New API endpoints must start with OpenAPI and Postman mock/contract coverage before backend implementation begins.
+- New backend behavior must start with failing unit/integration tests before production code is added.
+- Avoid leaving future-only endpoints in the maintained contract or contract test collection when the backend implementation and tests are not present yet.
 - All non-private members and types must be clearly documented with applicable and appropriate tagging (e.g. XML docs for C#, Javadoc for JS, etc.)
 - Never commit to the `main` branch. Always work via PRs.
 - In docs, when providing links, do so with the `[]()` link syntax so that they are proper clickable links. Also add any anchors and such so that users can easily navigate through the documents. Favor doc usability, and make them look nice.

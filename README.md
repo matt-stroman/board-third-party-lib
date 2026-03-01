@@ -2,6 +2,11 @@
 
 A solution for third party developers for the Board ecosystem to use to register and share their games with the public.
 
+Current implementation status:
+
+- the maintained API/backend surface is a Keycloak-backed identity and health foundation
+- EF Core migrations and application-owned persistence waves are planned next, not already implemented
+
 ## Table of Contents
 
 - [Getting started in this repository](#getting-started-in-this-repository)
@@ -44,6 +49,7 @@ git submodule status
 ## Planning
 
 - Project-wide planning and recommendation artifacts:
+  - Current architecture and wave alignment: [`planning/current-state-and-wave-plan.md`](planning/current-state-and-wave-plan.md)
   - Technology recommendation: [`planning/technology-fit-recommendation.md`](planning/technology-fit-recommendation.md)
 - Backend planning artifacts:
   - Backend schema implementation plan: [`backend/planning/mvp-schema-implementation-plan.md`](backend/planning/mvp-schema-implementation-plan.md)
