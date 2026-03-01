@@ -5,7 +5,7 @@ This script is the primary developer automation entry point for:
 - bootstrap/setup (`bootstrap`)
 - dependency lifecycle (`up`, `down`, `status`)
 - backend testing (`test`)
-- API contract testing and Postman workspace operations
+- API contract linting/testing and Postman workspace operations
   (`api-login`, `api-lint`, `api-test`, `api-mock`, `api-sync`)
   with optional backend auto-start for local contract runs
 - environment diagnostics (`doctor`)
@@ -785,29 +785,38 @@ def login_postman_cli(config: DevConfig, *, postman_api_key: str | None) -> None
     run_command(["postman", "login", "--with-api-key", api_key], cwd=api_root)
 
 
-def run_api_spec_lint(config: DevConfig, *, postman_api_key: str | None = None) -> None:
-    """Lint the Git-tracked OpenAPI specification with Postman CLI.
+def run_api_spec_lint(config: DevConfig) -> None:
+    """Lint the Git-tracked OpenAPI specification with Redocly CLI.
 
     Args:
         config: CLI configuration containing API asset paths.
-        postman_api_key: Optional Postman API key used to authenticate before linting.
 
     Returns:
         None.
 
     Raises:
-        DevCliError: If Postman CLI is unavailable or linting fails.
+        DevCliError: If `npx` is unavailable or linting fails.
     """
 
-    assert_command_available("postman")
+    assert_command_available("npx")
     spec_path = config.repo_root / config.api_spec
 
-    if postman_api_key:
-        login_postman_cli(config, postman_api_key=postman_api_key)
-
-    write_step("Linting API specification with Postman CLI")
+    write_step("Linting API specification with Redocly CLI")
     result = run_command(
-        ["postman", "spec", "lint", str(spec_path), "--fail-severity", "error"],
+        [
+            "npx",
+            "@redocly/cli",
+            "lint",
+            str(spec_path),
+            "--skip-rule",
+            "info-license",
+            "--skip-rule",
+            "no-server-example.com",
+            "--skip-rule",
+            "operation-4xx-response",
+            "--skip-rule",
+            "operation-2xx-response",
+        ],
         cwd=config.repo_root,
         check=False,
         capture_output=True,
@@ -817,7 +826,7 @@ def run_api_spec_lint(config: DevConfig, *, postman_api_key: str | None = None) 
             part.strip() for part in (result.stdout or "", result.stderr or "") if part and part.strip()
         )
         raise DevCliError(
-            "Postman spec lint failed."
+            "Redocly OpenAPI lint failed."
             + (f"\n{combined_output}" if combined_output else "")
         )
 
@@ -831,7 +840,6 @@ def run_api_contract_tests(
     report_path: Path,
     lint_spec: bool,
     start_backend: bool,
-    postman_api_key: str | None,
 ) -> None:
     """Run the Git-tracked Postman contract test collection with Postman CLI.
 
@@ -843,8 +851,6 @@ def run_api_contract_tests(
         report_path: JUnit report output path.
         lint_spec: Whether to lint the spec before running the collection.
         start_backend: Whether to start the local backend automatically for the run.
-        postman_api_key: Optional Postman API key used to authenticate before spec linting.
-
     Returns:
         None.
 
@@ -861,7 +867,7 @@ def run_api_contract_tests(
         raise DevCliError(f"Postman environment not found: {environment_path}")
 
     if lint_spec:
-        run_api_spec_lint(config, postman_api_key=postman_api_key)
+        run_api_spec_lint(config)
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1101,7 +1107,7 @@ def run_doctor(config: DevConfig) -> None:
         print("  python ./scripts/dev.py up --dependencies-only")
         print("  python ./scripts/dev.py up --skip-restore")
         print("  python ./scripts/dev.py api-test --start-backend --skip-lint")
-        print("  python ./scripts/dev.py api-lint --postman-api-key <your-postman-api-key>")
+        print("  python ./scripts/dev.py api-lint")
 
 
 def ensure_postgres_running_for_db_ops(config: DevConfig) -> None:
@@ -1390,15 +1396,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "api-lint",
         parents=[shared],
-        help="Lint the Git-tracked OpenAPI specification with Postman CLI",
+        help="Lint the Git-tracked OpenAPI specification with Redocly CLI",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    api_lint = subparsers.choices["api-lint"]
-    api_lint.add_argument(
-        "--postman-api-key",
-        "-PostmanApiKey",
-        default=None,
-        help="Postman API key override for authenticated spec lint (defaults to POSTMAN_API_KEY env var or current CLI login)",
     )
 
     api_test = subparsers.add_parser(
@@ -1435,13 +1434,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-lint",
         "-SkipLint",
         action="store_true",
-        help="Skip Postman CLI spec lint before running the collection",
-    )
-    api_test.add_argument(
-        "--postman-api-key",
-        "-PostmanApiKey",
-        default=None,
-        help="Postman API key override for authenticated spec lint (defaults to POSTMAN_API_KEY env var or current CLI login)",
+        help="Skip OpenAPI spec lint before running the collection",
     )
     api_test.add_argument(
         "--start-backend",
@@ -1590,7 +1583,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "api-login":
             login_postman_cli(config, postman_api_key=args.postman_api_key)
         elif args.command == "api-lint":
-            run_api_spec_lint(config, postman_api_key=args.postman_api_key)
+            run_api_spec_lint(config)
         elif args.command == "api-test":
             run_api_contract_tests(
                 config,
@@ -1600,7 +1593,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 report_path=(config.repo_root / args.report_path).resolve(),
                 lint_spec=not args.skip_lint,
                 start_backend=args.start_backend,
-                postman_api_key=args.postman_api_key,
             )
         elif args.command == "api-mock":
             provision_api_mock(
