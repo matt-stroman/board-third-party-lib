@@ -1,0 +1,52 @@
+name: Root Validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: root-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  validate:
+    name: Validate Root Automation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: ./backend/global.json
+
+      - name: Show submodule status
+        run: git submodule status --recursive
+
+      - name: Smoke-check root developer CLI
+        run: |
+          python --version
+          python ./scripts/dev.py --help
+
+      - name: Run root backend unit test entrypoint
+        run: python ./scripts/dev.py test --skip-integration
