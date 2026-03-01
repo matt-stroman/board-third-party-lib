@@ -28,6 +28,10 @@ The developer CLI orchestrates common local development tasks from the repositor
 - start/stop/reuse local PostgreSQL and Keycloak via Docker Compose
 - run the backend API
 - run backend tests
+- authenticate Postman CLI when workspace sync is needed
+- lint the Git-tracked OpenAPI specification
+- run API contract tests
+- provision/sync Postman mocks and workspace artifacts
 - run environment diagnostics
 - create/restore local PostgreSQL SQL backups
 
@@ -46,6 +50,12 @@ python ./scripts/dev.py <command> [options]
 ```bash
 python ./scripts/dev.py bootstrap
 python ./scripts/dev.py up
+```
+
+If you want to run API contract tests from the same terminal session without manually keeping the backend open, use:
+
+```bash
+python ./scripts/dev.py api-test --start-backend --skip-lint
 ```
 
 ### Start only local dependencies (no API)
@@ -72,6 +82,56 @@ python ./scripts/dev.py status
 ```bash
 python ./scripts/dev.py test
 python ./scripts/dev.py test --skip-integration
+```
+
+### Authenticate Postman CLI for workspace operations
+
+```bash
+python ./scripts/dev.py api-login --postman-api-key <your-postman-api-key>
+```
+
+If you prefer not to keep a separate login step, `api-lint`, `api-mock`, and `api-sync` also accept `--postman-api-key` directly.
+
+### Lint the API contract
+
+```bash
+python ./scripts/dev.py api-lint --postman-api-key <your-postman-api-key>
+```
+
+### Run API contract tests against the local backend
+
+```bash
+python ./scripts/dev.py api-test
+```
+
+If the backend is not already running, start it automatically for the test run:
+
+```bash
+python ./scripts/dev.py api-test --start-backend --skip-lint
+```
+
+### Run API contract tests against a mock URL
+
+```bash
+python ./scripts/dev.py api-test --base-url https://example.mock.pstmn.io --contract-execution-mode mock
+```
+
+### Provision a shared Postman mock from the Git-tracked contract collection
+
+```bash
+python ./scripts/dev.py api-mock --mode shared --postman-api-key <your-postman-api-key>
+```
+
+### Push Native Git API artifacts to Postman Cloud
+
+```bash
+python ./scripts/dev.py api-sync --postman-api-key <your-postman-api-key>
+```
+
+### Push Native Git artifacts without reprovisioning the shared mock
+
+```bash
+python ./scripts/dev.py api-sync --skip-mock --postman-api-key <your-postman-api-key>
 ```
 
 ## Database Backup and Restore
@@ -125,8 +185,18 @@ Example (non-default DB name):
 python ./scripts/dev.py status --postgres-database my_local_db
 ```
 
+API workflow commands also expose workflow-specific overrides. Common examples:
+
+- `api-test --environment <path>`
+- `api-test --base-url <url>`
+- `api-test --contract-execution-mode live|mock`
+- `api-mock --mode shared|ephemeral`
+- `api-sync --skip-mock`
+
 ## Notes
 
 - The `up`, `down`, and `status` commands manage the local PostgreSQL and Keycloak containers together.
 - The `down` command uses `docker compose down` and does **not** remove named volumes. Your local Postgres data persists unless you explicitly remove volumes.
 - VS Code tasks in this repo call the Python CLI directly.
+- The supported developer entry point for this repository is `python ./scripts/dev.py ...`; API-local helper scripts under `api/scripts/` are implementation details for CI and the root CLI.
+- Tool executables are resolved from each developer's `PATH`; the CLI does not assume fixed install directories for `dotnet`, `node`, `postman`, `docker`, or other required tools.

@@ -74,6 +74,7 @@ TBD; will most likely be a .NET Maui application in order to provide C# consiste
 - New API endpoints must start with OpenAPI and Postman mock/contract coverage before backend implementation begins.
 - New backend behavior must start with failing unit/integration tests before production code is added.
 - Avoid leaving future-only endpoints in the maintained contract or contract test collection when the backend implementation and tests are not present yet.
+- Root developer automation must be exposed through `python ./scripts/dev.py ...`; do not require contributors to use ad hoc submodule-local entrypoints for routine setup, test, or sync workflows.
 - All non-private members and types must be clearly documented with applicable and appropriate tagging (e.g. XML docs for C#, Javadoc for JS, etc.)
 - Never commit to the `main` branch. Always work via PRs.
 - In docs, when providing links, do so with the `[]()` link syntax so that they are proper clickable links. Also add any anchors and such so that users can easily navigate through the documents. Favor doc usability, and make them look nice.

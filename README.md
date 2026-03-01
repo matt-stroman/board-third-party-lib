@@ -73,6 +73,8 @@ Examples:
 python ./scripts/dev.py doctor
 python ./scripts/dev.py bootstrap
 python ./scripts/dev.py up
+python ./scripts/dev.py api-lint
+python ./scripts/dev.py api-test --start-backend
 python ./scripts/dev.py test
 python ./scripts/dev.py down
 ```

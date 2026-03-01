@@ -5,6 +5,9 @@ This script is the primary developer automation entry point for:
 - bootstrap/setup (`bootstrap`)
 - dependency lifecycle (`up`, `down`, `status`)
 - backend testing (`test`)
+- API contract testing and Postman workspace operations
+  (`api-login`, `api-lint`, `api-test`, `api-mock`, `api-sync`)
+  with optional backend auto-start for local contract runs
 - environment diagnostics (`doctor`)
 - local PostgreSQL backup/restore helpers (`db-backup`, `db-restore`)
 
@@ -16,12 +19,14 @@ from __future__ import annotations
 
 import argparse
 import http.client
+import os
 import shlex
 import shutil
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -43,6 +48,13 @@ class DevConfig:
         keycloak_ready_url: URL used to verify local Keycloak readiness.
         backend_project: Relative path to the backend API project file.
         backend_solution: Relative path to the backend solution file.
+        api_root: Relative path to the API submodule root.
+        api_spec: Relative path to the OpenAPI specification file.
+        api_contract_collection: Relative path to the Git-tracked contract test collection.
+        api_local_environment: Relative path to the local Postman environment template.
+        api_mock_environment: Relative path to the mock Postman environment template.
+        api_mock_admin_environment: Relative path to the mock admin environment template.
+        api_mock_provision_script: Relative path to the Node.js mock provisioning helper.
     """
 
     repo_root: Path
@@ -54,6 +66,13 @@ class DevConfig:
     keycloak_ready_url: str
     backend_project: str
     backend_solution: str
+    api_root: str
+    api_spec: str
+    api_contract_collection: str
+    api_local_environment: str
+    api_mock_environment: str
+    api_mock_admin_environment: str
+    api_mock_provision_script: str
 
 
 class DevCliError(RuntimeError):
@@ -96,6 +115,7 @@ def run_command(
     stdin=None,
     stdout=None,
     stderr=None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a subprocess command with consistent error handling.
 
@@ -108,6 +128,7 @@ def run_command(
         stdin: Optional stdin stream or data source for the subprocess.
         stdout: Optional stdout destination override.
         stderr: Optional stderr destination override.
+        env: Optional environment variables for the subprocess.
 
     Returns:
         The completed subprocess result.
@@ -116,8 +137,15 @@ def run_command(
         DevCliError: If ``check`` is True and the command exits non-zero.
     """
 
+    resolved_cmd = list(cmd)
+    executable = resolved_cmd[0]
+    if os.path.dirname(executable) == "":
+        resolved_executable = shutil.which(executable)
+        if resolved_executable:
+            resolved_cmd[0] = resolved_executable
+
     result = subprocess.run(
-        list(cmd),
+        resolved_cmd,
         cwd=str(cwd) if cwd else None,
         check=False,
         capture_output=capture_output,
@@ -125,9 +153,10 @@ def run_command(
         stdin=stdin,
         stdout=stdout,
         stderr=stderr,
+        env=env,
     )
     if check and result.returncode != 0:
-        raise DevCliError(f"Command failed ({result.returncode}): {quote_cmd(list(cmd))}")
+        raise DevCliError(f"Command failed ({result.returncode}): {quote_cmd(resolved_cmd)}")
     return result
 
 
@@ -298,6 +327,129 @@ def wait_for_http_ready(*, url: str, description: str, timeout_seconds: int = 90
         time.sleep(2)
 
     raise DevCliError(f"Timed out waiting for {description} readiness at {url}.")
+
+
+def is_local_http_url(url: str) -> bool:
+    """Return whether the URL targets a local loopback host.
+
+    Args:
+        url: URL to inspect.
+
+    Returns:
+        ``True`` when the URL host is local, else ``False``.
+    """
+
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def probe_http_url(url: str, *, timeout_seconds: int = 5) -> tuple[bool, str | None]:
+    """Check whether an HTTP endpoint is reachable.
+
+    Args:
+        url: URL to probe.
+        timeout_seconds: Request timeout in seconds.
+
+    Returns:
+        Tuple of ``(reachable, detail)`` where ``detail`` is a failure reason when unreachable.
+    """
+
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_seconds):
+            return True, None
+    except urllib.error.HTTPError:
+        return True, None
+    except (http.client.RemoteDisconnected, urllib.error.URLError, TimeoutError) as ex:
+        return False, str(ex)
+
+
+def start_backend_api_process(config: DevConfig) -> tuple[subprocess.Popen, Path]:
+    """Start the backend API as a background process for temporary workflows.
+
+    Args:
+        config: CLI configuration containing backend project paths.
+
+    Returns:
+        Tuple of the launched process and the log file path.
+
+    Raises:
+        DevCliError: If ``dotnet`` is unavailable or the project file is missing.
+    """
+
+    assert_command_available("dotnet")
+    backend_root = config.repo_root / "backend"
+    project_path = config.repo_root / config.backend_project
+    if not project_path.exists():
+        raise DevCliError(f"Backend project not found: {project_path}")
+
+    logs_dir = config.repo_root / ".dev-cli-logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / "backend-api.log"
+    log_handle = log_path.open("w", encoding="utf-8")
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+    process = subprocess.Popen(
+        ["dotnet", "run", "--project", str(project_path), "--no-restore"],
+        cwd=str(backend_root),
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+        creationflags=creationflags,
+    )
+    log_handle.close()
+    return process, log_path
+
+
+def stop_background_process(process: subprocess.Popen) -> None:
+    """Terminate a background process started by the developer CLI.
+
+    Args:
+        process: Process to stop.
+
+    Returns:
+        None.
+    """
+
+    if process.poll() is not None:
+        return
+
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def ensure_api_base_url_reachable(base_url: str) -> None:
+    """Ensure the target API base URL is reachable before contract execution.
+
+    Args:
+        base_url: Runtime base URL used by the contract collection.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If the base URL cannot be reached.
+    """
+
+    reachable, detail = probe_http_url(base_url)
+    if reachable:
+        return
+
+    detail_suffix = f" ({detail})" if detail else ""
+    if is_local_http_url(base_url):
+        raise DevCliError(
+            f"API base URL is not reachable: {base_url}{detail_suffix}\n"
+            "Start the backend in another terminal with 'python ./scripts/dev.py up --skip-restore' "
+            "or rerun this command with '--start-backend'."
+        )
+
+    raise DevCliError(f"API base URL is not reachable: {base_url}{detail_suffix}")
 
 
 def ensure_submodules(config: DevConfig) -> None:
@@ -561,6 +713,302 @@ def run_tests(config: DevConfig, *, run_integration: bool) -> None:
         print("Skipping integration tests.")
 
 
+def build_subprocess_env(*, extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Build a subprocess environment, optionally overlaying additional variables.
+
+    Args:
+        extra: Optional environment variable overrides/additions.
+
+    Returns:
+        Environment dictionary suitable for subprocess execution.
+    """
+
+    env = os.environ.copy()
+    if extra:
+        env.update({key: value for key, value in extra.items() if value is not None})
+    return env
+
+
+def get_api_root(config: DevConfig) -> Path:
+    """Resolve the API submodule root path.
+
+    Args:
+        config: CLI configuration containing the API root path.
+
+    Returns:
+        The resolved API submodule root path.
+    """
+
+    return config.repo_root / config.api_root
+
+
+def resolve_postman_api_key(postman_api_key: str | None) -> str:
+    """Resolve a Postman API key from the argument or environment.
+
+    Args:
+        postman_api_key: Explicit CLI override value, if provided.
+
+    Returns:
+        A non-empty Postman API key string.
+
+    Raises:
+        DevCliError: If no API key is available.
+    """
+
+    api_key = (postman_api_key or os.environ.get("POSTMAN_API_KEY", "")).strip()
+    if not api_key:
+        raise DevCliError(
+            "POSTMAN_API_KEY is required. Pass --postman-api-key or set the POSTMAN_API_KEY environment variable."
+        )
+    return api_key
+
+
+def login_postman_cli(config: DevConfig, *, postman_api_key: str | None) -> None:
+    """Authenticate Postman CLI from the root developer entry point.
+
+    Args:
+        config: CLI configuration containing API asset paths.
+        postman_api_key: Optional Postman API key override.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If Postman CLI is unavailable or no API key is available.
+    """
+
+    assert_command_available("postman")
+    api_root = get_api_root(config)
+    api_key = resolve_postman_api_key(postman_api_key)
+
+    write_step("Authenticating Postman CLI with API key")
+    run_command(["postman", "login", "--with-api-key", api_key], cwd=api_root)
+
+
+def run_api_spec_lint(config: DevConfig, *, postman_api_key: str | None = None) -> None:
+    """Lint the Git-tracked OpenAPI specification with Postman CLI.
+
+    Args:
+        config: CLI configuration containing API asset paths.
+        postman_api_key: Optional Postman API key used to authenticate before linting.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If Postman CLI is unavailable or linting fails.
+    """
+
+    assert_command_available("postman")
+    spec_path = config.repo_root / config.api_spec
+
+    if postman_api_key:
+        login_postman_cli(config, postman_api_key=postman_api_key)
+
+    write_step("Linting API specification with Postman CLI")
+    result = run_command(
+        ["postman", "spec", "lint", str(spec_path), "--fail-severity", "error"],
+        cwd=config.repo_root,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        combined_output = "\n".join(
+            part.strip() for part in (result.stdout or "", result.stderr or "") if part and part.strip()
+        )
+        raise DevCliError(
+            "Postman spec lint failed."
+            + (f"\n{combined_output}" if combined_output else "")
+        )
+
+
+def run_api_contract_tests(
+    config: DevConfig,
+    *,
+    environment_path: Path,
+    base_url: str,
+    contract_execution_mode: str,
+    report_path: Path,
+    lint_spec: bool,
+    start_backend: bool,
+    postman_api_key: str | None,
+) -> None:
+    """Run the Git-tracked Postman contract test collection with Postman CLI.
+
+    Args:
+        config: CLI configuration containing API asset paths.
+        environment_path: Environment template path to use for the run.
+        base_url: Runtime base URL override.
+        contract_execution_mode: `live` or `mock`.
+        report_path: JUnit report output path.
+        lint_spec: Whether to lint the spec before running the collection.
+        start_backend: Whether to start the local backend automatically for the run.
+        postman_api_key: Optional Postman API key used to authenticate before spec linting.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If required files or tools are unavailable or the contract run fails.
+    """
+
+    assert_command_available("postman")
+    api_root = get_api_root(config)
+    collection_path = config.repo_root / config.api_contract_collection
+    if not collection_path.exists():
+        raise DevCliError(f"Postman contract collection not found: {collection_path}")
+    if not environment_path.exists():
+        raise DevCliError(f"Postman environment not found: {environment_path}")
+
+    if lint_spec:
+        run_api_spec_lint(config, postman_api_key=postman_api_key)
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    backend_process: subprocess.Popen | None = None
+    if start_backend:
+        if not is_local_http_url(base_url):
+            raise DevCliError("--start-backend can only be used with a local base URL.")
+        start_dependencies(config)
+        write_step("Starting backend API in the background for contract tests")
+        backend_process, backend_log_path = start_backend_api_process(config)
+        try:
+            wait_for_http_ready(url=base_url, description="backend API", timeout_seconds=60)
+        except DevCliError as ex:
+            stop_background_process(backend_process)
+            log_excerpt = ""
+            if backend_log_path.exists():
+                log_excerpt = backend_log_path.read_text(encoding="utf-8", errors="replace").strip()
+            raise DevCliError(
+                f"{ex}\nBackend startup log: {backend_log_path}"
+                + (f"\n{log_excerpt}" if log_excerpt else "")
+            ) from ex
+    else:
+        ensure_api_base_url_reachable(base_url)
+
+    write_step("Running API contract tests with Postman CLI")
+    try:
+        run_command(
+            [
+                "postman",
+                "collection",
+                "run",
+                str(collection_path),
+                "--environment",
+                str(environment_path),
+                "--env-var",
+                f"baseUrl={base_url}",
+                "--env-var",
+                f"contractExecutionMode={contract_execution_mode}",
+                "--bail",
+                "failure",
+                "--reporters",
+                "cli,junit",
+                "--reporter-junit-export",
+                str(report_path),
+                "--working-dir",
+                str(api_root),
+            ],
+            cwd=api_root,
+        )
+    finally:
+        if backend_process is not None:
+            write_step("Stopping background backend API")
+            stop_background_process(backend_process)
+
+
+def provision_api_mock(
+    config: DevConfig,
+    *,
+    admin_environment_path: Path,
+    mode: str,
+    postman_api_key: str | None,
+) -> None:
+    """Provision a Postman mock server from the Git-tracked contract collection.
+
+    Args:
+        config: CLI configuration containing API asset paths.
+        admin_environment_path: Mock admin environment template path.
+        mode: Provisioning mode (`shared` or `ephemeral`).
+        postman_api_key: Postman API key to pass to the provisioning script.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If Node.js is unavailable, required files are missing, or the script fails.
+    """
+
+    assert_command_available("node")
+    api_root = get_api_root(config)
+    collection_path = config.repo_root / config.api_contract_collection
+    script_path = config.repo_root / config.api_mock_provision_script
+
+    if not script_path.exists():
+        raise DevCliError(f"Mock provisioning script not found: {script_path}")
+    if not admin_environment_path.exists():
+        raise DevCliError(f"Mock admin environment not found: {admin_environment_path}")
+    if not collection_path.exists():
+        raise DevCliError(f"Postman contract collection not found: {collection_path}")
+
+    api_key = resolve_postman_api_key(postman_api_key)
+
+    write_step(f"Provisioning Postman mock ({mode}) from the Git-tracked contract collection")
+    run_command(
+        [
+            "node",
+            str(script_path),
+            "--admin-env",
+            str(admin_environment_path),
+            "--collection",
+            str(collection_path),
+            "--mode",
+            mode,
+        ],
+        cwd=api_root,
+        env=build_subprocess_env(extra={"POSTMAN_API_KEY": api_key}),
+    )
+
+
+def sync_api_workspace(config: DevConfig, *, postman_api_key: str | None, reprovision_shared_mock: bool) -> None:
+    """Push Native Git artifacts to Postman Cloud and optionally reprovision the shared mock.
+
+    Args:
+        config: CLI configuration containing API asset paths.
+        postman_api_key: Optional Postman API key used for login and provisioning.
+        reprovision_shared_mock: Whether to reprovision the shared mock after the workspace push.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If required tools are unavailable or sync/provisioning fails.
+    """
+
+    assert_command_available("postman")
+    api_root = get_api_root(config)
+    api_key = (postman_api_key or os.environ.get("POSTMAN_API_KEY", "")).strip() or None
+
+    if api_key:
+        login_postman_cli(config, postman_api_key=api_key)
+    else:
+        print("No POSTMAN_API_KEY provided; using the current Postman CLI login session if available.")
+
+    write_step("Preparing Postman Native Git workspace metadata")
+    run_command(["postman", "workspace", "prepare"], cwd=api_root)
+
+    write_step("Pushing Native Git workspace artifacts to Postman Cloud")
+    run_command(["postman", "workspace", "push", "--yes"], cwd=api_root)
+
+    if reprovision_shared_mock:
+        provision_api_mock(
+            config,
+            admin_environment_path=config.repo_root / config.api_mock_admin_environment,
+            mode="shared",
+            postman_api_key=api_key,
+        )
+
+
 def run_doctor(config: DevConfig) -> None:
     """Run environment diagnostics for local tooling and repo state.
 
@@ -572,6 +1020,7 @@ def run_doctor(config: DevConfig) -> None:
     """
 
     issues: list[str] = []
+    optional_issues: list[str] = []
 
     write_step("Environment checks")
     for cmd in ("git", "docker", "dotnet", "python"):
@@ -580,6 +1029,15 @@ def run_doctor(config: DevConfig) -> None:
         else:
             print(f"Missing command: {cmd}")
             issues.append(f"Required command missing from PATH: {cmd}")
+
+    for cmd in ("node", "postman"):
+        if shutil.which(cmd):
+            print(f"Found (API workflow): {cmd}")
+        else:
+            print(f"Missing optional API workflow command: {cmd}")
+            optional_issues.append(
+                f"Optional API workflow command missing from PATH: {cmd}"
+            )
 
     backend_path = config.repo_root / "backend"
     frontend_path = config.repo_root / "frontend"
@@ -627,13 +1085,23 @@ def run_doctor(config: DevConfig) -> None:
         print()
         print("Suggested next steps:")
         print("  python ./scripts/dev.py bootstrap")
-        print("  python ./scripts/dev.py up")
+        print("  python ./scripts/dev.py up --dependencies-only")
+        print("  python ./scripts/dev.py up --skip-restore")
+        print("  python ./scripts/dev.py api-test --start-backend --skip-lint")
     else:
         print("PASS (no issues detected)")
+        if optional_issues:
+            print()
+            print("Optional API workflow notes:")
+            for idx, issue in enumerate(optional_issues, start=1):
+                print(f"{idx}. {issue}")
         print()
         print("Suggested next steps:")
         print("  python ./scripts/dev.py bootstrap")
-        print("  python ./scripts/dev.py up")
+        print("  python ./scripts/dev.py up --dependencies-only")
+        print("  python ./scripts/dev.py up --skip-restore")
+        print("  python ./scripts/dev.py api-test --start-backend --skip-lint")
+        print("  python ./scripts/dev.py api-lint --postman-api-key <your-postman-api-key>")
 
 
 def ensure_postgres_running_for_db_ops(config: DevConfig) -> None:
@@ -906,6 +1374,125 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
+    api_login = subparsers.add_parser(
+        "api-login",
+        parents=[shared],
+        help="Authenticate Postman CLI with a Postman API key",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    api_login.add_argument(
+        "--postman-api-key",
+        "-PostmanApiKey",
+        default=None,
+        help="Postman API key override (defaults to POSTMAN_API_KEY env var)",
+    )
+
+    subparsers.add_parser(
+        "api-lint",
+        parents=[shared],
+        help="Lint the Git-tracked OpenAPI specification with Postman CLI",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    api_lint = subparsers.choices["api-lint"]
+    api_lint.add_argument(
+        "--postman-api-key",
+        "-PostmanApiKey",
+        default=None,
+        help="Postman API key override for authenticated spec lint (defaults to POSTMAN_API_KEY env var or current CLI login)",
+    )
+
+    api_test = subparsers.add_parser(
+        "api-test",
+        parents=[shared],
+        help="Run Git-tracked API contract tests with Postman CLI",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    api_test.add_argument(
+        "--environment",
+        default="api/postman/environments/board-third-party-library_local.postman_environment.json",
+        help="Postman environment file path",
+    )
+    api_test.add_argument(
+        "--base-url",
+        "-BaseUrl",
+        default="http://localhost:5085",
+        help="Base URL injected into the collection run",
+    )
+    api_test.add_argument(
+        "--contract-execution-mode",
+        "-ContractExecutionMode",
+        choices=("live", "mock"),
+        default="live",
+        help="Contract execution mode variable value",
+    )
+    api_test.add_argument(
+        "--report-path",
+        "-ReportPath",
+        default="api/postman-cli-reports/local-contract-tests.xml",
+        help="JUnit report output path",
+    )
+    api_test.add_argument(
+        "--skip-lint",
+        "-SkipLint",
+        action="store_true",
+        help="Skip Postman CLI spec lint before running the collection",
+    )
+    api_test.add_argument(
+        "--postman-api-key",
+        "-PostmanApiKey",
+        default=None,
+        help="Postman API key override for authenticated spec lint (defaults to POSTMAN_API_KEY env var or current CLI login)",
+    )
+    api_test.add_argument(
+        "--start-backend",
+        "-StartBackend",
+        action="store_true",
+        help="Start local dependencies and the backend API automatically for the collection run",
+    )
+
+    api_mock = subparsers.add_parser(
+        "api-mock",
+        parents=[shared],
+        help="Provision a Postman mock from the Git-tracked contract collection",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    api_mock.add_argument(
+        "--mode",
+        choices=("shared", "ephemeral"),
+        default="shared",
+        help="Mock provisioning mode",
+    )
+    api_mock.add_argument(
+        "--admin-environment",
+        default="api/postman/environments/board-third-party-library_mock-admin.postman_environment.json",
+        help="Mock admin environment file path",
+    )
+    api_mock.add_argument(
+        "--postman-api-key",
+        "-PostmanApiKey",
+        default=None,
+        help="Postman API key override (defaults to POSTMAN_API_KEY env var)",
+    )
+
+    api_sync = subparsers.add_parser(
+        "api-sync",
+        parents=[shared],
+        help="Push Native Git API artifacts to Postman Cloud and optionally reprovision the shared mock",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    api_sync.add_argument(
+        "--postman-api-key",
+        "-PostmanApiKey",
+        default=None,
+        help="Postman API key override (defaults to POSTMAN_API_KEY env var or existing CLI login)",
+    )
+    api_sync.add_argument(
+        "--skip-mock",
+        "-SkipMock",
+        action="store_true",
+        help="Skip shared mock reprovisioning after workspace push",
+    )
+
     backup = subparsers.add_parser(
         "db-backup",
         parents=[shared],
@@ -951,6 +1538,13 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
         keycloak_ready_url=args.keycloak_ready_url,
         backend_project=args.backend_project,
         backend_solution=args.backend_solution,
+        api_root="api",
+        api_spec="api/postman/specs/board-third-party-library-api.v1.openapi.yaml",
+        api_contract_collection="api/postman/collections/board-third-party-library-api.contract-tests.postman_collection.json",
+        api_local_environment="api/postman/environments/board-third-party-library_local.postman_environment.json",
+        api_mock_environment="api/postman/environments/board-third-party-library_mock.postman_environment.json",
+        api_mock_admin_environment="api/postman/environments/board-third-party-library_mock-admin.postman_environment.json",
+        api_mock_provision_script="api/scripts/postman-provision-mock.mjs",
     )
 
 
@@ -993,6 +1587,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_tests(config, run_integration=not args.skip_integration)
         elif args.command == "doctor":
             run_doctor(config)
+        elif args.command == "api-login":
+            login_postman_cli(config, postman_api_key=args.postman_api_key)
+        elif args.command == "api-lint":
+            run_api_spec_lint(config, postman_api_key=args.postman_api_key)
+        elif args.command == "api-test":
+            run_api_contract_tests(
+                config,
+                environment_path=(config.repo_root / args.environment).resolve(),
+                base_url=args.base_url,
+                contract_execution_mode=args.contract_execution_mode,
+                report_path=(config.repo_root / args.report_path).resolve(),
+                lint_spec=not args.skip_lint,
+                start_backend=args.start_backend,
+                postman_api_key=args.postman_api_key,
+            )
+        elif args.command == "api-mock":
+            provision_api_mock(
+                config,
+                admin_environment_path=(config.repo_root / args.admin_environment).resolve(),
+                mode=args.mode,
+                postman_api_key=args.postman_api_key,
+            )
+        elif args.command == "api-sync":
+            sync_api_workspace(
+                config,
+                postman_api_key=args.postman_api_key,
+                reprovision_shared_mock=not args.skip_mock,
+            )
         elif args.command == "db-backup":
             db_backup(config, output_path=args.output)
         elif args.command == "db-restore":
