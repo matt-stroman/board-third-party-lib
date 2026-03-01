@@ -80,6 +80,7 @@ TBD; will most likely be a .NET Maui application in order to provide C# consiste
 - Start work on a branch, commit the completed change set, push it, and open or update a PR.
 - Before considering work complete, wait for the relevant GitHub workflow runs, inspect their results, and fix any failures on the branch.
 - Merge the PR to `main` only after the required checks are passing.
+- After the PR is merged, delete the merged branch locally and remotely, prune stale remote refs, and leave each affected repository checked out to a clean `main` that tracks `origin/main`.
 - In docs, when providing links, do so with the `[]()` link syntax so that they are proper clickable links. Also add any anchors and such so that users can easily navigate through the documents. Favor doc usability, and make them look nice.
 - Keep repository concerns separated: project-wide docs/planning/scripts/config belong in the root repository, while backend-only/frontend-only docs/planning/scripts/config belong in their respective submodule folders (e.g. `backend/docs`, `backend/planning`, `frontend/docs`, submodule-local compose/config files).
 - Stage changes in logical sets, and provide a concise descriptive note/summary for each staged set (and corresponding commit) so reviewers can clearly understand what changed and why.
