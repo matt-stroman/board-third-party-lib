@@ -28,8 +28,8 @@ The developer CLI orchestrates common local development tasks from the repositor
 - start/stop/reuse local PostgreSQL and Keycloak via Docker Compose
 - run the backend API
 - run backend tests
-- authenticate Postman CLI when workspace sync is needed
-- lint the Git-tracked OpenAPI specification
+- authenticate Postman CLI when Postman workspace or mock operations are needed
+- lint the Git-tracked OpenAPI specification with Redocly CLI
 - run API contract tests
 - provision/sync Postman mocks and workspace artifacts
 - run environment diagnostics
@@ -84,18 +84,18 @@ python ./scripts/dev.py test
 python ./scripts/dev.py test --skip-integration
 ```
 
-### Authenticate Postman CLI for workspace operations
+### Authenticate Postman CLI for workspace or mock operations
 
 ```bash
 python ./scripts/dev.py api-login --postman-api-key <your-postman-api-key>
 ```
 
-If you prefer not to keep a separate login step, `api-lint`, `api-mock`, and `api-sync` also accept `--postman-api-key` directly.
+If you prefer not to keep a separate login step, `api-mock` and `api-sync` also accept `--postman-api-key` directly.
 
 ### Lint the API contract
 
 ```bash
-python ./scripts/dev.py api-lint --postman-api-key <your-postman-api-key>
+python ./scripts/dev.py api-lint
 ```
 
 ### Run API contract tests against the local backend
@@ -190,6 +190,7 @@ API workflow commands also expose workflow-specific overrides. Common examples:
 - `api-test --environment <path>`
 - `api-test --base-url <url>`
 - `api-test --contract-execution-mode live|mock`
+- `api-lint`
 - `api-mock --mode shared|ephemeral`
 - `api-sync --skip-mock`
 
@@ -199,4 +200,4 @@ API workflow commands also expose workflow-specific overrides. Common examples:
 - The `down` command uses `docker compose down` and does **not** remove named volumes. Your local Postgres data persists unless you explicitly remove volumes.
 - VS Code tasks in this repo call the Python CLI directly.
 - The supported developer entry point for this repository is `python ./scripts/dev.py ...`; API-local helper scripts under `api/scripts/` are implementation details for CI and the root CLI.
-- Tool executables are resolved from each developer's `PATH`; the CLI does not assume fixed install directories for `dotnet`, `node`, `postman`, `docker`, or other required tools.
+- Tool executables are resolved from each developer's `PATH`; the CLI does not assume fixed install directories for `dotnet`, `node`, `npx`, `postman`, `docker`, or other required tools.

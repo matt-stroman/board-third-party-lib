@@ -4,9 +4,9 @@ A solution for third party developers for the Board ecosystem to use to register
 
 Current implementation status:
 
-- the maintained API/backend surface now includes the Keycloak-backed identity and health foundation plus Wave 1 persistence
-- EF Core migrations, the local `users` projection, and Board profile linkage are implemented
-- the next planned implementation wave is organizations and memberships
+- the maintained API/backend surface includes the Keycloak-backed identity and health foundation plus Wave 1 persistence and Wave 2 organizations/memberships
+- EF Core migrations, the local `users` projection, Board profile linkage, organizations, and organization memberships are implemented
+- the next planned implementation wave is Wave 3 titles and versioned metadata
 
 ## Table of Contents
 
@@ -49,12 +49,11 @@ git submodule status
 
 ## Planning
 
-- Project-wide planning and recommendation artifacts:
+- Current planning and implementation alignment:
   - Current architecture and wave alignment: [`planning/current-state-and-wave-plan.md`](planning/current-state-and-wave-plan.md)
-  - Technology recommendation: [`planning/technology-fit-recommendation.md`](planning/technology-fit-recommendation.md)
-- Backend planning artifacts:
   - Backend schema implementation plan: [`backend/planning/mvp-schema-implementation-plan.md`](backend/planning/mvp-schema-implementation-plan.md)
-- API planning artifacts:
+  - Technology recommendation: [`planning/technology-fit-recommendation.md`](planning/technology-fit-recommendation.md)
+- Historical planning context:
   - Initial data schema plan: [`api/planning/initial-data-schema-plan.md`](api/planning/initial-data-schema-plan.md)
 
 ## Developer Automation

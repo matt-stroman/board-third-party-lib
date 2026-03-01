@@ -60,8 +60,8 @@ TBD; will most likely be a .NET Maui application in order to provide C# consiste
 
 ## Current Architecture Alignment
 
-- Treat the current implemented surface as a Keycloak-backed API foundation, not as completed relational Wave 1 schema work.
-- Keep the maintained API contract aligned only to behavior that is implemented now or being actively delivered in the same change set.
+- Treat the current implemented surface as a Keycloak-backed API foundation plus completed Wave 1 and Wave 2 relational work.
+- Keep the maintained API contract aligned only to behavior that is implemented or being actively delivered in the same change set.
 - Keycloak owns authentication lifecycle concerns such as self-registration, password reset, email verification, account linking, and brokered SSO providers.
 - The application database should own only application data and local projections keyed to Keycloak subject identifiers.
 - New externally visible features must follow API-first and TDD order: contract/examples/tests first, implementation second.
@@ -77,6 +77,9 @@ TBD; will most likely be a .NET Maui application in order to provide C# consiste
 - Root developer automation must be exposed through `python ./scripts/dev.py ...`; do not require contributors to use ad hoc submodule-local entrypoints for routine setup, test, or sync workflows.
 - All non-private members and types must be clearly documented with applicable and appropriate tagging (e.g. XML docs for C#, Javadoc for JS, etc.)
 - Never commit to the `main` branch. Always work via PRs.
+- Start work on a branch, commit the completed change set, push it, and open or update a PR.
+- Before considering work complete, wait for the relevant GitHub workflow runs, inspect their results, and fix any failures on the branch.
+- Merge the PR to `main` only after the required checks are passing.
 - In docs, when providing links, do so with the `[]()` link syntax so that they are proper clickable links. Also add any anchors and such so that users can easily navigate through the documents. Favor doc usability, and make them look nice.
 - Keep repository concerns separated: project-wide docs/planning/scripts/config belong in the root repository, while backend-only/frontend-only docs/planning/scripts/config belong in their respective submodule folders (e.g. `backend/docs`, `backend/planning`, `frontend/docs`, submodule-local compose/config files).
 - Stage changes in logical sets, and provide a concise descriptive note/summary for each staged set (and corresponding commit) so reviewers can clearly understand what changed and why.
