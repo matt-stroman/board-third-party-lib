@@ -115,7 +115,9 @@ See [`backend/docs/title-catalog-schema.md`](../backend/docs/title-catalog-schem
 
 Publisher-agnostic external acquisition bindings.
 
-This wave should let titles point at external store/publisher acquisition pages without requiring provider-specific checkout or install behavior.
+This wave should add a platform-managed `supported_publishers` registry plus organization/title acquisition bindings so titles can point at external store/publisher acquisition pages without requiring provider-specific checkout or install behavior.
+
+It should also allow a custom publisher/store fallback when no supported registry entry fits, while keeping shared custom-publisher management endpoints out of scope.
 
 ### Wave 6
 
