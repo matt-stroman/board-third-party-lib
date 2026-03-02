@@ -20,7 +20,7 @@ It exists to make one distinction explicit:
 - Wave 2 organizations and memberships are now implemented
 - Wave 3 titles and versioned metadata are now implemented
 - Wave 4 media, releases, and APK artifact metadata are now implemented
-- later integration, commerce, and install-delivery waves still remain planned work
+- later acquisition, commerce, and install-delivery waves still remain planned work
 
 Use this document when deciding whether something belongs in the maintained current contract or in a future wave plan.
 
@@ -51,7 +51,9 @@ As of March 2, 2026, the maintained implemented surface is:
 
 Not yet implemented:
 
-- external integration connections/bindings, commerce, and Board install-delivery flows
+- Wave 5 external acquisition bindings
+- Wave 6 unified commerce and entitlements
+- Wave 7 Board install-delivery flows
 - configured Keycloak brokers for social/game platform SSO in the local realm import
 
 Because those later items are not implemented, they should not remain in the maintained current API contract unless they are being actively delivered in the same wave with tests first.
@@ -111,7 +113,21 @@ See [`backend/docs/title-catalog-schema.md`](../backend/docs/title-catalog-schem
 
 ### Wave 5
 
-External integration connections and bindings for content hosting, with commerce and install-delivery still deferred unless explicitly pulled forward.
+Publisher-agnostic external acquisition bindings.
+
+This wave should let titles point at external store/publisher acquisition pages without requiring provider-specific checkout or install behavior.
+
+### Wave 6
+
+Unified commerce and entitlements.
+
+This wave should model purchase state and ownership inside the library rather than relying only on external acquisition links.
+
+### Wave 7
+
+Board-native download and install delivery.
+
+This wave should make artifact delivery and installation a first-party Board experience after commerce/entitlement rules are defined.
 
 ## Schema And Identity Boundary
 
