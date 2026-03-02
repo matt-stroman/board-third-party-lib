@@ -27,6 +27,7 @@ The developer CLI orchestrates common local development tasks from the repositor
 - bootstrap submodules and restore backend dependencies
 - start/stop/reuse local PostgreSQL and Keycloak via Docker Compose
 - run the backend API
+- validate backend XML documentation coverage
 - run backend tests
 - authenticate Postman CLI when Postman workspace or mock operations are needed
 - lint the Git-tracked OpenAPI specification with Redocly CLI
@@ -83,6 +84,20 @@ python ./scripts/dev.py status
 python ./scripts/dev.py test
 python ./scripts/dev.py test --skip-integration
 ```
+
+### Run the main repository verification workflow
+
+```bash
+python ./scripts/dev.py verify --skip-contract-tests
+```
+
+Include the maintained contract tests in the same pass:
+
+```bash
+python ./scripts/dev.py verify --start-backend
+```
+
+This workflow validates backend XML docs, runs backend tests, lints the OpenAPI spec, and optionally executes the Postman contract suite.
 
 ### Authenticate Postman CLI for workspace or mock operations
 

@@ -60,7 +60,7 @@ Because those later items are not implemented, they should not remain in the mai
 
 ## Wave Realignment
 
-To avoid contract drift, the project should treat the current backend as a completed foundation plus Wave 1 baseline and start the next schema work from a clean boundary.
+To avoid contract drift, the project should treat the current backend as a completed foundation plus Waves 1 through 5 baseline and start the next schema work from the Wave 6 boundary.
 
 ### Foundation (implemented)
 

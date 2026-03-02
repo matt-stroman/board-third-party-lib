@@ -4,6 +4,7 @@
 This script is the primary developer automation entry point for:
 - bootstrap/setup (`bootstrap`)
 - dependency lifecycle (`up`, `down`, `status`)
+- repository verification (`verify`)
 - backend testing (`test`)
 - API contract linting/testing and Postman workspace operations
   (`api-login`, `api-lint`, `api-test`, `api-mock`, `api-sync`)
@@ -713,6 +714,36 @@ def run_tests(config: DevConfig, *, run_integration: bool) -> None:
         print("Skipping integration tests.")
 
 
+def validate_backend_xml_docs(config: DevConfig) -> None:
+    """Build the backend API project with XML documentation warnings enabled.
+
+    Args:
+        config: CLI configuration containing backend project paths.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If ``dotnet`` is unavailable or the documentation validation build fails.
+    """
+
+    assert_command_available("dotnet")
+    backend_root = config.repo_root / "backend"
+    project_path = config.repo_root / config.backend_project
+
+    write_step("Validating backend XML documentation coverage")
+    run_command(
+        [
+            "dotnet",
+            "build",
+            str(project_path),
+            "--no-restore",
+            "/warnaserror:CS1573,CS1591",
+        ],
+        cwd=backend_root,
+    )
+
+
 def build_subprocess_env(*, extra: dict[str, str] | None = None) -> dict[str, str]:
     """Build a subprocess environment, optionally overlaying additional variables.
 
@@ -1113,6 +1144,52 @@ def run_doctor(config: DevConfig) -> None:
         print("  python ./scripts/dev.py api-lint")
 
 
+def run_verify(
+    config: DevConfig,
+    *,
+    run_integration: bool,
+    run_contract_tests: bool,
+    environment_path: Path,
+    base_url: str,
+    contract_execution_mode: str,
+    report_path: Path,
+    start_backend: bool,
+) -> None:
+    """Run the main developer verification workflow from the repository root.
+
+    Args:
+        config: CLI configuration containing backend and API paths.
+        run_integration: Whether to include integration tests.
+        run_contract_tests: Whether to include API contract tests.
+        environment_path: Environment file path for contract runs.
+        base_url: Base URL used for contract execution.
+        contract_execution_mode: Contract execution mode (`live` or `mock`).
+        report_path: JUnit report output path for Postman CLI.
+        start_backend: Whether to auto-start the backend for contract runs.
+
+    Returns:
+        None.
+    """
+
+    validate_backend_xml_docs(config)
+    run_tests(config, run_integration=run_integration)
+    run_api_spec_lint(config)
+
+    if not run_contract_tests:
+        print("Skipping API contract tests.")
+        return
+
+    run_api_contract_tests(
+        config,
+        environment_path=environment_path,
+        base_url=base_url,
+        contract_execution_mode=contract_execution_mode,
+        report_path=report_path,
+        lint_spec=False,
+        start_backend=start_backend,
+    )
+
+
 def ensure_postgres_running_for_db_ops(config: DevConfig) -> None:
     """Ensure PostgreSQL is running before DB helper commands execute.
 
@@ -1376,6 +1453,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     test.add_argument("--skip-integration", "-SkipIntegration", action="store_true", help="Skip integration tests")
 
+    verify = subparsers.add_parser(
+        "verify",
+        parents=[shared],
+        help="Run backend XML doc validation, backend tests, API lint, and optional contract tests",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    verify.add_argument("--skip-integration", "-SkipIntegration", action="store_true", help="Skip integration tests")
+    verify.add_argument(
+        "--skip-contract-tests",
+        "-SkipContractTests",
+        action="store_true",
+        help="Skip API contract tests after backend/test/spec validation",
+    )
+    verify.add_argument(
+        "--environment",
+        default="api/postman/environments/board-third-party-library_local.postman_environment.json",
+        help="Postman environment file path used when contract tests run",
+    )
+    verify.add_argument(
+        "--base-url",
+        "-BaseUrl",
+        default="http://localhost:5085",
+        help="Base URL injected into contract test runs",
+    )
+    verify.add_argument(
+        "--contract-execution-mode",
+        "-ContractExecutionMode",
+        choices=("live", "mock"),
+        default="live",
+        help="Contract execution mode variable value for Postman runs",
+    )
+    verify.add_argument(
+        "--report-path",
+        "-ReportPath",
+        default="api/postman-cli-reports/verify-contract-tests.xml",
+        help="JUnit report output path for Postman runs",
+    )
+    verify.add_argument(
+        "--start-backend",
+        "-StartBackend",
+        action="store_true",
+        help="Start local dependencies and the backend automatically for contract tests",
+    )
+
     subparsers.add_parser(
         "doctor",
         parents=[shared],
@@ -1581,6 +1702,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             show_status(config)
         elif args.command == "test":
             run_tests(config, run_integration=not args.skip_integration)
+        elif args.command == "verify":
+            run_verify(
+                config,
+                run_integration=not args.skip_integration,
+                run_contract_tests=not args.skip_contract_tests,
+                environment_path=(config.repo_root / args.environment).resolve(),
+                base_url=args.base_url,
+                contract_execution_mode=args.contract_execution_mode,
+                report_path=(config.repo_root / args.report_path).resolve(),
+                start_backend=args.start_backend,
+            )
         elif args.command == "doctor":
             run_doctor(config)
         elif args.command == "api-login":
