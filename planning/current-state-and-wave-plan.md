@@ -11,7 +11,7 @@
 
 ## Purpose
 
-This document records the currently aligned architecture and delivery plan before the next implementation wave begins.
+This document records the currently aligned architecture and delivery plan after Wave 4 implementation.
 
 It exists to make one distinction explicit:
 
@@ -19,7 +19,8 @@ It exists to make one distinction explicit:
 - Wave 1 application-owned identity persistence is implemented
 - Wave 2 organizations and memberships are now implemented
 - Wave 3 titles and versioned metadata are now implemented
-- later relational media/release/integration waves still remain planned work
+- Wave 4 media, releases, and APK artifact metadata are now implemented
+- later integration, commerce, and install-delivery waves still remain planned work
 
 Use this document when deciding whether something belongs in the maintained current contract or in a future wave plan.
 
@@ -36,21 +37,21 @@ The project remains aligned to these decisions:
 
 ## Current Implemented State
 
-As of March 1, 2026, the maintained implemented surface is:
+As of March 2, 2026, the maintained implemented surface is:
 
 - health endpoints: `/`, `/health/live`, `/health/ready`
 - Keycloak-backed identity endpoints: `/identity/roles`, `/identity/auth/config`, `/identity/auth/login`, `/identity/auth/callback`, `/identity/me`
 - Board profile endpoints: `GET|PUT|DELETE /identity/me/board-profile`
 - organization endpoints: public `GET /organizations`, public `GET /organizations/{slug}`, authenticated `POST|PUT|DELETE /organizations...`, and authenticated membership management endpoints
-- catalog endpoints: public `GET /catalog`, public `GET /catalog/{organizationSlug}/{titleSlug}`, and authenticated title/metadata management endpoints
-- EF Core persistence with migrations for `users`, `user_board_profiles`, `organizations`, `organization_memberships`, `titles`, and `title_metadata_versions`
+- catalog endpoints: public `GET /catalog`, public `GET /catalog/{organizationSlug}/{titleSlug}`, authenticated title/metadata management endpoints, and authenticated media/release/artifact management endpoints
+- EF Core persistence with migrations for `users`, `user_board_profiles`, `organizations`, `organization_memberships`, `titles`, `title_metadata_versions`, `title_media_assets`, `title_releases`, and `release_artifacts`
 - Postman mock-first contract assets for the above endpoints
 - backend endpoint unit tests plus Postgres-backed integration coverage for persistence and constraints
 - developer automation for local bootstrap, Docker dependencies, and test execution
 
 Not yet implemented:
 
-- media assets, releases, integrations, commerce, and install-delivery schema
+- external integration connections/bindings, commerce, and Board install-delivery flows
 - configured Keycloak brokers for social/game platform SSO in the local realm import
 
 Because those later items are not implemented, they should not remain in the maintained current API contract unless they are being actively delivered in the same wave with tests first.
@@ -93,13 +94,24 @@ Implemented Wave 3 behavior includes:
 
 See [`backend/docs/title-catalog-schema.md`](../backend/docs/title-catalog-schema.md) for the maintained Wave 3 schema and lifecycle reference.
 
-### Wave 4 (next)
+### Wave 4 (implemented)
 
-Media, releases, and APK artifacts.
+Status: implemented on March 2, 2026.
+
+Implemented Wave 4 behavior includes:
+
+- fixed media slots for `card`, `hero`, and `logo`
+- semver releases bound to specific metadata snapshots
+- explicit `titles.current_release_id` activation/rollback support
+- APK artifact metadata stored without delivery URLs
+- public catalog detail exposure for media assets and current release summary
+- developer endpoints for media, release, publish/activate/withdraw, and artifact management
+
+See [`backend/docs/title-catalog-schema.md`](../backend/docs/title-catalog-schema.md) for the maintained Wave 3 and Wave 4 title/catalog reference.
 
 ### Wave 5
 
-External integration connections and bindings for content hosting, with commerce still deferred unless explicitly pulled forward.
+External integration connections and bindings for content hosting, with commerce and install-delivery still deferred unless explicitly pulled forward.
 
 ## Schema And Identity Boundary
 

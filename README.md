@@ -4,9 +4,9 @@ A solution for third party developers for the Board ecosystem to use to register
 
 Current implementation status:
 
-- the maintained API/backend surface includes the Keycloak-backed identity and health foundation plus Wave 1 persistence, Wave 2 organizations/memberships, and Wave 3 titles/versioned metadata
-- EF Core migrations for `users`, `user_board_profiles`, `organizations`, `organization_memberships`, `titles`, and `title_metadata_versions` are implemented
-- the next planned implementation wave is Wave 4 media, releases, and APK artifacts
+- the maintained API/backend surface includes the Keycloak-backed identity and health foundation plus Wave 1 persistence, Wave 2 organizations/memberships, Wave 3 titles/versioned metadata, and Wave 4 media/releases/APK artifact metadata
+- EF Core migrations for `users`, `user_board_profiles`, `organizations`, `organization_memberships`, `titles`, `title_metadata_versions`, `title_media_assets`, `title_releases`, and `release_artifacts` are implemented
+- the next planned implementation wave is Wave 5 external integration connections/bindings
 
 ## Table of Contents
 
@@ -46,7 +46,7 @@ git submodule status
   - Backend phase 1 (PostgreSQL local setup): [`backend/docs/backend-phase-1-postgres-setup.md`](backend/docs/backend-phase-1-postgres-setup.md)
   - New developer setup / quick start (current backend MVP): [`backend/docs/new-developer-setup.md`](backend/docs/new-developer-setup.md)
   - Auth and data ownership boundary: [`backend/docs/auth-data-ownership.md`](backend/docs/auth-data-ownership.md)
-  - Wave 3 title/catalog schema and lifecycle model: [`backend/docs/title-catalog-schema.md`](backend/docs/title-catalog-schema.md)
+  - Current title/catalog schema, lifecycle, media, and release model: [`backend/docs/title-catalog-schema.md`](backend/docs/title-catalog-schema.md)
 
 ## Planning
 
