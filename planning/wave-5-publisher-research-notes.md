@@ -18,6 +18,8 @@ That means:
 
 This keeps Wave 5 compatible with platforms that only expose a normal store page URL, while still leaving room for deeper integrations later.
 
+It should also include a platform-managed supported publisher registry so known providers can be presented consistently while still allowing a custom fallback for unsupported or self-hosted publishers.
+
 ## Platform Findings
 
 ### itch.io
@@ -76,10 +78,12 @@ Design implication:
 
 Wave 5 should prefer these capabilities:
 
+- a platform-managed `supported_publishers` registry for standardized publisher identity and display metadata
 - organization-level reusable external publisher/store connection records
+- optional connection linkage to a supported publisher registry row
+- custom publisher details on the connection itself when no supported publisher fits
 - title-level acquisition binding records
 - required external acquisition URL per active binding
-- optional provider code and label for UI display
 - optional provider-specific `jsonb` configuration without requiring it
 
 Wave 5 should avoid these assumptions:
@@ -88,6 +92,7 @@ Wave 5 should avoid these assumptions:
 - first-party entitlement issuance
 - first-party download hosting
 - first-party installation orchestration on Board
+- public API creation of new shared supported-publisher registry entries
 
 Those belong in later waves once the commerce and Board-device models are better defined.
 
