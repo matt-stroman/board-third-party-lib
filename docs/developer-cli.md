@@ -98,6 +98,7 @@ python ./scripts/dev.py verify --start-backend
 ```
 
 This workflow validates backend XML docs, runs backend tests, lints the OpenAPI spec, and optionally executes the Postman contract suite.
+It restores the backend solution up front, so it works from a fresh clone without a separate manual `dotnet restore`.
 
 ### Authenticate Postman CLI for workspace or mock operations
 
