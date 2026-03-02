@@ -676,12 +676,13 @@ def run_backend_api(config: DevConfig, *, do_restore: bool) -> None:
     run_command(["dotnet", "run", "--project", str(project_path)], cwd=backend_root, check=True)
 
 
-def run_tests(config: DevConfig, *, run_integration: bool) -> None:
+def run_tests(config: DevConfig, *, run_integration: bool, restore: bool = True) -> None:
     """Run backend unit tests and optionally integration tests.
 
     Args:
         config: CLI configuration containing backend test project paths.
         run_integration: Whether to run integration tests after unit tests.
+        restore: Whether each ``dotnet test`` invocation should restore packages first.
 
     Returns:
         None.
@@ -697,17 +698,18 @@ def run_tests(config: DevConfig, *, run_integration: bool) -> None:
         config.repo_root
         / "backend/tests/Board.ThirdPartyLibrary.Api.IntegrationTests/Board.ThirdPartyLibrary.Api.IntegrationTests.csproj"
     )
+    restore_args = [] if restore else ["--no-restore"]
 
     write_step("Running backend unit tests")
     run_command(
-        ["dotnet", "test", str(unit_project), "--filter", "Category!=Integration"],
+        ["dotnet", "test", str(unit_project), *restore_args, "--filter", "Category!=Integration"],
         cwd=backend_root,
     )
 
     if run_integration:
         write_step("Running backend integration tests (Docker/Testcontainers required)")
         run_command(
-            ["dotnet", "test", str(integration_project), "--filter", "Category=Integration"],
+            ["dotnet", "test", str(integration_project), *restore_args, "--filter", "Category=Integration"],
             cwd=backend_root,
         )
     else:
@@ -1171,8 +1173,9 @@ def run_verify(
         None.
     """
 
+    restore_backend(config)
     validate_backend_xml_docs(config)
-    run_tests(config, run_integration=run_integration)
+    run_tests(config, run_integration=run_integration, restore=False)
     run_api_spec_lint(config)
 
     if not run_contract_tests:
