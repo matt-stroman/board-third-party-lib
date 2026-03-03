@@ -75,6 +75,7 @@ TBD; will most likely be a .NET Maui application in order to provide C# consiste
 - New backend behavior must start with failing unit/integration tests before production code is added.
 - Avoid leaving future-only endpoints in the maintained contract or contract test collection when the backend implementation and tests are not present yet.
 - Root developer automation must be exposed through `python ./scripts/dev.py ...`; do not require contributors to use ad hoc submodule-local entrypoints for routine setup, test, or sync workflows.
+- Avoid divergent code paths for different environments whenever reasonably possible. Prefer configuring local and other non-production environments to emulate production behavior closely. Add environment-specific code only when there is no practical way to align the environment itself with production expectations.
 - All non-private members and types must be clearly documented with applicable and appropriate tagging (e.g. XML docs for C#, Javadoc for JS, etc.)
 - Never commit to the `main` branch. Always work via PRs.
 - Start work on a branch, commit the completed change set, push it, and open or update a PR.
