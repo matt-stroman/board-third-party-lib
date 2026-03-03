@@ -25,6 +25,9 @@ This document provides quick guidance, common workflows, and project-specific no
 The developer CLI orchestrates common local development tasks from the repository root:
 
 - bootstrap submodules and restore backend dependencies
+- run the full local web stack from the repository root
+- inspect/stop the locally launched root web stack
+- run the frontend web UI from the repository root
 - start/stop/reuse local PostgreSQL and Keycloak via Docker Compose
 - run the backend API
 - validate backend XML documentation coverage
@@ -50,7 +53,15 @@ python ./scripts/dev.py <command> [options]
 
 ```bash
 python ./scripts/dev.py bootstrap
-python ./scripts/dev.py up
+python ./scripts/dev.py web --watch-css
+```
+
+This starts Docker dependencies, the backend API, the frontend web app, and then opens the frontend URL in your default browser. On Windows, if Docker Desktop is installed but not already running, the CLI will try to launch it automatically and wait for the daemon before continuing. The root workflow is HTTPS-first for frontend, backend, and Keycloak, and it also exports localhost TLS material for the local PostgreSQL container. It will launch the frontend at `https://localhost:7277`, the backend at `https://localhost:7085`, and Keycloak at `https://localhost:8443`, while local PostgreSQL rejects non-TLS TCP connections.
+
+If you only want to run the frontend from the root workspace:
+
+```bash
+python ./scripts/dev.py frontend --watch-css
 ```
 
 If you want to run API contract tests from the same terminal session without manually keeping the backend open, use:
@@ -59,11 +70,53 @@ If you want to run API contract tests from the same terminal session without man
 python ./scripts/dev.py api-test --start-backend --skip-lint
 ```
 
+### Run the full local web stack
+
+```bash
+python ./scripts/dev.py web
+python ./scripts/dev.py web --watch-css
+```
+
+Useful flags:
+
+- `--watch-css`
+- `--no-browser`
+- `--skip-backend-restore`
+- `--skip-npm-install`
+- `--skip-css-build`
+- `--skip-frontend-restore`
+- `--backend-url`
+- `--frontend-url`
+
+### Check or stop the local web stack
+
+```bash
+python ./scripts/dev.py web-status
+python ./scripts/dev.py web-stop
+python ./scripts/dev.py web-stop --down-dependencies
+```
+
+Use `web-stop` when a previous `web` session was interrupted and left the backend/frontend processes running.
+
 ### Start only local dependencies (no API)
 
 ```bash
 python ./scripts/dev.py up --dependencies-only
 ```
+
+### Run the frontend web UI
+
+```bash
+python ./scripts/dev.py frontend
+python ./scripts/dev.py frontend --watch-css
+```
+
+Useful flags:
+
+- `--watch-css`
+- `--skip-npm-install`
+- `--skip-css-build`
+- `--skip-restore`
 
 ### Stop dependencies
 
@@ -215,6 +268,10 @@ API workflow commands also expose workflow-specific overrides. Common examples:
 - `api-lint`
 - `api-mock --mode shared|ephemeral`
 - `api-sync --skip-mock`
+- `web --watch-css`
+- `web-status`
+- `web-stop --down-dependencies`
+- `frontend --watch-css`
 
 For live API contract execution, the default environment template is:
 
