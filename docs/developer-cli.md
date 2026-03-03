@@ -28,7 +28,7 @@ The developer CLI orchestrates common local development tasks from the repositor
 - run the full local web stack from the repository root
 - inspect/stop the locally launched root web stack
 - run the frontend web UI from the repository root
-- start/stop/reuse local PostgreSQL and Keycloak via Docker Compose
+- start/stop/reuse local PostgreSQL, Mailpit, and Keycloak via Docker Compose
 - run the backend API
 - validate backend XML documentation coverage
 - run backend tests
@@ -56,7 +56,13 @@ python ./scripts/dev.py bootstrap
 python ./scripts/dev.py web --watch-css
 ```
 
-This starts Docker dependencies, the backend API, the frontend web app, and then opens the frontend URL in your default browser. On Windows, if Docker Desktop is installed but not already running, the CLI will try to launch it automatically and wait for the daemon before continuing. The root workflow is HTTPS-first for frontend, backend, and Keycloak, and it also exports localhost TLS material for the local PostgreSQL container. It will launch the frontend at `https://localhost:7277`, the backend at `https://localhost:7085`, and Keycloak at `https://localhost:8443`, while local PostgreSQL rejects non-TLS TCP connections.
+This starts Docker dependencies, the backend API, the frontend web app, and then opens the frontend URL in your default browser. On Windows, if Docker Desktop is installed but not already running, the CLI will try to launch it automatically and wait for the daemon before continuing. The root workflow is HTTPS-first for frontend, backend, Keycloak, and the local Mailpit UI, and it also exports TLS material for the local PostgreSQL container and Mailpit SMTP STARTTLS. It will launch the frontend at `https://localhost:7277`, the backend at `https://localhost:7085`, Keycloak at `https://localhost:8443`, and Mailpit at `https://localhost:8025`, while local PostgreSQL rejects non-TLS TCP connections.
+
+Local registration and verification emails are captured in Mailpit:
+
+```bash
+https://localhost:8025
+```
 
 If you only want to run the frontend from the root workspace:
 
@@ -281,7 +287,7 @@ Populate the placeholder auth and resource IDs in a private copy when you want f
 
 ## Notes
 
-- The `up`, `down`, and `status` commands manage the local PostgreSQL and Keycloak containers together.
+- The `up`, `down`, and `status` commands manage the local PostgreSQL, Mailpit, and Keycloak containers together.
 - The `down` command uses `docker compose down` and does **not** remove named volumes. Your local Postgres data persists unless you explicitly remove volumes.
 - VS Code tasks in this repo call the Python CLI directly.
 - The supported developer entry point for this repository is `python ./scripts/dev.py ...`; API-local helper scripts under `api/scripts/` are implementation details for CI and the root CLI.
