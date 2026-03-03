@@ -4,6 +4,8 @@
 This script is the primary developer automation entry point for:
 - bootstrap/setup (`bootstrap`)
 - dependency lifecycle (`up`, `down`, `status`)
+- full local web stack execution (`web`)
+- frontend web UI execution (`frontend`)
 - repository verification (`verify`)
 - backend testing (`test`)
 - API contract linting/testing and Postman workspace operations
@@ -20,15 +22,19 @@ from __future__ import annotations
 
 import argparse
 import http.client
+import json
 import os
 import shlex
 import shutil
+import signal
+import ssl
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,6 +55,12 @@ class DevConfig:
         keycloak_ready_url: URL used to verify local Keycloak readiness.
         backend_project: Relative path to the backend API project file.
         backend_solution: Relative path to the backend solution file.
+        frontend_root: Relative path to the frontend submodule root.
+        frontend_web_project: Relative path to the frontend web project file.
+        frontend_solution: Relative path to the frontend solution file.
+        frontend_package_json: Relative path to the frontend package manifest.
+        backend_base_url: Default local backend base URL.
+        frontend_base_url: Default local frontend base URL.
         api_root: Relative path to the API submodule root.
         api_spec: Relative path to the OpenAPI specification file.
         api_contract_collection: Relative path to the Git-tracked contract test collection.
@@ -67,6 +79,12 @@ class DevConfig:
     keycloak_ready_url: str
     backend_project: str
     backend_solution: str
+    frontend_root: str
+    frontend_web_project: str
+    frontend_solution: str
+    frontend_package_json: str
+    backend_base_url: str
+    frontend_base_url: str
     api_root: str
     api_spec: str
     api_contract_collection: str
@@ -78,6 +96,65 @@ class DevConfig:
 
 class DevCliError(RuntimeError):
     """Raised for expected CLI/runtime failures with user-friendly messages."""
+
+
+KEYCLOAK_DEV_CERT_RELATIVE_PATH = "backend/keycloak/certs/boardtpl-localhost-devcert.pfx"
+KEYCLOAK_DEV_CERT_PASSWORD = "boardtpl-devcert"
+POSTGRES_SERVER_CERT_RELATIVE_PATH = "backend/postgres/certs/server.crt"
+POSTGRES_SERVER_KEY_RELATIVE_PATH = "backend/postgres/certs/server.key"
+REDOCLY_CLI_VERSION = "2.20.3"
+
+
+def get_web_stack_state_path(config: DevConfig) -> Path:
+    """Return the on-disk state file used for locally launched web stack processes.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        State file path under the shared CLI logs directory.
+    """
+
+    return config.repo_root / ".dev-cli-logs" / "web-stack-state.json"
+
+
+def get_keycloak_dev_certificate_path(config: DevConfig) -> Path:
+    """Return the exported localhost certificate path used by local Keycloak HTTPS.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        Certificate file path under the backend Keycloak config area.
+    """
+
+    return config.repo_root / KEYCLOAK_DEV_CERT_RELATIVE_PATH
+
+
+def get_postgres_server_certificate_path(config: DevConfig) -> Path:
+    """Return the exported PEM certificate path used by local PostgreSQL TLS.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        PEM certificate file path.
+    """
+
+    return config.repo_root / POSTGRES_SERVER_CERT_RELATIVE_PATH
+
+
+def get_postgres_server_key_path(config: DevConfig) -> Path:
+    """Return the exported PEM private key path used by local PostgreSQL TLS.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        PEM private key file path.
+    """
+
+    return config.repo_root / POSTGRES_SERVER_KEY_RELATIVE_PATH
 
 
 def write_step(message: str) -> None:
@@ -231,9 +308,95 @@ def invoke_docker_compose(config: DevConfig, sub_args: Sequence[str]) -> None:
         DevCliError: If Docker is unavailable or the compose command fails.
     """
 
-    assert_command_available("docker")
+    ensure_docker_daemon_available()
     args = ["docker", *get_compose_args(config), *sub_args]
     run_command(args, check=True, capture_output=False, text=True)
+
+
+def find_docker_desktop_executable() -> Path | None:
+    """Return the expected Docker Desktop executable path on Windows when available.
+
+    Returns:
+        Path to ``Docker Desktop.exe`` when found, else ``None``.
+    """
+
+    if os.name != "nt":
+        return None
+
+    candidates = [
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Docker" / "Docker" / "Docker Desktop.exe",
+        Path(os.environ.get("ProgramW6432", r"C:\Program Files")) / "Docker" / "Docker" / "Docker Desktop.exe",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def probe_docker_daemon() -> tuple[bool, str | None]:
+    """Check whether the local Docker daemon is reachable.
+
+    Returns:
+        Tuple of ``(reachable, detail)`` where ``detail`` contains failure output when unreachable.
+    """
+
+    assert_command_available("docker")
+    result = run_command(["docker", "info"], check=False, capture_output=True, text=True)
+    if result.returncode == 0:
+        return True, None
+
+    detail = ((result.stderr or "").strip() or (result.stdout or "").strip()) or None
+    return False, detail
+
+
+def ensure_docker_daemon_available() -> None:
+    """Ensure the local Docker daemon is reachable before compose-dependent work.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If Docker is unavailable or the daemon is not running.
+    """
+
+    reachable, detail = probe_docker_daemon()
+    if reachable:
+        return
+
+    attempted_autostart = False
+    docker_desktop_executable = find_docker_desktop_executable()
+    if docker_desktop_executable is not None:
+        attempted_autostart = True
+        write_step("Starting Docker Desktop")
+        try:
+            subprocess.Popen(
+                [str(docker_desktop_executable)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            attempted_autostart = False
+
+        if attempted_autostart:
+            write_step("Waiting for Docker daemon readiness (up to 90 seconds)")
+            deadline = time.time() + 90
+            while time.time() < deadline:
+                reachable, detail = probe_docker_daemon()
+                if reachable:
+                    print("Docker daemon is ready.")
+                    return
+                time.sleep(3)
+
+    if attempted_autostart:
+        message = (
+            "Docker daemon is not reachable. Docker Desktop was launched but did not become ready in time. "
+            "Wait for Docker Desktop to finish starting, then retry."
+        )
+    else:
+        message = "Docker daemon is not reachable. Start Docker Desktop (or the local Docker Engine) and retry."
+    if detail:
+        raise DevCliError(f"{message}\n{detail}")
+    raise DevCliError(message)
 
 
 def get_docker_container_state(container_name: str) -> str | None:
@@ -250,7 +413,7 @@ def get_docker_container_state(container_name: str) -> str | None:
         DevCliError: If Docker is unavailable on ``PATH``.
     """
 
-    assert_command_available("docker")
+    ensure_docker_daemon_available()
     result = run_command(
         ["docker", "container", "inspect", "-f", "{{.State.Status}}", container_name],
         check=False,
@@ -318,13 +481,10 @@ def wait_for_http_ready(*, url: str, description: str, timeout_seconds: int = 90
     write_step(f"Waiting for {description} readiness (up to {timeout_seconds} seconds)")
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=5) as response:
-                if 200 <= response.status < 300:
-                    print(f"{description} is ready.")
-                    return
-        except (http.client.RemoteDisconnected, urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
-            pass
+        reachable, detail = probe_http_url(url)
+        if reachable:
+            print(f"{description} is ready.")
+            return
         time.sleep(2)
 
     raise DevCliError(f"Timed out waiting for {description} readiness at {url}.")
@@ -344,6 +504,145 @@ def is_local_http_url(url: str) -> bool:
     return host in {"localhost", "127.0.0.1", "::1"}
 
 
+def is_https_url(url: str) -> bool:
+    """Return whether the URL uses HTTPS.
+
+    Args:
+        url: URL to inspect.
+
+    Returns:
+        ``True`` when the URL scheme is HTTPS, else ``False``.
+    """
+
+    return urllib.parse.urlparse(url).scheme.lower() == "https"
+
+
+def get_curl_executable() -> str | None:
+    """Return the preferred curl executable when available.
+
+    Returns:
+        Full path to ``curl``/``curl.exe`` when found, else ``None``.
+    """
+
+    return shutil.which("curl.exe") or shutil.which("curl")
+
+
+def get_powershell_executable() -> str | None:
+    """Return the preferred PowerShell executable when available.
+
+    Returns:
+        Full path to ``pwsh``/``powershell`` when found, else ``None``.
+    """
+
+    return shutil.which("pwsh.exe") or shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+
+
+def ensure_dotnet_dev_certificate_trusted() -> None:
+    """Ensure the .NET HTTPS development certificate exists and is trusted.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If ``dotnet`` is unavailable or trust establishment fails.
+    """
+
+    assert_command_available("dotnet")
+    check = run_command(
+        ["dotnet", "dev-certs", "https", "--check", "--trust"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode == 0:
+        return
+
+    write_step("Trusting the .NET HTTPS development certificate")
+    run_command(["dotnet", "dev-certs", "https", "--trust"], check=True, capture_output=False, text=True)
+
+
+def ensure_keycloak_https_certificate_exported(config: DevConfig) -> Path:
+    """Export the trusted localhost development certificate for Keycloak HTTPS.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        Exported certificate path.
+    """
+
+    ensure_dotnet_dev_certificate_trusted()
+    certificate_path = get_keycloak_dev_certificate_path(config)
+    certificate_path.parent.mkdir(parents=True, exist_ok=True)
+
+    write_step("Exporting localhost HTTPS development certificate for Keycloak")
+    run_command(
+        [
+            "dotnet",
+            "dev-certs",
+            "https",
+            "--export-path",
+            str(certificate_path),
+            "--password",
+            KEYCLOAK_DEV_CERT_PASSWORD,
+        ],
+        cwd=config.repo_root,
+        check=True,
+        capture_output=False,
+        text=True,
+    )
+    return certificate_path
+
+
+def ensure_postgres_tls_material_exported(config: DevConfig) -> tuple[Path, Path]:
+    """Export PEM certificate and private key for local PostgreSQL TLS.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        Tuple of `(certificate_path, private_key_path)`.
+
+    Raises:
+        DevCliError: If PowerShell is unavailable or PEM conversion fails.
+    """
+
+    pfx_path = ensure_keycloak_https_certificate_exported(config)
+    powershell_executable = get_powershell_executable()
+    if powershell_executable is None:
+        raise DevCliError("PowerShell is required to export PostgreSQL TLS certificate material on this machine.")
+
+    certificate_path = get_postgres_server_certificate_path(config)
+    private_key_path = get_postgres_server_key_path(config)
+    certificate_path.parent.mkdir(parents=True, exist_ok=True)
+
+    powershell_script = (
+        "$ErrorActionPreference='Stop'; "
+        f"$pfxPath = '{pfx_path}'; "
+        f"$password = ConvertTo-SecureString '{KEYCLOAK_DEV_CERT_PASSWORD}' -AsPlainText -Force; "
+        f"$certPath = '{certificate_path}'; "
+        f"$keyPath = '{private_key_path}'; "
+        "$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("
+        "$pfxPath, $password, "
+        "[System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable"
+        "); "
+        "[System.IO.File]::WriteAllText($certPath, $cert.ExportCertificatePem()); "
+        "$rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert); "
+        "if ($null -eq $rsa) { throw 'The exported localhost certificate did not contain an RSA private key.' }; "
+        "[System.IO.File]::WriteAllText($keyPath, $rsa.ExportPkcs8PrivateKeyPem())"
+    )
+
+    write_step("Exporting localhost TLS certificate material for PostgreSQL")
+    run_command(
+        [powershell_executable, "-NoProfile", "-Command", powershell_script],
+        cwd=config.repo_root,
+        check=True,
+        capture_output=False,
+        text=True,
+    )
+    return certificate_path, private_key_path
+
+
 def probe_http_url(url: str, *, timeout_seconds: int = 5) -> tuple[bool, str | None]:
     """Check whether an HTTP endpoint is reachable.
 
@@ -355,12 +654,84 @@ def probe_http_url(url: str, *, timeout_seconds: int = 5) -> tuple[bool, str | N
         Tuple of ``(reachable, detail)`` where ``detail`` is a failure reason when unreachable.
     """
 
+    powershell_executable = get_powershell_executable()
+    if powershell_executable and os.name == "nt" and is_local_http_url(url) and is_https_url(url):
+        powershell_script = (
+            "$ProgressPreference='SilentlyContinue'; "
+            "try { "
+            f"$response = Invoke-WebRequest -Uri '{url}' -Method Get -SkipCertificateCheck -HttpVersion 2.0 -MaximumRedirection 0 -TimeoutSec {timeout_seconds}; "
+            "Write-Output $response.StatusCode; exit 0 "
+            "} catch { "
+            "if ($_.Exception.Response) { "
+            "$statusCode = [int]$_.Exception.Response.StatusCode; "
+            "if ($statusCode -gt 0) { Write-Output $statusCode; exit 0 } "
+            "} "
+            "Write-Error $_.Exception.Message; exit 1 "
+            "}"
+        )
+
+        result = run_command(
+            [powershell_executable, "-NoProfile", "-Command", powershell_script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        status_text = (result.stdout or "").strip()
+        if result.returncode == 0 and status_text.isdigit():
+            status_code = int(status_text)
+            if 200 <= status_code < 400:
+                return True, None
+            return False, f"HTTP {status_code}"
+
+        detail = ((result.stderr or "").strip() or (result.stdout or "").strip())
+        return False, detail or f"PowerShell probe exited with code {result.returncode}"
+
+    curl_executable = get_curl_executable()
+    if curl_executable and is_local_http_url(url):
+        curl_args = [
+            curl_executable,
+            "--silent",
+            "--show-error",
+            "--output",
+            os.devnull,
+            "--write-out",
+            "%{http_code}",
+            "--max-time",
+            str(timeout_seconds),
+        ]
+        if is_https_url(url):
+            curl_args.append("--insecure")
+        curl_args.append(url)
+
+        result = run_command(curl_args, check=False, capture_output=True, text=True)
+        status_text = (result.stdout or "").strip()
+        if result.returncode == 0 and status_text.isdigit():
+            status_code = int(status_text)
+            if 200 <= status_code < 400:
+                return True, None
+            return False, f"HTTP {status_code}"
+
+        detail = ((result.stderr or "").strip() or (result.stdout or "").strip())
+        return False, detail or f"curl exited with code {result.returncode}"
+
+    request = urllib.request.Request(url, method="GET")
+    context = None
+    if is_local_http_url(url) and is_https_url(url):
+        context = ssl._create_unverified_context()
+
     try:
-        with urllib.request.urlopen(url, timeout=timeout_seconds):
+        with urllib.request.urlopen(request, timeout=timeout_seconds, context=context):
             return True, None
     except urllib.error.HTTPError:
         return True, None
-    except (http.client.RemoteDisconnected, urllib.error.URLError, TimeoutError) as ex:
+    except (
+        ConnectionAbortedError,
+        ConnectionError,
+        OSError,
+        http.client.RemoteDisconnected,
+        urllib.error.URLError,
+        TimeoutError,
+    ) as ex:
         return False, str(ex)
 
 
@@ -386,21 +757,17 @@ def start_backend_api_process(config: DevConfig) -> tuple[subprocess.Popen, Path
     logs_dir = config.repo_root / ".dev-cli-logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_path = logs_dir / "backend-api.log"
-    log_handle = log_path.open("w", encoding="utf-8")
-
-    creationflags = 0
-    if os.name == "nt":
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-
-    process = subprocess.Popen(
-        ["dotnet", "run", "--project", str(project_path), "--no-restore"],
-        cwd=str(backend_root),
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        text=True,
-        creationflags=creationflags,
+    process = start_background_command(
+        cmd=["dotnet", "run", "--project", str(project_path), "--no-restore", "--no-launch-profile"],
+        cwd=backend_root,
+        log_path=log_path,
+        env=build_subprocess_env(
+            extra={
+                "ASPNETCORE_URLS": config.backend_base_url,
+                "ASPNETCORE_ENVIRONMENT": "Development",
+            }
+        ),
     )
-    log_handle.close()
     return process, log_path
 
 
@@ -423,6 +790,168 @@ def stop_background_process(process: subprocess.Popen) -> None:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=5)
+
+
+def save_web_stack_state(config: DevConfig, *, state: dict[str, object]) -> Path:
+    """Persist the locally launched web stack process metadata.
+
+    Args:
+        config: CLI configuration containing the repository root.
+        state: Serializable process metadata to write.
+
+    Returns:
+        The written state file path.
+    """
+
+    state_path = get_web_stack_state_path(config)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    return state_path
+
+
+def load_web_stack_state(config: DevConfig) -> dict[str, object] | None:
+    """Load the persisted web stack state file if present and valid.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        Parsed state mapping, or ``None`` when the file is absent.
+
+    Raises:
+        DevCliError: If the file exists but cannot be parsed.
+    """
+
+    state_path = get_web_stack_state_path(config)
+    if not state_path.exists():
+        return None
+
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as ex:
+        raise DevCliError(f"Web stack state file is invalid JSON: {state_path}") from ex
+
+
+def clear_web_stack_state(config: DevConfig) -> None:
+    """Delete the persisted web stack state file when present.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        None.
+    """
+
+    get_web_stack_state_path(config).unlink(missing_ok=True)
+
+
+def is_process_running(pid: int) -> bool:
+    """Return whether the given process ID currently exists.
+
+    Args:
+        pid: Process ID to inspect.
+
+    Returns:
+        ``True`` when the process appears to be alive, else ``False``.
+    """
+
+    if pid <= 0:
+        return False
+
+    if os.name == "nt":
+        result = run_command(
+            ["tasklist", "/FI", f"PID eq {pid}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        stdout = (result.stdout or "").lower()
+        return result.returncode == 0 and f" {pid} " in f" {stdout} "
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def stop_process_by_pid(pid: int) -> None:
+    """Terminate a process by PID without requiring the original ``Popen`` handle.
+
+    Args:
+        pid: Process ID to stop.
+
+    Returns:
+        None.
+    """
+
+    if not is_process_running(pid):
+        return
+
+    if os.name == "nt":
+        run_command(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        return
+
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if not is_process_running(pid):
+            return
+        time.sleep(0.5)
+    os.kill(pid, signal.SIGKILL)
+
+
+def start_background_command(
+    *,
+    cmd: Sequence[str],
+    cwd: Path,
+    log_path: Path,
+    env: dict[str, str] | None = None,
+) -> subprocess.Popen:
+    """Start a background process and redirect combined output to a log file.
+
+    Args:
+        cmd: Command tokens to execute.
+        cwd: Working directory for the process.
+        log_path: Output log file path.
+        env: Optional environment overrides.
+
+    Returns:
+        Background process handle.
+    """
+
+    resolved_cmd = list(cmd)
+    executable = resolved_cmd[0]
+    if os.path.dirname(executable) == "":
+        resolved_executable = shutil.which(executable)
+        if resolved_executable:
+            resolved_cmd[0] = resolved_executable
+        else:
+            raise DevCliError(f"Required command '{executable}' was not found on PATH.")
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = log_path.open("w", encoding="utf-8")
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+    process = subprocess.Popen(
+        resolved_cmd,
+        cwd=str(cwd),
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        creationflags=creationflags,
+    )
+    log_handle.close()
+    return process
 
 
 def ensure_api_base_url_reachable(base_url: str) -> None:
@@ -511,7 +1040,10 @@ def start_dependencies(config: DevConfig) -> None:
             or a required local dependency fails to start/become ready.
     """
 
-    assert_command_available("docker")
+    ensure_docker_daemon_available()
+    ensure_postgres_tls_material_exported(config)
+    if is_https_url(config.keycloak_ready_url):
+        ensure_keycloak_https_certificate_exported(config)
     compose_full_path = config.repo_root / config.compose_file
     if not compose_full_path.exists():
         raise DevCliError(f"Compose file not found: {compose_full_path}")
@@ -663,6 +1195,9 @@ def run_backend_api(config: DevConfig, *, do_restore: bool) -> None:
     """
 
     assert_command_available("dotnet")
+    if is_https_url(config.backend_base_url):
+        ensure_dotnet_dev_certificate_trusted()
+
     backend_root = config.repo_root / "backend"
     project_path = config.repo_root / config.backend_project
     if not project_path.exists():
@@ -672,8 +1207,448 @@ def run_backend_api(config: DevConfig, *, do_restore: bool) -> None:
         write_step("Restoring backend project")
         run_command(["dotnet", "restore", str(project_path)], cwd=backend_root)
 
-    write_step("Starting backend API (Ctrl+C to stop)")
-    run_command(["dotnet", "run", "--project", str(project_path)], cwd=backend_root, check=True)
+    write_step(f"Starting backend API at {config.backend_base_url} (Ctrl+C to stop)")
+    run_command(
+        ["dotnet", "run", "--project", str(project_path), "--no-launch-profile"],
+        cwd=backend_root,
+        check=True,
+        env=build_subprocess_env(
+            extra={
+                "ASPNETCORE_URLS": config.backend_base_url,
+                "ASPNETCORE_ENVIRONMENT": "Development",
+            }
+        ),
+    )
+
+
+def run_frontend_web_ui(
+    config: DevConfig,
+    *,
+    bootstrap: bool,
+    do_npm_install: bool,
+    do_css_build: bool,
+    do_restore: bool,
+    watch_css: bool,
+) -> None:
+    """Run the frontend web UI from the repository root.
+
+    Args:
+        config: CLI configuration containing frontend paths.
+        bootstrap: Whether to initialize submodules before running.
+        do_npm_install: Whether to install frontend JavaScript dependencies first.
+        do_css_build: Whether to build Tailwind CSS before launching the app.
+        do_restore: Whether to restore the frontend .NET project before launching.
+        watch_css: Whether to start a background Tailwind watch process.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If required commands are unavailable or frontend files are missing.
+    """
+
+    if bootstrap:
+        ensure_submodules(config)
+
+    assert_command_available("dotnet")
+    assert_command_available("npm")
+    if is_https_url(config.frontend_base_url):
+        ensure_dotnet_dev_certificate_trusted()
+
+    frontend_root = config.repo_root / config.frontend_root
+    project_path = config.repo_root / config.frontend_web_project
+    solution_path = config.repo_root / config.frontend_solution
+    package_path = config.repo_root / config.frontend_package_json
+
+    if not frontend_root.exists():
+        raise DevCliError(f"Frontend submodule not found: {frontend_root}")
+    if not project_path.exists():
+        raise DevCliError(f"Frontend web project not found: {project_path}")
+    if not solution_path.exists():
+        raise DevCliError(f"Frontend solution not found: {solution_path}")
+    if not package_path.exists():
+        raise DevCliError(f"Frontend package manifest not found: {package_path}")
+
+    if do_npm_install:
+        npm_cmd = ["npm", "ci"] if (frontend_root / "package-lock.json").exists() else ["npm", "install"]
+        write_step("Installing frontend npm dependencies")
+        run_command(npm_cmd, cwd=frontend_root)
+
+    if do_css_build:
+        write_step("Building frontend Tailwind CSS")
+        run_command(["npm", "run", "css:build"], cwd=frontend_root)
+
+    if do_restore:
+        write_step("Restoring frontend web project")
+        run_command(["dotnet", "restore", str(project_path)], cwd=frontend_root)
+
+    keycloak_ready, keycloak_detail = probe_http_url(config.keycloak_ready_url)
+    if not keycloak_ready:
+        print(
+            "Warning: local Keycloak is not reachable. "
+            "Frontend sign-in will stay unavailable until auth dependencies are started."
+        )
+        if keycloak_detail:
+            print(f"Keycloak probe detail: {keycloak_detail}")
+        print("Start auth dependencies with: python ./scripts/dev.py up --dependencies-only")
+
+    css_watch_process: subprocess.Popen | None = None
+    css_watch_log_path: Path | None = None
+    try:
+        if watch_css:
+            logs_dir = config.repo_root / ".dev-cli-logs"
+            css_watch_log_path = logs_dir / "frontend-css-watch.log"
+            write_step("Starting frontend Tailwind watch in the background")
+            css_watch_process = start_background_command(
+                cmd=["npm", "run", "css:watch"],
+                cwd=frontend_root,
+                log_path=css_watch_log_path,
+            )
+            print(f"Tailwind watch log: {css_watch_log_path}")
+
+        write_step(f"Starting frontend web UI at {config.frontend_base_url} (Ctrl+C to stop)")
+        run_command(
+            ["dotnet", "run", "--project", str(project_path), "--no-restore", "--no-launch-profile"],
+            cwd=frontend_root,
+            check=True,
+            env=build_subprocess_env(
+                extra={
+                    "ASPNETCORE_URLS": config.frontend_base_url,
+                    "ASPNETCORE_ENVIRONMENT": "Development",
+                }
+            ),
+        )
+    finally:
+        if css_watch_process is not None:
+            write_step("Stopping frontend Tailwind watch")
+            stop_background_process(css_watch_process)
+
+
+def run_full_local_web_stack(
+    config: DevConfig,
+    *,
+    bootstrap: bool,
+    do_backend_restore: bool,
+    do_frontend_npm_install: bool,
+    do_frontend_css_build: bool,
+    do_frontend_restore: bool,
+    watch_css: bool,
+    open_browser_on_ready: bool,
+    backend_url: str,
+    frontend_url: str,
+) -> None:
+    """Run dependencies, backend API, and frontend web UI together for local development.
+
+    Args:
+        config: CLI configuration containing repository paths and defaults.
+        bootstrap: Whether to initialize submodules before running.
+        do_backend_restore: Whether to restore the backend solution before launch.
+        do_frontend_npm_install: Whether to install frontend JavaScript dependencies first.
+        do_frontend_css_build: Whether to build Tailwind CSS before launching the frontend.
+        do_frontend_restore: Whether to restore the frontend web project before launch.
+        watch_css: Whether to run Tailwind CSS watch in a background process.
+        open_browser_on_ready: Whether to open the system browser when the frontend is reachable.
+        backend_url: Backend URL to bind and probe.
+        frontend_url: Frontend URL to bind, probe, and open in the browser.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If required tools are unavailable or any launched process exits unexpectedly.
+    """
+
+    if bootstrap:
+        ensure_submodules(config)
+
+    assert_command_available("dotnet")
+    assert_command_available("npm")
+    if is_https_url(frontend_url):
+        ensure_dotnet_dev_certificate_trusted()
+
+    start_dependencies(config)
+
+    if do_backend_restore:
+        restore_backend(config)
+
+    frontend_root = config.repo_root / config.frontend_root
+    project_path = config.repo_root / config.frontend_web_project
+    if not frontend_root.exists():
+        raise DevCliError(f"Frontend submodule not found: {frontend_root}")
+    if not project_path.exists():
+        raise DevCliError(f"Frontend web project not found: {project_path}")
+
+    if do_frontend_npm_install:
+        npm_cmd = ["npm", "ci"] if (frontend_root / "package-lock.json").exists() else ["npm", "install"]
+        write_step("Installing frontend npm dependencies")
+        run_command(npm_cmd, cwd=frontend_root)
+
+    if do_frontend_css_build:
+        write_step("Building frontend Tailwind CSS")
+        run_command(["npm", "run", "css:build"], cwd=frontend_root)
+
+    if do_frontend_restore:
+        write_step("Restoring frontend web project")
+        run_command(["dotnet", "restore", str(project_path)], cwd=frontend_root)
+
+    backend_process: subprocess.Popen | None = None
+    frontend_process: subprocess.Popen | None = None
+    css_watch_process: subprocess.Popen | None = None
+    backend_log_path: Path | None = None
+    frontend_log_path: Path | None = None
+    css_watch_log_path: Path | None = None
+
+    try:
+        write_step("Starting backend API in the background")
+        backend_process, backend_log_path = start_background_command_with_log(
+            cmd=["dotnet", "run", "--project", str(config.repo_root / config.backend_project), "--no-restore", "--no-launch-profile"],
+            cwd=config.repo_root / "backend",
+            log_name="backend-api.log",
+            env=build_subprocess_env(
+                extra={
+                    "ASPNETCORE_URLS": backend_url,
+                    "ASPNETCORE_ENVIRONMENT": "Development",
+                }
+            ),
+            config=config,
+        )
+        print(f"Backend log: {backend_log_path}")
+        wait_for_http_ready(url=f"{backend_url.rstrip('/')}/health/live", description="Backend API")
+
+        keycloak_ready, keycloak_detail = probe_http_url(config.keycloak_ready_url)
+        if not keycloak_ready:
+            print("Warning: local Keycloak is not reachable. Frontend sign-in will remain unavailable.")
+            if keycloak_detail:
+                print(f"Keycloak probe detail: {keycloak_detail}")
+
+        if watch_css:
+            css_watch_log_path = (config.repo_root / ".dev-cli-logs") / "frontend-css-watch.log"
+            write_step("Starting frontend Tailwind watch in the background")
+            css_watch_process = start_background_command(
+                cmd=["npm", "run", "css:watch"],
+                cwd=frontend_root,
+                log_path=css_watch_log_path,
+            )
+            print(f"Tailwind watch log: {css_watch_log_path}")
+
+        write_step("Starting frontend web UI in the background")
+        frontend_process, frontend_log_path = start_frontend_web_process_with_log(
+            config,
+            frontend_url=frontend_url,
+        )
+        print(f"Frontend log: {frontend_log_path}")
+        wait_for_http_ready(url=frontend_url, description="Frontend web UI")
+
+        state: dict[str, object] = {
+            "started_at_utc": datetime.now(timezone.utc).isoformat(),
+            "backend": {
+                "pid": backend_process.pid,
+                "url": backend_url,
+                "log_path": str(backend_log_path),
+            },
+            "frontend": {
+                "pid": frontend_process.pid,
+                "url": frontend_url,
+                "log_path": str(frontend_log_path),
+            },
+        }
+        if css_watch_process is not None and css_watch_log_path is not None:
+            state["css_watch"] = {
+                "pid": css_watch_process.pid,
+                "log_path": str(css_watch_log_path),
+            }
+
+        state_path = save_web_stack_state(config, state=state)
+        print(f"Web stack state: {state_path}")
+
+        if open_browser_on_ready:
+            write_step(f"Opening browser to {frontend_url}")
+            webbrowser.open(frontend_url)
+
+        print("Local web stack is running. Press Ctrl+C to stop backend, frontend, and CSS watch.")
+        while True:
+            time.sleep(2)
+
+            if backend_process.poll() is not None:
+                raise DevCliError(
+                    f"Backend API exited unexpectedly. Review log: {backend_log_path}"
+                )
+
+            if frontend_process.poll() is not None:
+                raise DevCliError(
+                    f"Frontend web UI exited unexpectedly. Review log: {frontend_log_path}"
+                )
+    except KeyboardInterrupt:
+        print("\nStopping local web stack.")
+    finally:
+        clear_web_stack_state(config)
+        if frontend_process is not None:
+            write_step("Stopping frontend web UI")
+            stop_background_process(frontend_process)
+        if css_watch_process is not None:
+            write_step("Stopping frontend Tailwind watch")
+            stop_background_process(css_watch_process)
+        if backend_process is not None:
+            write_step("Stopping backend API")
+            stop_background_process(backend_process)
+
+
+def show_web_stack_status(config: DevConfig) -> None:
+    """Show status for the locally launched backend/frontend web stack processes.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        None.
+    """
+
+    state = load_web_stack_state(config)
+    if state is None:
+        print("No active root-managed web stack state file was found.")
+        print("Start it with: python ./scripts/dev.py web --watch-css")
+        return
+
+    print(f"State file: {get_web_stack_state_path(config)}")
+    started_at = state.get("started_at_utc")
+    if isinstance(started_at, str) and started_at:
+        print(f"Started at (UTC): {started_at}")
+
+    active_count = 0
+    stale_entries: list[str] = []
+    for key in ("backend", "frontend", "css_watch"):
+        entry = state.get(key)
+        if not isinstance(entry, dict):
+            continue
+
+        pid = int(entry.get("pid", 0))
+        label = key.replace("_", " ")
+        running = is_process_running(pid)
+        status = "running" if running else "not running"
+        print(f"{label}: PID {pid} ({status})")
+
+        url = entry.get("url")
+        if isinstance(url, str) and url:
+            print(f"  url: {url}")
+
+        log_path = entry.get("log_path")
+        if isinstance(log_path, str) and log_path:
+            print(f"  log: {log_path}")
+
+        if running:
+            active_count += 1
+        else:
+            stale_entries.append(label)
+
+    if active_count == 0:
+        print("No tracked web stack processes are still running.")
+        if stale_entries:
+            print("The state file is stale. Remove it with: python ./scripts/dev.py web-stop")
+
+
+def stop_web_stack(config: DevConfig, *, stop_dependencies_too: bool) -> None:
+    """Stop the locally launched backend/frontend web stack processes.
+
+    Args:
+        config: CLI configuration containing the repository root.
+        stop_dependencies_too: Whether to also stop Docker Compose dependencies.
+
+    Returns:
+        None.
+    """
+
+    state = load_web_stack_state(config)
+    if state is None:
+        print("No active root-managed web stack state file was found.")
+    else:
+        for key, label in (
+            ("frontend", "frontend web UI"),
+            ("css_watch", "frontend Tailwind watch"),
+            ("backend", "backend API"),
+        ):
+            entry = state.get(key)
+            if not isinstance(entry, dict):
+                continue
+
+            pid = int(entry.get("pid", 0))
+            if pid <= 0:
+                continue
+
+            if is_process_running(pid):
+                write_step(f"Stopping {label}")
+                stop_process_by_pid(pid)
+            else:
+                print(f"{label} is already stopped (PID {pid}).")
+
+        clear_web_stack_state(config)
+        print("Cleared root-managed web stack state.")
+
+    if stop_dependencies_too:
+        stop_dependencies(config)
+        print("Dependencies stopped.")
+
+
+def start_background_command_with_log(
+    *,
+    cmd: Sequence[str],
+    cwd: Path,
+    log_name: str,
+    config: DevConfig,
+    env: dict[str, str] | None = None,
+) -> tuple[subprocess.Popen, Path]:
+    """Start a background command and return the process together with its log path.
+
+    Args:
+        cmd: Command tokens to execute.
+        cwd: Working directory for the process.
+        log_name: Log file name created under the shared CLI logs directory.
+        config: CLI configuration containing the repository root.
+        env: Optional environment overrides.
+
+    Returns:
+        Tuple of the launched process and the log path.
+    """
+
+    logs_dir = config.repo_root / ".dev-cli-logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = logs_dir / log_name
+    process = start_background_command(cmd=cmd, cwd=cwd, log_path=log_path, env=env)
+    return process, log_path
+
+
+def start_frontend_web_process_with_log(
+    config: DevConfig,
+    *,
+    frontend_url: str,
+) -> tuple[subprocess.Popen, Path]:
+    """Start the frontend web app and return both process and log path.
+
+    Args:
+        config: CLI configuration containing frontend paths.
+        frontend_url: URL the frontend should bind to.
+
+    Returns:
+        Tuple of process handle and log file path.
+    """
+
+    assert_command_available("dotnet")
+    frontend_root = config.repo_root / config.frontend_root
+    project_path = config.repo_root / config.frontend_web_project
+    if not project_path.exists():
+        raise DevCliError(f"Frontend web project not found: {project_path}")
+
+    return start_background_command_with_log(
+        cmd=["dotnet", "run", "--project", str(project_path), "--no-restore", "--no-launch-profile"],
+        cwd=frontend_root,
+        log_name="frontend-web.log",
+        config=config,
+        env=build_subprocess_env(
+            extra={
+                "ASPNETCORE_URLS": frontend_url,
+                "ASPNETCORE_ENVIRONMENT": "Development",
+            }
+        ),
+    )
 
 
 def run_tests(config: DevConfig, *, run_integration: bool, restore: bool = True) -> None:
@@ -838,7 +1813,8 @@ def run_api_spec_lint(config: DevConfig) -> None:
     result = run_command(
         [
             "npx",
-            "@redocly/cli",
+            "--yes",
+            f"@redocly/cli@{REDOCLY_CLI_VERSION}",
             "lint",
             str(spec_path),
             "--skip-rule",
@@ -862,6 +1838,7 @@ def run_api_spec_lint(config: DevConfig) -> None:
             "Redocly OpenAPI lint failed."
             + (f"\n{combined_output}" if combined_output else "")
         )
+    print("OpenAPI spec lint passed.")
 
 
 def run_api_contract_tests(
@@ -911,6 +1888,8 @@ def run_api_contract_tests(
     if start_backend:
         if not is_local_http_url(base_url):
             raise DevCliError("--start-backend can only be used with a local base URL.")
+        if is_https_url(base_url):
+            ensure_dotnet_dev_certificate_trusted()
         start_dependencies(config)
         write_step("Starting backend API in the background for contract tests")
         backend_process, backend_log_path = start_backend_api_process(config)
@@ -950,6 +1929,7 @@ def run_api_contract_tests(
                 str(report_path),
                 "--working-dir",
                 str(api_root),
+                *(["--insecure"] if is_local_http_url(base_url) and is_https_url(base_url) else []),
             ],
             cwd=api_root,
         )
@@ -1072,13 +2052,13 @@ def run_doctor(config: DevConfig) -> None:
             print(f"Missing command: {cmd}")
             issues.append(f"Required command missing from PATH: {cmd}")
 
-    for cmd in ("node", "postman"):
+    for cmd in ("node", "npm", "postman"):
         if shutil.which(cmd):
-            print(f"Found (API workflow): {cmd}")
+            print(f"Found (API/frontend workflow): {cmd}")
         else:
-            print(f"Missing optional API workflow command: {cmd}")
+            print(f"Missing optional API/frontend workflow command: {cmd}")
             optional_issues.append(
-                f"Optional API workflow command missing from PATH: {cmd}"
+                f"Optional API/frontend workflow command missing from PATH: {cmd}"
             )
 
     backend_path = config.repo_root / "backend"
@@ -1127,6 +2107,8 @@ def run_doctor(config: DevConfig) -> None:
         print()
         print("Suggested next steps:")
         print("  python ./scripts/dev.py bootstrap")
+        print("  python ./scripts/dev.py web --watch-css")
+        print("  python ./scripts/dev.py frontend --watch-css")
         print("  python ./scripts/dev.py up --dependencies-only")
         print("  python ./scripts/dev.py up --skip-restore")
         print("  python ./scripts/dev.py api-test --start-backend --skip-lint")
@@ -1140,6 +2122,8 @@ def run_doctor(config: DevConfig) -> None:
         print()
         print("Suggested next steps:")
         print("  python ./scripts/dev.py bootstrap")
+        print("  python ./scripts/dev.py web --watch-css")
+        print("  python ./scripts/dev.py frontend --watch-css")
         print("  python ./scripts/dev.py up --dependencies-only")
         print("  python ./scripts/dev.py up --skip-restore")
         print("  python ./scripts/dev.py api-test --start-backend --skip-lint")
@@ -1352,7 +2336,7 @@ def build_parser() -> argparse.ArgumentParser:
     """
 
     parser = argparse.ArgumentParser(
-        description="Developer automation CLI for local backend/API workflows.",
+        description="Developer automation CLI for local backend/frontend/API workflows.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -1385,7 +2369,7 @@ def build_parser() -> argparse.ArgumentParser:
     shared.add_argument(
         "--keycloak-ready-url",
         "-KeycloakReadyUrl",
-        default="http://localhost:8080/realms/board-third-party-library/.well-known/openid-configuration",
+        default="https://localhost:8443/realms/board-third-party-library/.well-known/openid-configuration",
         help="Keycloak readiness URL",
     )
     shared.add_argument(
@@ -1435,6 +2419,124 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip dotnet restore before dotnet run",
     )
 
+    frontend = subparsers.add_parser(
+        "frontend",
+        parents=[shared],
+        help="Run the frontend web UI from the repository root",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    frontend.add_argument(
+        "--bootstrap",
+        "-Bootstrap",
+        action="store_true",
+        help="Run submodule initialization checks before startup",
+    )
+    frontend.add_argument(
+        "--skip-npm-install",
+        "-SkipNpmInstall",
+        action="store_true",
+        help="Skip npm dependency installation before launch",
+    )
+    frontend.add_argument(
+        "--skip-css-build",
+        "-SkipCssBuild",
+        action="store_true",
+        help="Skip the pre-launch Tailwind CSS build",
+    )
+    frontend.add_argument(
+        "--skip-restore",
+        "-SkipRestore",
+        action="store_true",
+        help="Skip dotnet restore before dotnet run",
+    )
+    frontend.add_argument(
+        "--watch-css",
+        "-WatchCss",
+        action="store_true",
+        help="Run Tailwind CSS watch in a background process while the app is running",
+    )
+
+    web = subparsers.add_parser(
+        "web",
+        parents=[shared],
+        help="Run dependencies, backend API, and frontend web UI together",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    web.add_argument(
+        "--bootstrap",
+        "-Bootstrap",
+        action="store_true",
+        help="Run submodule initialization checks before startup",
+    )
+    web.add_argument(
+        "--skip-backend-restore",
+        "-SkipBackendRestore",
+        action="store_true",
+        help="Skip backend dotnet restore before startup",
+    )
+    web.add_argument(
+        "--skip-npm-install",
+        "-SkipNpmInstall",
+        action="store_true",
+        help="Skip frontend npm dependency installation before startup",
+    )
+    web.add_argument(
+        "--skip-css-build",
+        "-SkipCssBuild",
+        action="store_true",
+        help="Skip the pre-launch Tailwind CSS build",
+    )
+    web.add_argument(
+        "--skip-frontend-restore",
+        "-SkipFrontendRestore",
+        action="store_true",
+        help="Skip frontend dotnet restore before startup",
+    )
+    web.add_argument(
+        "--watch-css",
+        "-WatchCss",
+        action="store_true",
+        help="Run Tailwind CSS watch in a background process while the app is running",
+    )
+    web.add_argument(
+        "--no-browser",
+        "-NoBrowser",
+        action="store_true",
+        help="Do not automatically open the frontend URL in the default browser",
+    )
+    web.add_argument(
+        "--backend-url",
+        "-BackendUrl",
+        default="https://localhost:7085",
+        help="Backend URL to bind and probe",
+    )
+    web.add_argument(
+        "--frontend-url",
+        "-FrontendUrl",
+        default="https://localhost:7277",
+        help="Frontend URL to bind, probe, and open",
+    )
+
+    web_status = subparsers.add_parser(
+        "web-status",
+        parents=[shared],
+        help="Show status for the locally launched root web stack",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    web_stop = subparsers.add_parser(
+        "web-stop",
+        parents=[shared],
+        help="Stop the locally launched root web stack",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    web_stop.add_argument(
+        "--down-dependencies",
+        "-DownDependencies",
+        action="store_true",
+        help="Also stop Docker Compose dependencies after stopping app processes",
+    )
+
     subparsers.add_parser(
         "down",
         parents=[shared],
@@ -1477,7 +2579,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument(
         "--base-url",
         "-BaseUrl",
-        default="http://localhost:5085",
+        default="https://localhost:7085",
         help="Base URL injected into contract test runs",
     )
     verify.add_argument(
@@ -1541,7 +2643,7 @@ def build_parser() -> argparse.ArgumentParser:
     api_test.add_argument(
         "--base-url",
         "-BaseUrl",
-        default="http://localhost:5085",
+        default="https://localhost:7085",
         help="Base URL injected into the collection run",
     )
     api_test.add_argument(
@@ -1658,6 +2760,12 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
         keycloak_ready_url=args.keycloak_ready_url,
         backend_project=args.backend_project,
         backend_solution=args.backend_solution,
+        frontend_root="frontend",
+        frontend_web_project="frontend/src/Board.ThirdPartyLibrary.Frontend.Web/Board.ThirdPartyLibrary.Frontend.Web.csproj",
+        frontend_solution="frontend/Board.ThirdPartyLibrary.Frontend.slnx",
+        frontend_package_json="frontend/package.json",
+        backend_base_url="https://localhost:7085",
+        frontend_base_url="https://localhost:7277",
         api_root="api",
         api_spec="api/postman/specs/board-third-party-library-api.v1.openapi.yaml",
         api_contract_collection="api/postman/collections/board-third-party-library-api.contract-tests.postman_collection.json",
@@ -1698,6 +2806,32 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print("Run the API with: python ./scripts/dev.py up --skip-restore")
                 return 0
             run_backend_api(config, do_restore=not args.skip_restore)
+        elif args.command == "frontend":
+            run_frontend_web_ui(
+                config,
+                bootstrap=args.bootstrap,
+                do_npm_install=not args.skip_npm_install,
+                do_css_build=not args.skip_css_build,
+                do_restore=not args.skip_restore,
+                watch_css=args.watch_css,
+            )
+        elif args.command == "web":
+            run_full_local_web_stack(
+                config,
+                bootstrap=args.bootstrap,
+                do_backend_restore=not args.skip_backend_restore,
+                do_frontend_npm_install=not args.skip_npm_install,
+                do_frontend_css_build=not args.skip_css_build,
+                do_frontend_restore=not args.skip_frontend_restore,
+                watch_css=args.watch_css,
+                open_browser_on_ready=not args.no_browser,
+                backend_url=args.backend_url,
+                frontend_url=args.frontend_url,
+            )
+        elif args.command == "web-status":
+            show_web_stack_status(config)
+        elif args.command == "web-stop":
+            stop_web_stack(config, stop_dependencies_too=args.down_dependencies)
         elif args.command == "down":
             stop_dependencies(config)
             print("Dependencies stopped.")
