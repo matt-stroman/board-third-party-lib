@@ -51,6 +51,8 @@ class DevConfig:
         postgres_container_name: Expected local PostgreSQL container name.
         postgres_user: PostgreSQL username for local commands.
         postgres_database: PostgreSQL database name for local commands.
+        mailpit_container_name: Expected local Mailpit container name.
+        mailpit_ready_url: URL used to verify local Mailpit readiness.
         keycloak_container_name: Expected local Keycloak container name.
         keycloak_ready_url: URL used to verify local Keycloak readiness.
         backend_project: Relative path to the backend API project file.
@@ -75,6 +77,8 @@ class DevConfig:
     postgres_container_name: str
     postgres_user: str
     postgres_database: str
+    mailpit_container_name: str
+    mailpit_ready_url: str
     keycloak_container_name: str
     keycloak_ready_url: str
     backend_project: str
@@ -100,6 +104,8 @@ class DevCliError(RuntimeError):
 
 KEYCLOAK_DEV_CERT_RELATIVE_PATH = "backend/keycloak/certs/boardtpl-localhost-devcert.pfx"
 KEYCLOAK_DEV_CERT_PASSWORD = "boardtpl-devcert"
+MAILPIT_SERVER_CERT_RELATIVE_PATH = "backend/mailpit/certs/server.crt"
+MAILPIT_SERVER_KEY_RELATIVE_PATH = "backend/mailpit/certs/server.key"
 POSTGRES_SERVER_CERT_RELATIVE_PATH = "backend/postgres/certs/server.crt"
 POSTGRES_SERVER_KEY_RELATIVE_PATH = "backend/postgres/certs/server.key"
 REDOCLY_CLI_VERSION = "2.20.3"
@@ -155,6 +161,32 @@ def get_postgres_server_key_path(config: DevConfig) -> Path:
     """
 
     return config.repo_root / POSTGRES_SERVER_KEY_RELATIVE_PATH
+
+
+def get_mailpit_server_certificate_path(config: DevConfig) -> Path:
+    """Return the PEM certificate path used by local Mailpit HTTPS and STARTTLS.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        PEM certificate file path.
+    """
+
+    return config.repo_root / MAILPIT_SERVER_CERT_RELATIVE_PATH
+
+
+def get_mailpit_server_key_path(config: DevConfig) -> Path:
+    """Return the PEM private key path used by local Mailpit HTTPS and STARTTLS.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        PEM private key file path.
+    """
+
+    return config.repo_root / MAILPIT_SERVER_KEY_RELATIVE_PATH
 
 
 def write_step(message: str) -> None:
@@ -643,6 +675,100 @@ def ensure_postgres_tls_material_exported(config: DevConfig) -> tuple[Path, Path
     return certificate_path, private_key_path
 
 
+def ensure_mailpit_tls_material_exported(config: DevConfig) -> tuple[Path, Path]:
+    """Create and trust a local TLS certificate for Mailpit HTTPS and SMTP STARTTLS.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        Tuple of ``(certificate_path, private_key_path)``.
+
+    Raises:
+        DevCliError: If PowerShell is unavailable or certificate generation fails.
+    """
+
+    powershell_executable = get_powershell_executable()
+    if powershell_executable is None:
+        raise DevCliError("PowerShell is required to export Mailpit TLS certificate material on this machine.")
+
+    certificate_path = get_mailpit_server_certificate_path(config)
+    private_key_path = get_mailpit_server_key_path(config)
+    certificate_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if certificate_path.exists() and private_key_path.exists():
+        powershell_script = (
+            "$ErrorActionPreference='Stop'; "
+            f"$certPath = '{certificate_path}'; "
+            "$certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certPath); "
+            "$store = [System.Security.Cryptography.X509Certificates.X509Store]::new('Root', 'CurrentUser'); "
+            "$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite); "
+            "$matches = $store.Certificates.Find("
+            "[System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, "
+            "$certificate.Thumbprint, "
+            "$false"
+            "); "
+            "if ($matches.Count -eq 0) { $store.Add($certificate) }; "
+            "$store.Close()"
+        )
+        write_step("Trusting existing local Mailpit TLS certificate")
+    else:
+        powershell_script = (
+            "$ErrorActionPreference='Stop'; "
+            f"$certPath = '{certificate_path}'; "
+            f"$keyPath = '{private_key_path}'; "
+            "$rsa = [System.Security.Cryptography.RSA]::Create(2048); "
+            "$request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new("
+            "'CN=localhost', "
+            "$rsa, "
+            "[System.Security.Cryptography.HashAlgorithmName]::SHA256, "
+            "[System.Security.Cryptography.RSASignaturePadding]::Pkcs1"
+            "); "
+            "$basicConstraints = [System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension]::new($false, $false, 0, $true); "
+            "$keyUsage = [System.Security.Cryptography.X509Certificates.X509KeyUsageExtension]::new("
+            "[System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::DigitalSignature -bor "
+            "[System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::KeyEncipherment, "
+            "$true"
+            "); "
+            "$ekuCollection = [System.Security.Cryptography.OidCollection]::new(); "
+            "$null = $ekuCollection.Add([System.Security.Cryptography.Oid]::new('1.3.6.1.5.5.7.3.1')); "
+            "$enhancedKeyUsage = [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]::new($ekuCollection, $true); "
+            "$sanBuilder = [System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder]::new(); "
+            "$sanBuilder.AddDnsName('localhost'); "
+            "$sanBuilder.AddDnsName('mailpit'); "
+            "$sanBuilder.AddDnsName('board_tpl_mailpit'); "
+            "$request.CertificateExtensions.Add($basicConstraints); "
+            "$request.CertificateExtensions.Add($keyUsage); "
+            "$request.CertificateExtensions.Add($enhancedKeyUsage); "
+            "$request.CertificateExtensions.Add($sanBuilder.Build()); "
+            "$request.CertificateExtensions.Add([System.Security.Cryptography.X509Certificates.X509SubjectKeyIdentifierExtension]::new($request.PublicKey, $false)); "
+            "$notBefore = [System.DateTimeOffset]::UtcNow.AddDays(-1); "
+            "$notAfter = $notBefore.AddYears(5); "
+            "$certificate = $request.CreateSelfSigned($notBefore, $notAfter); "
+            "[System.IO.File]::WriteAllText($certPath, $certificate.ExportCertificatePem()); "
+            "[System.IO.File]::WriteAllText($keyPath, $rsa.ExportPkcs8PrivateKeyPem()); "
+            "$store = [System.Security.Cryptography.X509Certificates.X509Store]::new('Root', 'CurrentUser'); "
+            "$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite); "
+            "$matches = $store.Certificates.Find("
+            "[System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, "
+            "$certificate.Thumbprint, "
+            "$false"
+            "); "
+            "if ($matches.Count -eq 0) { $store.Add($certificate) }; "
+            "$store.Close()"
+        )
+        write_step("Exporting local TLS certificate material for Mailpit")
+
+    run_command(
+        [powershell_executable, "-NoProfile", "-Command", powershell_script],
+        cwd=config.repo_root,
+        check=True,
+        capture_output=False,
+        text=True,
+    )
+    return certificate_path, private_key_path
+
+
 def probe_http_url(url: str, *, timeout_seconds: int = 5) -> tuple[bool, str | None]:
     """Check whether an HTTP endpoint is reachable.
 
@@ -1042,6 +1168,7 @@ def start_dependencies(config: DevConfig) -> None:
 
     ensure_docker_daemon_available()
     ensure_postgres_tls_material_exported(config)
+    ensure_mailpit_tls_material_exported(config)
     if is_https_url(config.keycloak_ready_url):
         ensure_keycloak_https_certificate_exported(config)
     compose_full_path = config.repo_root / config.compose_file
@@ -1075,6 +1202,21 @@ def start_dependencies(config: DevConfig) -> None:
             user=config.postgres_user,
             database=config.postgres_database,
         )
+
+    mailpit_state = get_docker_container_state(config.mailpit_container_name)
+    if mailpit_state == "running":
+        write_step(f"Reusing existing Mailpit container '{config.mailpit_container_name}' (already running)")
+    elif mailpit_state is not None:
+        write_step(
+            f"Starting existing Mailpit container '{config.mailpit_container_name}' "
+            f"(state: {mailpit_state})"
+        )
+        run_command(["docker", "start", config.mailpit_container_name])
+    else:
+        write_step("Starting Mailpit via docker compose")
+        invoke_docker_compose(config, ["up", "-d", "mailpit"])
+
+    wait_for_http_ready(url=config.mailpit_ready_url, description="Mailpit")
 
     keycloak_state = get_docker_container_state(config.keycloak_container_name)
     if keycloak_state == "running":
@@ -1114,6 +1256,13 @@ def stop_dependencies(config: DevConfig) -> None:
             "(likely not created by this compose project)."
         )
         print(f"Stop it manually if desired: docker stop {config.postgres_container_name}")
+    mailpit_state = get_docker_container_state(config.mailpit_container_name)
+    if mailpit_state is not None:
+        print(
+            f"Note: container '{config.mailpit_container_name}' still exists "
+            "(likely not created by this compose project)."
+        )
+        print(f"Stop it manually if desired: docker stop {config.mailpit_container_name}")
     keycloak_state = get_docker_container_state(config.keycloak_container_name)
     if keycloak_state is not None:
         print(
@@ -1163,6 +1312,21 @@ def show_status(config: DevConfig) -> None:
     if result.returncode != 0:
         print("Warning: PostgreSQL container is not ready (or container is not running).")
 
+    mailpit_state = get_docker_container_state(config.mailpit_container_name)
+    if mailpit_state is None:
+        print(f"Container '{config.mailpit_container_name}' was not found.")
+        return
+
+    write_step("Named Mailpit container status")
+    print(f"{config.mailpit_container_name} : {mailpit_state}")
+
+    write_step("Mailpit readiness")
+    mailpit_ready, mailpit_detail = probe_http_url(config.mailpit_ready_url)
+    if mailpit_ready:
+        print(f"{config.mailpit_ready_url} : ready")
+    else:
+        print(f"Warning: Mailpit readiness check failed: {mailpit_detail or 'unreachable'}")
+
     keycloak_state = get_docker_container_state(config.keycloak_container_name)
     if keycloak_state is None:
         print(f"Container '{config.keycloak_container_name}' was not found.")
@@ -1172,11 +1336,11 @@ def show_status(config: DevConfig) -> None:
     print(f"{config.keycloak_container_name} : {keycloak_state}")
 
     write_step("Keycloak readiness")
-    try:
-        with urllib.request.urlopen(config.keycloak_ready_url, timeout=5) as response:
-            print(f"{config.keycloak_ready_url} : HTTP {response.status}")
-    except (http.client.RemoteDisconnected, urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as ex:
-        print(f"Warning: Keycloak readiness check failed: {ex}")
+    keycloak_ready, keycloak_detail = probe_http_url(config.keycloak_ready_url)
+    if keycloak_ready:
+        print(f"{config.keycloak_ready_url} : ready")
+    else:
+        print(f"Warning: Keycloak readiness check failed: {keycloak_detail or 'unreachable'}")
 
 
 def run_backend_api(config: DevConfig, *, do_restore: bool) -> None:
@@ -2756,6 +2920,8 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
         postgres_container_name=args.postgres_container_name,
         postgres_user=args.postgres_user,
         postgres_database=args.postgres_database,
+        mailpit_container_name="board_tpl_mailpit",
+        mailpit_ready_url="https://localhost:8025/readyz",
         keycloak_container_name=args.keycloak_container_name,
         keycloak_ready_url=args.keycloak_ready_url,
         backend_project=args.backend_project,
