@@ -21,6 +21,7 @@ It exists to make one distinction explicit:
 - Wave 3 titles and versioned metadata are now implemented
 - Wave 4 media, releases, and APK artifact metadata are now implemented
 - Wave 5 supported publishers and external acquisition bindings are now implemented
+- review-based developer enrollment and moderator approval are implemented as part of the current identity foundation
 - later acquisition, commerce, and install-delivery waves still remain planned work
 
 Use this document when deciding whether something belongs in the maintained current contract or in a future wave plan.
@@ -38,10 +39,11 @@ The project remains aligned to these decisions:
 
 ## Current Implemented State
 
-As of March 2, 2026, the maintained implemented surface is:
+As of March 3, 2026, the maintained implemented surface is:
 
 - health endpoints: `/`, `/health/live`, `/health/ready`
-- Keycloak-backed identity endpoints: `/identity/roles`, `/identity/auth/config`, `/identity/auth/login`, `/identity/auth/callback`, `/identity/me`, `POST /identity/me/developer-enrollment`
+- Keycloak-backed identity endpoints: `/identity/roles`, `/identity/auth/config`, `/identity/auth/login`, `/identity/auth/callback`, `/identity/me`, `GET|POST /identity/me/developer-enrollment`
+- moderation endpoints: `GET /moderation/developer-enrollment-requests`, `POST /moderation/developer-enrollment-requests/{requestId}/approve`, `POST /moderation/developer-enrollment-requests/{requestId}/reject`
 - Board profile endpoints: `GET|PUT|DELETE /identity/me/board-profile`
 - organization endpoints: public `GET /organizations`, public `GET /organizations/{slug}`, authenticated `POST|PUT|DELETE /organizations...`, and authenticated membership management endpoints
 - catalog endpoints: public `GET /catalog`, public `GET /catalog/{organizationSlug}/{titleSlug}`, authenticated title/metadata management endpoints, authenticated media/release/artifact management endpoints, public `GET /supported-publishers`, and authenticated connection/acquisition-binding management endpoints
@@ -70,6 +72,7 @@ To avoid contract drift, the project should treat the current backend as a compl
 - bearer-token validation and current-user projection from claims
 - platform role catalog exposure
 - health/readiness automation and test coverage
+- review-based developer enrollment workflow with PostgreSQL-backed request status and moderator approval/rejection endpoints
 
 ### Wave 1 (implemented)
 

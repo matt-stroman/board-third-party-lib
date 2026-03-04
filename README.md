@@ -4,7 +4,7 @@ A solution for third party developers for the Board ecosystem to use to register
 
 Current implementation status:
 
-- the maintained API/backend surface includes the Keycloak-backed identity and health foundation, authenticated developer enrollment, and Waves 1 through 5 of the current schema plan
+- the maintained API/backend surface includes the Keycloak-backed identity and health foundation, review-based developer enrollment plus moderator approval, and Waves 1 through 5 of the current schema plan
 - EF Core migrations for `users`, `user_board_profiles`, `organizations`, `organization_memberships`, `titles`, `title_metadata_versions`, `title_media_assets`, `title_releases`, `release_artifacts`, `supported_publishers`, `integration_connections`, and `title_integration_bindings` are implemented
 - the next planned implementation wave is Wave 6 unified commerce and entitlements
 
