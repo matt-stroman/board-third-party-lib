@@ -8,4 +8,5 @@ Use [`docs/`](../docs/) for developer-facing documentation that explains how to 
 Current planning artifacts:
 
 - [`current-state-and-wave-plan.md`](current-state-and-wave-plan.md)
+- [`product-realignment-implementation-plan.md`](product-realignment-implementation-plan.md)
 - [`technology-fit-recommendation.md`](technology-fit-recommendation.md)

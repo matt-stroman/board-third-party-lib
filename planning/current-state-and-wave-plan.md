@@ -5,24 +5,20 @@
 - [Purpose](#purpose)
 - [Architecture Decisions Reconfirmed](#architecture-decisions-reconfirmed)
 - [Current Implemented State](#current-implemented-state)
-- [Wave Realignment](#wave-realignment)
+- [Wave Plan](#wave-plan)
 - [Schema And Identity Boundary](#schema-and-identity-boundary)
 - [Delivery Rules For Future Waves](#delivery-rules-for-future-waves)
 
 ## Purpose
 
-This document records the currently aligned architecture and delivery plan after Wave 6 developer-enrollment workflow implementation.
+This document records the currently aligned architecture and delivery plan after completion of the current implemented baseline (foundation plus Waves 1 through 5).
 
-It exists to make one distinction explicit:
+It exists to keep one distinction explicit:
 
 - the repository already implements a usable API/authentication foundation
-- Wave 1 application-owned identity persistence is implemented
-- Wave 2 organizations and memberships are now implemented
-- Wave 3 titles and versioned metadata are now implemented
-- Wave 4 media, releases, and APK artifact metadata are now implemented
-- Wave 5 supported publishers and external acquisition bindings are now implemented
-- review-based developer enrollment and moderator approval are implemented as part of the current identity foundation
-- later acquisition, commerce, and install-delivery waves still remain planned work
+- Waves 1 through 5 relational work are implemented
+- the currently implemented identity workflow still includes review-based developer enrollment and moderator approval
+- the next planned implementation boundary is the product realignment program before commerce and install-delivery
 
 Use this document when deciding whether something belongs in the maintained current contract or in a future wave plan.
 
@@ -39,7 +35,7 @@ The project remains aligned to these decisions:
 
 ## Current Implemented State
 
-As of March 4, 2026, the maintained implemented surface is:
+As of March 5, 2026, the maintained implemented surface is:
 
 - health endpoints: `/`, `/health/live`, `/health/ready`
 - Keycloak-backed identity endpoints: `/identity/roles`, `/identity/auth/config`, `/identity/auth/login`, `/identity/auth/callback`, `/identity/me`, `GET|POST /identity/me/developer-enrollment`, `POST /identity/me/developer-enrollment/{requestId}/cancel`, `GET /identity/me/developer-enrollment/{requestId}/conversation`, `POST /identity/me/developer-enrollment/{requestId}/messages`, `GET /identity/me/developer-enrollment/{requestId}/attachments/{attachmentId}`, and `GET /identity/me/notifications`, `POST /identity/me/notifications/{notificationId}/read`
@@ -54,17 +50,21 @@ As of March 4, 2026, the maintained implemented surface is:
 
 Not yet implemented:
 
-- authenticated player library read models and personalization
-- private player wishlist management
-- Wave 6 unified commerce and entitlements
-- Wave 7 Board install-delivery flows
+- Wave 6 access and role realignment (self-service developer enrollment and verified-developer management)
+- Wave 7 studio terminology and collaboration model refactor
+- Wave 8 title listing/state/verification realignment
+- Wave 9 title reporting and moderation-action workflows
+- Wave 10 player-library foundation plus unified commerce and entitlements
+- Wave 11 Board install-delivery flows
 - configured Keycloak brokers for social/game platform SSO in the local realm import
 
 Because those later items are not implemented, they should not remain in the maintained current API contract unless they are being actively delivered in the same wave with tests first.
 
-## Wave Realignment
+## Wave Plan
 
-To avoid contract drift, the project should treat the current backend as a completed foundation plus Waves 1 through 5 baseline and start the next schema work from the Wave 6 boundary.
+To avoid contract drift, the project should treat the current backend as a completed foundation plus Waves 1 through 5 baseline, then execute the product realignment program before resuming commerce and install-delivery waves.
+
+The detailed realignment execution plan is maintained in [`planning/product-realignment-implementation-plan.md`](product-realignment-implementation-plan.md).
 
 ### Foundation (implemented)
 
@@ -133,24 +133,45 @@ Implemented Wave 5 behavior includes:
 
 It should also allow a custom publisher/store fallback when no supported registry entry fits, while keeping shared custom-publisher management endpoints out of scope.
 
-### Wave 6
+### Wave 6 (planned)
+
+Access and role realignment:
+
+- replace review-based developer approval with immediate self-service developer enrollment
+- add additive `verified_developer` role assignment/removal managed by moderator and above
+- align identity/moderation contract and authorization behavior to the additive role model
+
+### Wave 7 (planned)
+
+Studio domain rename and collaboration model:
+
+- replace `organization` terminology with `studio` in API, business, and documentation surfaces
+- enforce owner versus contributor permissions for studio management and title management
+- migrate existing persisted data to studio-named schema and route keys
+
+### Wave 8 (planned)
+
+Title listing/state/verification realignment:
+
+- replace visibility state model with listed/unlisted boolean control
+- adopt lifecycle states `draft`, `demo`, `early_access`, `published`, `flagged`, and `archived`
+- add title verification model tied to releases with carry-forward and reset behavior
+
+### Wave 9 (planned)
+
+Title reporting and moderation actions:
+
+- player title reporting with required issue description and optional attachments
+- moderator triage workflows for hide listing, clarification, and flag management
+- workflow notifications and auditability for developer/moderator follow-up
+
+### Wave 10 (planned)
 
 Player library foundation, unified commerce, and entitlements.
 
-This wave should introduce the first authenticated player-owned library surface and continue building on the player-first onboarding flow already in place.
-
-Planned Wave 6 behavior includes:
-
-- authenticated player-library read models for owned titles
-- wishlist persistence and private wishlist retrieval
-- room for future player collections and favorites in the same player-owned surface
-- purchase state and ownership modeling inside the library rather than relying only on external acquisition links
-
-### Wave 7
+### Wave 11 (planned)
 
 Board-native download and install delivery.
-
-This wave should make artifact delivery and installation a first-party Board experience after commerce/entitlement rules are defined.
 
 ## Schema And Identity Boundary
 

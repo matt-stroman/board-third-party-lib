@@ -6,7 +6,7 @@ Current implementation status:
 
 - the maintained API/backend surface includes the Keycloak-backed identity and health foundation, review-based developer enrollment plus moderator approval, and Waves 1 through 5 of the current schema plan
 - EF Core migrations for `users`, `user_board_profiles`, `organizations`, `organization_memberships`, `titles`, `title_metadata_versions`, `title_media_assets`, `title_releases`, `release_artifacts`, `supported_publishers`, `integration_connections`, and `title_integration_bindings` are implemented
-- the next planned implementation wave is Wave 6 unified commerce and entitlements
+- the next planned implementation wave is Wave 6 product realignment (access/role model shift, then studio/title moderation realignment)
 
 ## Table of Contents
 
@@ -62,6 +62,7 @@ git submodule status
 
 - Current planning and implementation alignment:
   - Current architecture and wave alignment: [`planning/current-state-and-wave-plan.md`](planning/current-state-and-wave-plan.md)
+  - Product realignment wave implementation plan: [`planning/product-realignment-implementation-plan.md`](planning/product-realignment-implementation-plan.md)
   - Backend schema implementation plan: [`backend/planning/mvp-schema-implementation-plan.md`](backend/planning/mvp-schema-implementation-plan.md)
   - Wave 5 publisher/platform research notes: [`planning/wave-5-publisher-research-notes.md`](planning/wave-5-publisher-research-notes.md)
   - Technology recommendation: [`planning/technology-fit-recommendation.md`](planning/technology-fit-recommendation.md)
