@@ -98,6 +98,9 @@ Status: planned
 
 - reintroduce player-owned library projections backed by entitlement-ready schema
 - implement authenticated player wishlist CRUD surface and persistence
+- add player-facing browse/title interactions for library and wishlist actions:
+  - wishlist toggle affordance on title cards/details (heart icon)
+  - ownership action to place a title into the player library projection
 - restore player-library and wishlist contract coverage that was removed from active-wave delivery
 - test gate:
   - contract tests for player library and wishlist endpoints
