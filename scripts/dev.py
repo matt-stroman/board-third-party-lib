@@ -1095,6 +1095,37 @@ def start_background_command(
     return process
 
 
+DOTNET_WATCH_ENC_CRASH_MARKERS = (
+    "An unexpected error occurred: System.InvalidOperationException: Unexpected value 'Block'",
+    "Microsoft.CodeAnalysis.CSharp.LambdaUtilities.TryGetCorrespondingLambdaBody",
+)
+
+
+def is_known_dotnet_watch_enc_crash(*, return_code: int, log_path: Path | None = None) -> bool:
+    """Return whether a ``dotnet watch`` exit matches the known Roslyn EnC crash signature.
+
+    Args:
+        return_code: Process exit code from ``dotnet watch``.
+        log_path: Optional log file path to inspect for crash markers.
+
+    Returns:
+        ``True`` when the exit/signature matches the known crash pattern.
+    """
+
+    if return_code != -1:
+        return False
+
+    if log_path is None or not log_path.exists():
+        return True
+
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return True
+
+    return any(marker in text for marker in DOTNET_WATCH_ENC_CRASH_MARKERS)
+
+
 def ensure_api_base_url_reachable(base_url: str) -> None:
     """Ensure the target API base URL is reachable before contract execution.
 
@@ -1491,13 +1522,29 @@ def run_frontend_web_ui(
             )
             print(f"Tailwind watch log: {css_watch_log_path}")
 
-        write_step(f"Starting frontend web UI with hot reload at {config.frontend_base_url} (Ctrl+C to stop)")
-        run_command(
-            get_frontend_web_launch_command(project_path),
-            cwd=frontend_root,
-            check=True,
-            env=build_frontend_web_environment(frontend_url=config.frontend_base_url),
-        )
+        launch_mode = "with hot reload" if hot_reload else "without hot reload"
+        write_step(f"Starting frontend web UI {launch_mode} at {config.frontend_base_url} (Ctrl+C to stop)")
+        while True:
+            result = run_command(
+                get_frontend_web_launch_command(project_path, hot_reload=hot_reload),
+                cwd=frontend_root,
+                check=False,
+                env=build_frontend_web_environment(frontend_url=config.frontend_base_url, hot_reload=hot_reload),
+            )
+            if result.returncode == 0:
+                break
+
+            if hot_reload and is_known_dotnet_watch_enc_crash(return_code=result.returncode):
+                print(
+                    "dotnet watch exited due a known Roslyn hot-reload compiler crash. "
+                    "Restarting watch automatically in 2 seconds..."
+                )
+                time.sleep(2)
+                continue
+
+            raise DevCliError(
+                f"Frontend web UI exited unexpectedly (exit code {result.returncode})."
+            )
     finally:
         if css_watch_process is not None:
             write_step("Stopping frontend Tailwind watch")
@@ -1611,10 +1658,12 @@ def run_full_local_web_stack(
             )
             print(f"Tailwind watch log: {css_watch_log_path}")
 
-        write_step("Starting frontend web UI with hot reload in the background")
+        launch_mode = "with hot reload" if hot_reload else "without hot reload"
+        write_step(f"Starting frontend web UI {launch_mode} in the background")
         frontend_process, frontend_log_path = start_frontend_web_process_with_log(
             config,
             frontend_url=frontend_url,
+            hot_reload=hot_reload,
         )
         print(f"Frontend log: {frontend_log_path}")
         wait_for_http_ready(url=frontend_url, description="Frontend web UI")
@@ -1655,8 +1704,33 @@ def run_full_local_web_stack(
                 )
 
             if frontend_process.poll() is not None:
+                frontend_return_code = frontend_process.returncode or 0
+                if hot_reload and is_known_dotnet_watch_enc_crash(
+                    return_code=frontend_return_code,
+                    log_path=frontend_log_path,
+                ):
+                    write_step(
+                        "Frontend dotnet watch hit a known Roslyn hot-reload compiler crash; restarting automatically"
+                    )
+                    frontend_process, frontend_log_path = start_frontend_web_process_with_log(
+                        config,
+                        frontend_url=frontend_url,
+                        hot_reload=hot_reload,
+                    )
+                    print(f"Frontend log: {frontend_log_path}")
+                    wait_for_http_ready(url=frontend_url, description="Frontend web UI")
+
+                    state["frontend"] = {
+                        "pid": frontend_process.pid,
+                        "url": frontend_url,
+                        "log_path": str(frontend_log_path),
+                    }
+                    save_web_stack_state(config, state=state)
+                    continue
+
                 raise DevCliError(
-                    f"Frontend web UI exited unexpectedly. Review log: {frontend_log_path}"
+                    f"Frontend web UI exited unexpectedly (exit code {frontend_return_code}). "
+                    f"Review log: {frontend_log_path}"
                 )
     except KeyboardInterrupt:
         print("\nStopping local web stack.")
@@ -1796,48 +1870,56 @@ def start_background_command_with_log(
     return process, log_path
 
 
-def get_frontend_web_launch_command(project_path: Path) -> list[str]:
-    """Return the frontend web launch command with Razor hot reload enabled.
+def get_frontend_web_launch_command(project_path: Path, *, hot_reload: bool) -> list[str]:
+    """Return the frontend web launch command.
 
     Args:
         project_path: Frontend web project path.
+        hot_reload: Whether to launch with ``dotnet watch``.
 
     Returns:
-        Command tokens for launching the frontend with ``dotnet watch run``.
+        Command tokens for launching the frontend web app.
     """
 
-    return ["dotnet", "watch", "--project", str(project_path), "run", "--no-restore", "--no-launch-profile"]
+    if hot_reload:
+        return ["dotnet", "watch", "--project", str(project_path), "run", "--no-restore", "--no-launch-profile"]
+
+    return ["dotnet", "run", "--project", str(project_path), "--no-restore", "--no-launch-profile"]
 
 
-def build_frontend_web_environment(*, frontend_url: str) -> dict[str, str]:
-    """Build the environment used by frontend web runs with hot reload.
+def build_frontend_web_environment(*, frontend_url: str, hot_reload: bool) -> dict[str, str]:
+    """Build the environment used by frontend web runs.
 
     Args:
         frontend_url: URL the frontend should bind to.
+        hot_reload: Whether frontend hot reload is enabled.
 
     Returns:
         Environment variables for the frontend process.
     """
 
-    return build_subprocess_env(
-        extra={
-            "ASPNETCORE_URLS": frontend_url,
-            "ASPNETCORE_ENVIRONMENT": "Development",
-            "DOTNET_WATCH_RESTART_ON_RUDE_EDIT": "true",
-        }
-    )
+    extra = {
+        "ASPNETCORE_URLS": frontend_url,
+        "ASPNETCORE_ENVIRONMENT": "Development",
+    }
+    if hot_reload:
+        extra["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true"
+
+    return build_subprocess_env(extra=extra)
 
 
 def start_frontend_web_process_with_log(
     config: DevConfig,
     *,
     frontend_url: str,
+    hot_reload: bool,
 ) -> tuple[subprocess.Popen, Path]:
     """Start the frontend web app and return both process and log path.
 
     Args:
         config: CLI configuration containing frontend paths.
         frontend_url: URL the frontend should bind to.
+        hot_reload: Whether frontend hot reload is enabled.
 
     Returns:
         Tuple of process handle and log file path.
@@ -1850,11 +1932,11 @@ def start_frontend_web_process_with_log(
         raise DevCliError(f"Frontend web project not found: {project_path}")
 
     return start_background_command_with_log(
-        cmd=get_frontend_web_launch_command(project_path),
+        cmd=get_frontend_web_launch_command(project_path, hot_reload=hot_reload),
         cwd=frontend_root,
         log_name="frontend-web.log",
         config=config,
-        env=build_frontend_web_environment(frontend_url=frontend_url),
+        env=build_frontend_web_environment(frontend_url=frontend_url, hot_reload=hot_reload),
     )
 
 
