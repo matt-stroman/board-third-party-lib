@@ -109,22 +109,24 @@ Implemented Wave 6 behavior includes:
 - developer-access checks that tolerate stale bearer role claims by rechecking Keycloak
 - removal of deprecated enrollment workflow persistence and API/UI surfaces (request queues, workflow conversations/attachments, and in-app notifications)
 
-### Wave 7 (planned)
+### Wave 7 (in progress)
 
-Player library foundation, unified commerce, and entitlements.
+Developer and moderation workflow-shell realignment.
 
-Planned Wave 7 behavior includes:
+Wave 7 behavior being delivered includes:
 
-- authenticated player-library read models for owned titles
-- wishlist persistence and private wishlist retrieval
-- room for future player collections and favorites in the same player-owned surface
-- purchase state and ownership modeling inside the library rather than relying only on external acquisition links
+- keep `/develop` as a shared player/developer entry where players can self-enable developer access
+- show minimal onboarding UX on `/develop` for player-only accounts
+- render developer console workflows in-place on `/develop` with top domain tabs and contextual side navigation
+- add `/moderate` workspace plus a header-level `Moderate` nav item shown only for moderator-role users
+- mirror the same workflow-shell pattern between `/develop` and `/moderate` for consistent navigation
+- wire frontend moderation actions to existing verified-developer role mutation endpoints
 
 ### Wave 8 (planned)
 
-Board-native download and install delivery.
+Player library foundation, unified commerce, and entitlements.
 
-This wave should make artifact delivery and installation a first-party Board experience after commerce and entitlement rules are defined.
+This wave should introduce player-owned library read models, wishlist state, and purchase/entitlement modeling before Board-native install delivery.
 
 ## Schema And Identity Boundary
 
