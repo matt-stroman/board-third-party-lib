@@ -104,6 +104,8 @@ jobs:
         run: npm install -g postman-cli@1.29.5
 
       - name: Run API contract tests
+        env:
+          ConnectionStrings__BoardLibrary: Host=localhost;Port=5432;Database=board_tpl;Username=board_tpl_user;Password=board_tpl_password;SSL Mode=Require;Trust Server Certificate=true
         run: python ./scripts/dev.py api-test --start-backend --skip-lint
 
   backend-unit-tests:
