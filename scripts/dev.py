@@ -1167,11 +1167,12 @@ def restore_backend(config: DevConfig) -> None:
     run_command(["dotnet", "restore", str(solution_path)], cwd=backend_root)
 
 
-def start_dependencies(config: DevConfig) -> None:
-    """Start/reuse the local PostgreSQL and Keycloak dependencies and wait until they are ready.
+def start_dependencies(config: DevConfig, *, include_keycloak: bool = True) -> None:
+    """Start/reuse local dependencies and wait until they are ready.
 
     Args:
         config: CLI configuration containing compose and local dependency settings.
+        include_keycloak: Whether to start and wait for Keycloak readiness.
 
     Returns:
         None.
@@ -1184,7 +1185,7 @@ def start_dependencies(config: DevConfig) -> None:
     ensure_docker_daemon_available()
     ensure_postgres_tls_material_exported(config)
     ensure_mailpit_tls_material_exported(config)
-    if is_https_url(config.keycloak_ready_url):
+    if include_keycloak and is_https_url(config.keycloak_ready_url):
         ensure_keycloak_https_certificate_exported(config)
     compose_full_path = config.repo_root / config.compose_file
     if not compose_full_path.exists():
@@ -1233,24 +1234,25 @@ def start_dependencies(config: DevConfig) -> None:
 
     wait_for_http_ready(url=config.mailpit_ready_url, description="Mailpit")
 
-    keycloak_state = get_docker_container_state(config.keycloak_container_name)
-    if keycloak_state == "running":
-        write_step(f"Reusing existing Keycloak container '{config.keycloak_container_name}' (already running)")
-    elif keycloak_state is not None:
-        write_step(
-            f"Starting existing Keycloak container '{config.keycloak_container_name}' "
-            f"(state: {keycloak_state})"
-        )
-        run_command(["docker", "start", config.keycloak_container_name])
-    else:
-        write_step("Starting Keycloak via docker compose")
-        invoke_docker_compose(config, ["up", "-d", "keycloak"])
+    if include_keycloak:
+        keycloak_state = get_docker_container_state(config.keycloak_container_name)
+        if keycloak_state == "running":
+            write_step(f"Reusing existing Keycloak container '{config.keycloak_container_name}' (already running)")
+        elif keycloak_state is not None:
+            write_step(
+                f"Starting existing Keycloak container '{config.keycloak_container_name}' "
+                f"(state: {keycloak_state})"
+            )
+            run_command(["docker", "start", config.keycloak_container_name])
+        else:
+            write_step("Starting Keycloak via docker compose")
+            invoke_docker_compose(config, ["up", "-d", "keycloak"])
 
-    wait_for_http_ready(
-        url=config.keycloak_ready_url,
-        description="Keycloak",
-        timeout_seconds=KEYCLOAK_READY_TIMEOUT_SECONDS,
-    )
+        wait_for_http_ready(
+            url=config.keycloak_ready_url,
+            description="Keycloak",
+            timeout_seconds=KEYCLOAK_READY_TIMEOUT_SECONDS,
+        )
 
 
 def stop_dependencies(config: DevConfig) -> None:
@@ -2138,7 +2140,7 @@ def run_api_contract_tests(
             raise DevCliError("--start-backend can only be used with a local base URL.")
         if is_https_url(base_url):
             ensure_dotnet_dev_certificate_trusted()
-        start_dependencies(config)
+        start_dependencies(config, include_keycloak=False)
         write_step("Starting backend API in the background for contract tests")
         backend_process, backend_log_path = start_backend_api_process(config)
         try:
