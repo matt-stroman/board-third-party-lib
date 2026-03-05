@@ -4,7 +4,7 @@
 
 - [Purpose](#purpose)
 - [Wave 6: Access And Role Realignment](#wave-6-access-and-role-realignment)
-- [Wave 7: Player Library Foundation](#wave-7-player-library-foundation)
+- [Wave 7: Developer And Moderation Workflow Console](#wave-7-developer-and-moderation-workflow-console)
 - [Wave 8: Unified Commerce And Entitlements](#wave-8-unified-commerce-and-entitlements)
 - [Wave 9: Board Install And Delivery](#wave-9-board-install-and-delivery)
 
@@ -53,15 +53,38 @@ Status: in progress
 - test gate:
   - docs reviewed in same PR as code changes
 
-## Wave 7: Player Library Foundation
+## Wave 7: Developer And Moderation Workflow Console
 
-Status: planned
+Status: in progress
 
-- player-owned library read model for authenticated users
-- wishlist persistence and private retrieval
-- initial player personalization primitives that do not require commerce integration
+### Chunk 1: Develop Workspace Shell
+
+- keep `/develop` as the player-to-developer activation surface
+- show minimal onboarding copy and `Become a Developer` action when only `player` access is present
+- render developer workflow shell only when developer access is enabled:
+  - top domain tabs (`Studios`, `Titles`, `Releases`, `Publishing`)
+  - left contextual workflow menu
+  - in-place workflow content switching without route changes for primary browse/manage tasks
 - test gate:
-  - contract tests + backend tests for player library and wishlist endpoints
+  - frontend route smoke tests cover player onboarding and developer shell markers
+
+### Chunk 2: Moderation Workspace Shell
+
+- add `/moderate` route for moderation workflows
+- add main-header `Moderate` nav item shown only for users with `moderator` role
+- mirror `/develop` shell pattern (domain/header + side workflow nav) for moderation UX consistency
+- include verified-developer role mutation workflow in moderation UI
+- test gate:
+  - frontend route smoke tests cover moderator and non-moderator route behavior
+
+### Chunk 3: Moderation API Client Wiring
+
+- wire frontend API client methods for:
+  - `PUT /moderation/developers/{developerSubject}/verified-developer`
+  - `DELETE /moderation/developers/{developerSubject}/verified-developer`
+- keep backend contract and behavior aligned with Wave 6 moderation endpoints
+- test gate:
+  - frontend test stub coverage updated for new API client methods
 
 ## Wave 8: Unified Commerce And Entitlements
 
