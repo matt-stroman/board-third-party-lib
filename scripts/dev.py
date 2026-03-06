@@ -3578,7 +3578,7 @@ def build_local_seed_sql_script(
     now = datetime.now(timezone.utc)
     sql_lines = [
         "BEGIN;",
-        "TRUNCATE TABLE release_artifacts, title_releases, title_media_assets, title_integration_bindings, integration_connections, title_metadata_versions, titles, organization_memberships, organizations, user_board_profiles RESTART IDENTITY CASCADE;",
+        "TRUNCATE TABLE release_artifacts, title_releases, title_media_assets, title_integration_bindings, integration_connections, title_metadata_versions, titles, studio_memberships, studios, user_board_profiles RESTART IDENTITY CASCADE;",
     ]
 
     app_user_ids: dict[str, str] = {}
@@ -3619,11 +3619,11 @@ def build_local_seed_sql_script(
         organization_ids[studio.slug] = organization_id
         logo_url = f"https://localhost:7277/test-images/generated/{studio.slug.replace('-', '_')}/logo.png"
         sql_lines.append(
-            "INSERT INTO organizations (id, slug, display_name, description, logo_url, created_at, updated_at) "
+            "INSERT INTO studios (id, slug, display_name, description, logo_url, created_at, updated_at) "
             f"VALUES ({sql_literal(organization_id)}, {sql_literal(studio.slug)}, {sql_literal(studio.display_name)}, {sql_literal(studio.description)}, {sql_literal(logo_url)}, {sql_literal(now)}, {sql_literal(now)});"
         )
         sql_lines.append(
-            "INSERT INTO organization_memberships (organization_id, user_id, role, created_at, updated_at) "
+            "INSERT INTO studio_memberships (organization_id, user_id, role, created_at, updated_at) "
             f"VALUES ({sql_literal(organization_id)}, {sql_literal(app_user_ids[studio.owner_username])}, 'owner', {sql_literal(now)}, {sql_literal(now)});"
         )
 
@@ -3633,7 +3633,7 @@ def build_local_seed_sql_script(
     ]
     for organization_slug, username, membership_role in contributor_memberships:
         sql_lines.append(
-            "INSERT INTO organization_memberships (organization_id, user_id, role, created_at, updated_at) "
+            "INSERT INTO studio_memberships (organization_id, user_id, role, created_at, updated_at) "
             f"VALUES ({sql_literal(organization_ids[organization_slug])}, {sql_literal(app_user_ids[username])}, {sql_literal(membership_role)}, {sql_literal(now)}, {sql_literal(now)});"
         )
 
