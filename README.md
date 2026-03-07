@@ -4,10 +4,11 @@ A solution for third party developers for the Board ecosystem to use to register
 
 Current implementation status:
 
-- the maintained API/backend/frontend surface includes the Keycloak-backed identity and health foundation, self-service developer access enrollment, verified developer role moderation endpoints, and implemented Waves 1 through 7 of the current plan
-- EF Core migrations for `users`, `user_board_profiles`, `studios`, `studio_memberships`, `studio_links`, `titles`, `title_metadata_versions`, `title_media_assets`, `title_releases`, `release_artifacts`, `supported_publishers`, `integration_connections`, and `title_integration_bindings` are implemented
-- Wave 7 now includes the developer/moderation/player workspace shells, in-place developer studio workflows, deterministic local Wave 7 seed data, shared browse/studio catalog UX, and studio public-branding/link management
-- the next planned implementation wave is Wave 8 unified commerce and entitlements
+- the maintained API/backend/frontend surface includes the Keycloak-backed identity and health foundation, self-service developer access enrollment, verified developer role moderation endpoints, player library and wishlist flows, title reporting with moderator and developer threads, and in-app notifications
+- EF Core migrations for `users`, `user_board_profiles`, `studios`, `studio_memberships`, `studio_links`, `titles`, `title_metadata_versions`, `title_media_assets`, `title_releases`, `release_artifacts`, `supported_publishers`, `integration_connections`, `title_integration_bindings`, `player_owned_titles`, `player_wishlist_entries`, `title_reports`, `title_report_messages`, `user_notifications`, and `user_platform_roles` are implemented
+- Wave 7 delivered the shared workspace shells, in-place developer studio workflows, deterministic local seed data, shared browse/studio catalog UX, and studio public-branding/link management
+- Wave 8 delivered player personalization and moderation follow-up workflows for wishlist, My Games, title reports, and notifications
+- the next planned implementation wave is Wave 9 unified commerce and entitlements
 
 ## Table of Contents
 
@@ -63,6 +64,7 @@ git submodule status
 
 - Current planning and implementation alignment:
   - Current architecture and wave alignment: [`planning/current-state-and-wave-plan.md`](planning/current-state-and-wave-plan.md)
+  - Cloudflare/Supabase/Workers conversion plan: [`planning/cloudflare-supabase-workers-conversion-plan.md`](planning/cloudflare-supabase-workers-conversion-plan.md)
   - Product realignment implementation sequencing: [`planning/product-realignment-implementation-plan.md`](planning/product-realignment-implementation-plan.md)
   - Backend schema implementation plan: [`backend/planning/mvp-schema-implementation-plan.md`](backend/planning/mvp-schema-implementation-plan.md)
   - Wave 5 publisher/platform research notes: [`planning/wave-5-publisher-research-notes.md`](planning/wave-5-publisher-research-notes.md)

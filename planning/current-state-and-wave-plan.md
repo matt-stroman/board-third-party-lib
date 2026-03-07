@@ -11,7 +11,7 @@
 
 ## Purpose
 
-This document records the currently aligned architecture and delivery plan after Wave 7 workspace-shell and catalog realignment implementation.
+This document records the currently aligned architecture and delivery plan after Wave 8 player personalization and title-report implementation.
 
 It exists to make one distinction explicit:
 
@@ -22,6 +22,8 @@ It exists to make one distinction explicit:
 - Wave 4 media, releases, and APK artifact metadata are implemented
 - Wave 5 supported publishers and external acquisition bindings are implemented
 - Wave 6 self-service developer access and verified-developer role moderation is implemented
+- Wave 7 workspace-shell and catalog realignment is implemented
+- Wave 8 player library, wishlist, reporting, and notification workflows are implemented
 - later commerce, entitlement, and Board install-delivery waves remain planned work
 
 Use this document when deciding whether something belongs in the maintained current contract or in a future wave plan.
@@ -42,11 +44,14 @@ The project remains aligned to these decisions:
 As of March 7, 2026, the maintained implemented surface is:
 
 - health endpoints: `/`, `/health/live`, `/health/ready`
-- Keycloak-backed identity endpoints: `/identity/roles`, `/identity/auth/config`, `/identity/auth/login`, `/identity/auth/callback`, `/identity/me`, `GET|PUT /identity/me/profile`, `PUT /identity/me/profile/avatar-url`, `POST /identity/me/profile/avatar-upload`, `DELETE /identity/me/profile/avatar`, `GET|POST /identity/me/developer-enrollment`, and `GET|PUT|DELETE /identity/me/board-profile`
+- Keycloak-backed identity endpoints: `/identity/roles`, `/identity/auth/config`, `/identity/auth/login`, `/identity/auth/callback`, `/identity/me`, `GET /identity/me/notifications`, `POST /identity/me/notifications/{notificationId}/read`, `GET|PUT /identity/me/profile`, `PUT /identity/me/profile/avatar-url`, `POST /identity/me/profile/avatar-upload`, `DELETE /identity/me/profile/avatar`, `GET|POST /identity/me/developer-enrollment`, and `GET|PUT|DELETE /identity/me/board-profile`
 - moderation endpoints: `GET /moderation/developers`, `GET /moderation/developers/{developerIdentifier}/verification`, and `PUT|DELETE /moderation/developers/{developerSubject}/verified-developer`
+- player endpoints: `GET /player/library`, `PUT|DELETE /player/library/titles/{titleId}`, `GET /player/wishlist`, `PUT|DELETE /player/wishlist/titles/{titleId}`, `GET|POST /player/reports`, `GET /player/reports/{reportId}`, and `POST /player/reports/{reportId}/messages`
+- moderation title-report endpoints: `GET /moderation/title-reports`, `GET /moderation/title-reports/{reportId}`, `POST /moderation/title-reports/{reportId}/messages`, and `POST /moderation/title-reports/{reportId}/validate|invalidate`
+- developer title-report endpoints: `GET /developer/titles/{titleId}/reports`, `GET /developer/titles/{titleId}/reports/{reportId}`, and `POST /developer/titles/{titleId}/reports/{reportId}/messages`
 - studio endpoints: public `GET /studios`, public `GET /studios/{slug}`, authenticated `POST|PUT|DELETE /studios...`, authenticated membership management endpoints, authenticated studio link CRUD endpoints, and authenticated studio logo/banner upload endpoints
-- catalog endpoints: public `GET /catalog`, public `GET /catalog/{studioSlug}/{titleSlug}`, authenticated title/metadata management endpoints, authenticated media/release/artifact management endpoints, public `GET /supported-publishers`, and authenticated connection/acquisition-binding management endpoints
-- EF Core persistence with migrations for `users`, `user_board_profiles`, `studios`, `studio_memberships`, `studio_links`, `titles`, `title_metadata_versions`, `title_media_assets`, `title_releases`, `release_artifacts`, `supported_publishers`, `integration_connections`, and `title_integration_bindings`
+- catalog endpoints: public `GET /catalog`, public `GET /catalog/{studioSlug}/{titleSlug}`, authenticated title/metadata management endpoints, authenticated media/release/artifact management endpoints, public `GET /supported-publishers`, and authenticated connection/acquisition-binding management endpoints; public catalog payloads now expose whether a title has an active report
+- EF Core persistence with migrations for `users`, `user_board_profiles`, `studios`, `studio_memberships`, `studio_links`, `titles`, `title_metadata_versions`, `title_media_assets`, `title_releases`, `release_artifacts`, `supported_publishers`, `integration_connections`, `title_integration_bindings`, `player_owned_titles`, `player_wishlist_entries`, `title_reports`, `title_report_messages`, `user_notifications`, and `user_platform_roles`
 - Postman mock-first contract assets for the above endpoints
 - backend endpoint unit tests plus Postgres-backed integration coverage for persistence and constraints
 - developer automation for local bootstrap, Docker dependencies, and test execution
@@ -54,17 +59,15 @@ As of March 7, 2026, the maintained implemented surface is:
 
 Not yet implemented:
 
-- authenticated player library read models and personalization
-- private player wishlist management
-- Wave 8 unified commerce and entitlements
-- Wave 9 Board install-delivery flows
+- Wave 9 unified commerce and entitlements
+- Wave 10 Board install-delivery flows
 - configured Keycloak brokers for social/game platform SSO in the local realm import
 
 Because those later items are not implemented, they should not remain in the maintained current API contract unless they are being actively delivered in the same wave with tests first.
 
 ## Wave Realignment
 
-To avoid contract drift, the project should treat the current backend as a completed foundation plus Waves 1 through 7 baseline and start the next schema work from the Wave 8 boundary.
+To avoid contract drift, the project should treat the current backend as a completed foundation plus Waves 1 through 8 baseline and start the next schema work from the Wave 9 boundary.
 
 ### Foundation (implemented)
 
@@ -132,13 +135,31 @@ Implemented Wave 7 behavior includes:
 - render studio branding and studio links on public studio pages, including icon affordances for common social hosts
 - align `/browse` and `/studios/{studio-slug}` around the same live client-side search/filter/results interaction model
 
-### Wave 8 (planned)
+### Wave 8 (implemented)
 
-Player library foundation, unified commerce, and entitlements.
+Status: implemented on March 7, 2026.
 
-This wave must introduce player-owned library read models and wishlist state with explicit contract and integration test gates before purchase orchestration and entitlement-state delivery.
+Player personalization, title reporting, and in-app moderation follow-up workflows.
 
-Teams should treat player library and wishlist scope as mandatory Wave 8 entry criteria, not optional follow-on work.
+Implemented Wave 8 behavior includes:
+
+- player-owned `My Games` and wishlist read/write endpoints plus frontend workflows
+- player-submitted title reports with open-conflict prevention
+- public active-report indicators on catalog and title detail surfaces
+- moderator title-report inbox, targeted follow-up messaging, and resolution actions
+- developer title-report threads for moderated follow-up
+- player report-thread inbox and reply workflow
+- in-app notifications with unread badge state and workflow deep links for moderation/report activity
+
+### Wave 9 (planned)
+
+Unified commerce and entitlements.
+
+This wave must introduce purchase orchestration and entitlement-state delivery on top of the already-implemented player library foundation.
+
+### Wave 10 (planned)
+
+Board install-delivery flows.
 
 ## Schema And Identity Boundary
 
