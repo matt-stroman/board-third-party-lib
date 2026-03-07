@@ -327,7 +327,7 @@ API workflow commands also expose workflow-specific overrides. Common examples:
 
 For live API contract execution, the default environment template is:
 
-- `api/postman/environments/board-third-party-library_local.postman_environment.json`
+- `api/postman/environments/board-enthusiasts_local.postman_environment.json`
 
 Populate the placeholder auth and resource IDs in a private copy when you want full authenticated create/update coverage against a local backend.
 
