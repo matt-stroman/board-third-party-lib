@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Developer CLI for local workflows in the board-third-party-lib repository.
+"""Developer CLI for local workflows in the board-enthusiasts repository.
 
 This script is the primary developer automation entry point for:
 - bootstrap/setup (`bootstrap`)
@@ -2926,7 +2926,7 @@ def db_restore(config: DevConfig, *, input_path: Path) -> None:
 
 LOCAL_KEYCLOAK_ADMIN_USERNAME = "admin"
 LOCAL_KEYCLOAK_ADMIN_PASSWORD = "admin"
-LOCAL_KEYCLOAK_DEFAULT_REALM = "board-third-party-library"
+LOCAL_KEYCLOAK_DEFAULT_REALM = "board-enthusiasts"
 LOCAL_SEED_DEFAULT_PASSWORD = "ChangeMe!123"
 LOCAL_SEED_IMAGE_BASE_PATH = Path("frontend/src/Board.ThirdPartyLibrary.Frontend.Web/wwwroot/test-images/seed-catalog")
 LEGACY_LOCAL_SEED_GENERATED_IMAGE_PATH = Path("frontend/src/Board.ThirdPartyLibrary.Frontend.Web/wwwroot/test-images/generated")
@@ -4296,7 +4296,7 @@ def build_parser() -> argparse.ArgumentParser:
     shared.add_argument(
         "--keycloak-ready-url",
         "-KeycloakReadyUrl",
-        default="https://localhost:8443/realms/board-third-party-library/.well-known/openid-configuration",
+        default="https://localhost:8443/realms/board-enthusiasts/.well-known/openid-configuration",
         help="Keycloak readiness URL",
     )
     shared.add_argument(
@@ -4499,7 +4499,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     all_tests.add_argument(
         "--environment",
-        default="api/postman/environments/board-third-party-library_local.postman_environment.json",
+        default="api/postman/environments/board-enthusiasts_local.postman_environment.json",
         help="Postman environment file path used for contract tests",
     )
     all_tests.add_argument(
@@ -4543,7 +4543,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify.add_argument(
         "--environment",
-        default="api/postman/environments/board-third-party-library_local.postman_environment.json",
+        default="api/postman/environments/board-enthusiasts_local.postman_environment.json",
         help="Postman environment file path used when contract tests run",
     )
     verify.add_argument(
@@ -4607,7 +4607,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     api_test.add_argument(
         "--environment",
-        default="api/postman/environments/board-third-party-library_local.postman_environment.json",
+        default="api/postman/environments/board-enthusiasts_local.postman_environment.json",
         help="Postman environment file path",
     )
     api_test.add_argument(
@@ -4656,7 +4656,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     api_mock.add_argument(
         "--admin-environment",
-        default="api/postman/environments/board-third-party-library_mock-admin.postman_environment.json",
+        default="api/postman/environments/board-enthusiasts_mock-admin.postman_environment.json",
         help="Mock admin environment file path",
     )
     api_mock.add_argument(
@@ -4756,11 +4756,11 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
         backend_base_url="https://localhost:7085",
         frontend_base_url="https://localhost:7277",
         api_root="api",
-        api_spec="api/postman/specs/board-third-party-library-api.v1.openapi.yaml",
-        api_contract_collection="api/postman/collections/board-third-party-library-api.contract-tests.postman_collection.json",
-        api_local_environment="api/postman/environments/board-third-party-library_local.postman_environment.json",
-        api_mock_environment="api/postman/environments/board-third-party-library_mock.postman_environment.json",
-        api_mock_admin_environment="api/postman/environments/board-third-party-library_mock-admin.postman_environment.json",
+        api_spec="api/postman/specs/board-enthusiasts-api.v1.openapi.yaml",
+        api_contract_collection="api/postman/collections/board-enthusiasts-api.contract-tests.postman_collection.json",
+        api_local_environment="api/postman/environments/board-enthusiasts_local.postman_environment.json",
+        api_mock_environment="api/postman/environments/board-enthusiasts_mock.postman_environment.json",
+        api_mock_admin_environment="api/postman/environments/board-enthusiasts_mock-admin.postman_environment.json",
         api_mock_provision_script="api/scripts/postman-provision-mock.mjs",
     )
 
