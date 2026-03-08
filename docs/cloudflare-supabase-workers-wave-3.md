@@ -18,7 +18,7 @@ Default local workflow after cutover:
 
 ```bash
 python ./scripts/dev.py bootstrap
-python ./scripts/dev.py web
+python ./scripts/dev.py web --hot-reload
 ```
 
 That path starts:
@@ -30,8 +30,10 @@ That path starts:
 Other common local commands:
 
 ```bash
-python ./scripts/dev.py frontend
-python ./scripts/dev.py up
+python ./scripts/dev.py database up
+python ./scripts/dev.py auth up
+python ./scripts/dev.py api
+python ./scripts/dev.py web down
 python ./scripts/dev.py seed-data
 python ./scripts/dev.py verify --start-workers
 python ./scripts/dev.py api-test --start-workers
@@ -40,7 +42,8 @@ python ./scripts/dev.py parity-test
 
 Helpful notes:
 
-- `frontend` expects local Supabase runtime values from `supabase status`, so start Supabase first if you run the SPA by itself.
+- `database`, `auth`, `api`, and `web` are the maintained local runtime entrypoints after cutover.
+- `web --hot-reload` keeps the Vite SPA and Wrangler backend in their watch-based local development mode.
 - `seed-data` now reads checked-in media from [`frontend/public/seed-catalog`](../frontend/public/seed-catalog).
 - `verify` now includes maintained frontend tests in addition to backend, root CLI, and API validation.
 

@@ -63,6 +63,48 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             command,
         )
 
+    def test_build_supabase_profile_start_command_matches_supported_profiles(self) -> None:
+        prefix = ["npx", "supabase"]
+
+        self.assertEqual(
+            ["npx", "supabase", "db", "start"],
+            dev.build_supabase_profile_start_command(
+                prefix=prefix,
+                profile=dev.SUPABASE_PROFILE_DATABASE,
+            ),
+        )
+        self.assertEqual(
+            [
+                "npx",
+                "supabase",
+                "start",
+                "-x",
+                "studio",
+                "-x",
+                "storage-api",
+                "-x",
+                "imgproxy",
+                "-x",
+                "postgres-meta",
+                "-x",
+                "realtime",
+                "-x",
+                "postgrest",
+                "-x",
+                "functions",
+                "-x",
+                "analytics",
+                "-x",
+                "vector",
+                "-x",
+                "supavisor",
+            ],
+            dev.build_supabase_profile_start_command(
+                prefix=prefix,
+                profile=dev.SUPABASE_PROFILE_AUTH,
+            ),
+        )
+
     def test_parse_env_assignments_unquotes_supabase_status_values(self) -> None:
         parsed = dev.parse_env_assignments(
             'API_URL="http://127.0.0.1:54321"\nANON_KEY="anon"\nSERVICE_ROLE_KEY="service"\n'
@@ -117,6 +159,16 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertFalse(args.start_workers)
         self.assertEqual(dev.LOCAL_SEED_DEVELOPER_EMAIL, args.developer_email)
         self.assertEqual(dev.LOCAL_SEED_MODERATOR_EMAIL, args.moderator_email)
+
+    def test_database_and_web_parsers_default_to_up_actions(self) -> None:
+        parser = dev.build_parser()
+
+        database_args = parser.parse_args(["database"])
+        web_args = parser.parse_args(["web", "--hot-reload"])
+
+        self.assertEqual("up", database_args.action)
+        self.assertEqual("up", web_args.action)
+        self.assertTrue(web_args.hot_reload)
 
     def test_run_api_contract_tests_starts_workers_and_injects_seeded_tokens(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -196,6 +248,23 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
         with self.assertRaises(SystemExit):
             parser.parse_args(["capture-parity-baseline", "--start-stack"])
+
+    def test_removed_legacy_runtime_commands_are_rejected(self) -> None:
+        parser = dev.build_parser()
+
+        for command in (
+            ["up"],
+            ["down"],
+            ["status"],
+            ["frontend"],
+            ["web-status"],
+            ["web-stop"],
+            ["spa", "run"],
+            ["workers", "run"],
+            ["supabase", "start"],
+        ):
+            with self.assertRaises(SystemExit):
+                parser.parse_args(command)
 
 
 if __name__ == "__main__":

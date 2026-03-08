@@ -24,7 +24,7 @@ Quick start (maintained local migration stack from the root workspace):
 
 ```bash
 python ./scripts/dev.py bootstrap
-python ./scripts/dev.py web
+python ./scripts/dev.py web --hot-reload
 ```
 
 This starts local Supabase services, the maintained Workers backend, and the migration SPA.
@@ -33,7 +33,7 @@ Quick start (backend API only):
 
 ```bash
 python ./scripts/dev.py bootstrap
-python ./scripts/dev.py up
+python ./scripts/dev.py api
 ```
 
 Initialize them after clone:
@@ -85,20 +85,18 @@ Examples:
 ```bash
 python ./scripts/dev.py doctor
 python ./scripts/dev.py bootstrap
-python ./scripts/dev.py web
-python ./scripts/dev.py web-status
-python ./scripts/dev.py web-stop --down-dependencies
-python ./scripts/dev.py frontend
-python ./scripts/dev.py up
+python ./scripts/dev.py database up
+python ./scripts/dev.py auth up
+python ./scripts/dev.py api
+python ./scripts/dev.py api down
+python ./scripts/dev.py web --hot-reload
+python ./scripts/dev.py web status
+python ./scripts/dev.py web down
 python ./scripts/dev.py all-tests
 python ./scripts/dev.py verify --skip-contract-tests
 python ./scripts/dev.py api-lint
 python ./scripts/dev.py api-test --start-workers
 python ./scripts/dev.py test
-python ./scripts/dev.py down
-python ./scripts/dev.py spa run
-python ./scripts/dev.py workers run
-python ./scripts/dev.py supabase status
 python ./scripts/dev.py contract-smoke --start-workers
 python ./scripts/dev.py workers-smoke --start-stack
 python ./scripts/dev.py parity-test
