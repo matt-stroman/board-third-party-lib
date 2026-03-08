@@ -1,4 +1,4 @@
-"""Focused unit coverage for migration-era developer CLI helpers."""
+"""Focused unit coverage for maintained developer CLI helpers."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ dev = load_dev_cli_module()
 
 
 class DevCliMigrationHelperTests(unittest.TestCase):
-    """Covers the pure helper logic added for Wave 1 migration scaffolding."""
+    """Covers the pure helper logic used by the maintained developer CLI."""
 
     @staticmethod
     def create_args() -> argparse.Namespace:

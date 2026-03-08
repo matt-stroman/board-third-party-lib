@@ -92,7 +92,7 @@ async function run(): Promise<void> {
       body: JSON.stringify({
         slug: "ember-cove-lab",
         displayName: "Ember Cove Lab",
-        description: "Temporary Wave 2 smoke studio."
+        description: "Temporary maintained-stack smoke studio."
       })
     },
     201,

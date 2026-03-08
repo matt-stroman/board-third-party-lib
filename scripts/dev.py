@@ -68,8 +68,8 @@ class DevConfig:
         migration_workers_workspace_name: npm workspace name for the Workers API shell.
         migration_contract_root: Relative path to the shared TypeScript contract package.
         supabase_root: Relative path to the Supabase project folder.
-        migration_local_env_template: Relative path to the local migration env example.
-        migration_staging_env_template: Relative path to the staging migration env example.
+        migration_local_env_template: Relative path to the local env example.
+        migration_staging_env_template: Relative path to the staging env example.
         cloudflare_pages_template: Relative path to the Cloudflare Pages config template.
         cloudflare_workers_template: Relative path to the Cloudflare Workers config template.
         migration_spa_base_url: Default local React SPA URL.
@@ -1015,7 +1015,7 @@ def restore_backend(config: DevConfig) -> None:
     """Prepare the maintained backend workspace dependencies.
 
     Args:
-        config: CLI configuration containing migration workspace paths.
+        config: CLI configuration containing workspace paths.
 
     Returns:
         None.
@@ -1209,7 +1209,7 @@ def run_full_local_web_stack(
     hot_reload: bool,
     open_browser_on_ready: bool,
 ) -> None:
-    """Run the maintained local migration web stack together.
+    """Run the maintained local web stack together.
 
     Args:
         config: CLI configuration containing repository paths and defaults.
@@ -1254,7 +1254,7 @@ def run_full_local_web_stack(
         write_step("Starting maintained backend API in the background")
         backend_process, backend_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
         print(f"Backend log: {backend_log_path}")
-        write_step("Starting migration SPA in the background")
+        write_step("Starting SPA in the background")
         frontend_process, frontend_log_path = start_background_command_with_log(
             cmd=build_workspace_npm_command(script_name="dev", workspace_name=config.migration_spa_workspace_name),
             cwd=config.repo_root,
@@ -1266,7 +1266,7 @@ def run_full_local_web_stack(
         wait_for_background_process_http_ready(
             process=frontend_process,
             url=frontend_url,
-            description="migration SPA",
+            description="SPA",
             log_path=frontend_log_path,
         )
 
@@ -1296,7 +1296,7 @@ def run_full_local_web_stack(
             write_step(f"Opening browser to {frontend_url}")
             webbrowser.open(frontend_url)
 
-        print("Local migration web stack is running. Press Ctrl+C to stop backend and frontend.")
+        print("Local web stack is running. Press Ctrl+C to stop backend and frontend.")
         while True:
             time.sleep(2)
 
@@ -1501,7 +1501,7 @@ def run_tests(config: DevConfig, *, run_integration: bool, restore: bool = True)
     """Run maintained backend verification and optionally integration coverage.
 
     Args:
-        config: CLI configuration containing migration backend paths.
+        config: CLI configuration containing backend workspace paths.
         run_integration: Whether to run backend integration coverage after typecheck.
         restore: Whether to install root npm workspace dependencies first.
 
@@ -1509,7 +1509,7 @@ def run_tests(config: DevConfig, *, run_integration: bool, restore: bool = True)
         None.
 
     Raises:
-        DevCliError: If required migration workspace commands fail.
+        DevCliError: If required workspace commands fail.
     """
     assert_command_available("npm")
     ensure_migration_workspace_scaffolding(config)
@@ -1642,32 +1642,32 @@ def build_workers_wrangler_command(*, action: str) -> list[str]:
 
 
 def get_root_workspace_manifest_path(config: DevConfig) -> Path:
-    """Return the root migration workspace package manifest path."""
+    """Return the root workspace package manifest path."""
 
     return config.repo_root / config.migration_root_package_json
 
 
 def ensure_migration_workspace_scaffolding(config: DevConfig) -> None:
-    """Ensure the Wave 1 migration workspace files exist before running commands.
+    """Ensure the maintained workspace files exist before running commands.
 
     Args:
-        config: CLI configuration containing migration workspace paths.
+        config: CLI configuration containing workspace paths.
 
     Returns:
         None.
 
     Raises:
-        DevCliError: If required migration workspace files are missing.
+        DevCliError: If required workspace files are missing.
     """
 
     required_paths = [
-        ("root migration package manifest", config.repo_root / config.migration_root_package_json),
+        ("root workspace package manifest", config.repo_root / config.migration_root_package_json),
         ("SPA workspace", config.repo_root / config.migration_spa_root),
         ("Workers workspace", config.repo_root / config.migration_workers_root),
         ("shared contract package", config.repo_root / config.migration_contract_root),
         ("Supabase project root", config.repo_root / config.supabase_root),
-        ("local migration env template", config.repo_root / config.migration_local_env_template),
-        ("staging migration env template", config.repo_root / config.migration_staging_env_template),
+        ("local env template", config.repo_root / config.migration_local_env_template),
+        ("staging env template", config.repo_root / config.migration_staging_env_template),
         ("Cloudflare Pages template", config.repo_root / config.cloudflare_pages_template),
         ("Cloudflare Workers template", config.repo_root / config.cloudflare_workers_template),
     ]
@@ -1675,7 +1675,7 @@ def ensure_migration_workspace_scaffolding(config: DevConfig) -> None:
     missing = [f"{label}: {path}" for label, path in required_paths if not path.exists()]
     if missing:
         preview = "\n".join(missing)
-        raise DevCliError(f"Migration workspace scaffolding is incomplete:\n{preview}")
+        raise DevCliError(f"Workspace scaffolding is incomplete:\n{preview}")
 
 
 def get_migration_workspace_install_state_path(config: DevConfig) -> Path:
@@ -1764,7 +1764,7 @@ def record_migration_workspace_dependencies(config: DevConfig) -> None:
 
 
 def install_migration_workspace_dependencies(config: DevConfig) -> None:
-    """Install root npm workspace dependencies for the migration scaffolding.
+    """Install root npm workspace dependencies for the maintained stack.
 
     Args:
         config: CLI configuration containing the repository root.
@@ -1776,10 +1776,10 @@ def install_migration_workspace_dependencies(config: DevConfig) -> None:
     assert_command_available("npm")
     ensure_migration_workspace_scaffolding(config)
     if has_current_migration_workspace_dependencies(config):
-        print("Migration workspace npm dependencies are already current.")
+        print("Workspace npm dependencies are already current.")
         return
 
-    write_step("Installing migration workspace npm dependencies")
+    write_step("Installing workspace npm dependencies")
     run_command(["npm", "install"], cwd=config.repo_root)
     record_migration_workspace_dependencies(config)
 
@@ -2189,7 +2189,7 @@ def seed_migration_data(config: DevConfig, *, seed_password: str) -> None:
     """Seed deterministic Supabase auth, data, and storage fixtures for the maintained stack.
 
     Args:
-        config: CLI configuration containing migration workspace paths.
+        config: CLI configuration containing workspace paths.
         seed_password: Password assigned to seeded local Supabase auth users.
 
     Returns:
@@ -2272,15 +2272,15 @@ def start_migration_workers_process(config: DevConfig, *, runtime_env: dict[str,
     """Start the local Workers API in the background.
 
     Args:
-        config: CLI configuration containing migration workspace paths.
+        config: CLI configuration containing workspace paths.
         runtime_env: Resolved local Supabase runtime environment values.
 
     Returns:
         Tuple of process handle and log path.
     """
 
-    clear_local_listener_port(url=config.migration_workers_base_url, description="migration Workers API")
-    ensure_local_url_port_available(url=config.migration_workers_base_url, description="migration Workers API")
+    clear_local_listener_port(url=config.migration_workers_base_url, description="Workers API")
+    ensure_local_url_port_available(url=config.migration_workers_base_url, description="Workers API")
     dev_vars_path = write_workers_local_dev_vars(config, runtime_env=runtime_env)
     print(f"Workers dev bindings file: {dev_vars_path}")
     command = build_workers_wrangler_command(action="dev")
@@ -2293,7 +2293,7 @@ def start_migration_workers_process(config: DevConfig, *, runtime_env: dict[str,
     wait_for_background_process_http_ready(
         process=process,
         url=f"{config.migration_workers_base_url.rstrip('/')}/health/ready",
-        description="migration Workers API",
+        description="Workers API",
         log_path=log_path,
         timeout_seconds=120,
     )
@@ -2365,7 +2365,7 @@ def run_workers_flow_smoke_command(
             run_supabase_stack_command(config, action="db-reset")
             runtime_env = get_local_supabase_runtime(config)
             resolved_base_url = config.migration_workers_base_url
-            write_step("Starting migration Workers API in the background for Workers smoke")
+            write_step("Starting Workers API in the background for Workers smoke")
             workers_process, workers_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
             print(f"Workers API log: {workers_log_path}")
         else:
@@ -2392,7 +2392,7 @@ def run_workers_flow_smoke_command(
         )
     finally:
         if workers_process is not None:
-            write_step("Stopping background migration Workers API")
+            write_step("Stopping background Workers API")
             stop_background_process(workers_process)
 
 
@@ -2413,13 +2413,13 @@ def run_contract_smoke(
     Args:
         config: CLI configuration containing workspace paths.
         base_url: Target API base URL.
-        start_workers: Whether to start the migration Workers stack automatically.
+        start_workers: Whether to start the Workers stack automatically.
         token: Optional bearer token for authenticated smoke checks.
         moderator_token: Optional moderator bearer token for role-specific smoke checks.
         developer_token: Optional developer bearer token for role-specific smoke checks.
-        seed_user_email: Optional seeded user email used to fetch a migration auth token.
-        moderator_email: Optional seeded moderator email used to fetch a migration auth token.
-        seed_user_password: Optional seeded user password used to fetch a migration auth token.
+        seed_user_email: Optional seeded user email used to fetch an auth token.
+        moderator_email: Optional seeded moderator email used to fetch an auth token.
+        seed_user_password: Optional seeded user password used to fetch auth tokens.
 
     Returns:
         None.
@@ -2443,7 +2443,7 @@ def run_contract_smoke(
         run_supabase_stack_command(config, action="db-reset")
         runtime_env = get_local_supabase_runtime(config)
         resolved_base_url = config.migration_workers_base_url
-        write_step("Starting migration Workers API in the background for contract smoke")
+        write_step("Starting Workers API in the background for contract smoke")
         workers_process, workers_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
         print(f"Workers API log: {workers_log_path}")
     else:
@@ -2492,7 +2492,7 @@ def run_contract_smoke(
         run_command(["npm", "run", "test:contract-smoke"], cwd=config.repo_root, env=env)
     finally:
         if workers_process is not None:
-            write_step("Stopping background migration Workers API")
+            write_step("Stopping background Workers API")
             stop_background_process(workers_process)
 
 
@@ -2543,10 +2543,10 @@ def deploy_migration_staging(
     workers_only: bool,
     dry_run: bool,
 ) -> None:
-    """Run the staging deployment wrappers for the migration workspaces.
+    """Run the staging deployment wrappers for the maintained workspaces.
 
     Args:
-        config: CLI configuration containing migration paths.
+        config: CLI configuration containing stack paths.
         pages_only: Whether to deploy only Cloudflare Pages.
         workers_only: Whether to deploy only Cloudflare Workers.
         dry_run: Whether to perform build-only validation instead of deployment.
@@ -2563,7 +2563,7 @@ def deploy_migration_staging(
     install_migration_workspace_dependencies(config)
 
     if not workers_only:
-        write_step("Building migration SPA for Cloudflare Pages")
+        write_step("Building SPA for Cloudflare Pages")
         run_command(build_workspace_npm_command(script_name="build", workspace_name=config.migration_spa_workspace_name), cwd=config.repo_root)
         if not dry_run:
             write_step("Deploying Cloudflare Pages staging bundle")
@@ -2758,7 +2758,7 @@ def run_api_contract_tests(
         run_supabase_stack_command(config, action="db-reset")
         runtime_env = get_local_supabase_runtime(config)
         resolved_base_url = config.migration_workers_base_url
-        write_step("Starting migration Workers API in the background for contract tests")
+        write_step("Starting Workers API in the background for contract tests")
         workers_process, workers_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
         print(f"Workers API log: {workers_log_path}")
     else:
@@ -2827,7 +2827,7 @@ def run_api_contract_tests(
         )
     finally:
         if workers_process is not None:
-            write_step("Stopping background migration Workers API")
+            write_step("Stopping background Workers API")
             stop_background_process(workers_process)
 
 
@@ -2954,20 +2954,20 @@ def run_doctor(config: DevConfig) -> None:
             )
 
     if shutil.which("supabase") or shutil.which("npx"):
-        print("Found (migration workflow): supabase")
+        print("Found (stack workflow): supabase")
     else:
-        print("Missing optional migration workflow command: supabase")
+        print("Missing optional stack workflow command: supabase")
         optional_issues.append(
-            "Optional migration workflow command missing from PATH: supabase (or npx fallback)"
+            "Optional stack workflow command missing from PATH: supabase (or npx fallback)"
         )
 
     local_wrangler_path = config.repo_root / "node_modules" / ".bin" / ("wrangler.cmd" if os.name == "nt" else "wrangler")
     if shutil.which("wrangler") or local_wrangler_path.exists():
-        print("Found (migration workflow): wrangler")
+        print("Found (stack workflow): wrangler")
     else:
-        print("Missing optional migration workflow command: wrangler")
+        print("Missing optional stack workflow command: wrangler")
         optional_issues.append(
-            "Optional migration workflow command missing from PATH: wrangler (run `python ./scripts/dev.py bootstrap` to install workspace tooling)"
+            "Optional stack workflow command missing from PATH: wrangler (run `python ./scripts/dev.py bootstrap` to install workspace tooling)"
         )
 
     backend_path = config.repo_root / "backend"
@@ -3068,7 +3068,7 @@ def run_verify(
         base_url: Base URL used for contract execution.
         contract_execution_mode: Contract execution mode (`live` or `mock`).
         report_path: JUnit report output path for Postman CLI.
-        start_workers: Whether to auto-start the Workers migration stack for contract runs.
+        start_workers: Whether to auto-start the Workers stack for contract runs.
 
     Returns:
         None.
@@ -3119,7 +3119,7 @@ def run_all_tests(
         base_url: Base URL used for API contract execution.
         contract_execution_mode: Contract execution mode (`live` or `mock`).
         report_path: JUnit report output path for Postman CLI contract runs.
-        start_workers: Whether to auto-start the Workers migration stack for contract runs.
+        start_workers: Whether to auto-start the Workers stack for contract runs.
 
     Returns:
         None.
@@ -3551,7 +3551,7 @@ def build_parser() -> argparse.ArgumentParser:
     contract_smoke.add_argument(
         "--start-workers",
         action="store_true",
-        help="Start the local Supabase + Workers migration stack automatically for the smoke run",
+        help="Start the local Supabase + Workers stack automatically for the smoke run",
     )
     contract_smoke.add_argument(
         "--token",
@@ -3571,17 +3571,17 @@ def build_parser() -> argparse.ArgumentParser:
     contract_smoke.add_argument(
         "--seed-user-email",
         default=LOCAL_SEED_DEVELOPER_EMAIL,
-        help="Seeded Supabase developer email used to fetch a migration auth token automatically",
+        help="Seeded Supabase developer email used to fetch an auth token automatically",
     )
     contract_smoke.add_argument(
         "--moderator-email",
         default=LOCAL_SEED_MODERATOR_EMAIL,
-        help="Seeded Supabase moderator email used to fetch a migration auth token automatically",
+        help="Seeded Supabase moderator email used to fetch an auth token automatically",
     )
     contract_smoke.add_argument(
         "--seed-user-password",
         default=LOCAL_SEED_DEFAULT_PASSWORD,
-        help="Seeded Supabase auth password used to fetch migration auth tokens automatically",
+        help="Seeded Supabase auth password used to fetch auth tokens automatically",
     )
 
     workers_smoke = subparsers.add_parser(
@@ -3633,7 +3633,7 @@ def build_parser() -> argparse.ArgumentParser:
     deploy_staging = subparsers.add_parser(
         "deploy-staging",
         parents=[shared],
-        help="Run migration staging deployment wrappers for Pages and Workers",
+        help="Run staging deployment wrappers for Pages and Workers",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     deploy_staging.add_argument(

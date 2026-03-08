@@ -16,7 +16,7 @@ This document provides quick guidance, common workflows, and project-specific no
 - [Purpose](#purpose)
 - [Primary Entry Point](#primary-entry-point)
 - [Common Workflows](#common-workflows)
-- [Migration Workflows](#migration-workflows)
+- [Maintained Stack Workflows](#maintained-stack-workflows)
 - [Configuration Overrides](#configuration-overrides)
 - [Notes](#notes)
 
@@ -53,7 +53,7 @@ python ./scripts/dev.py bootstrap
 python ./scripts/dev.py web --hot-reload
 ```
 
-This starts local Supabase services, the maintained Workers backend, and the migration SPA, then opens the frontend URL in your default browser.
+This starts local Supabase services, the maintained Workers backend, and the SPA, then opens the frontend URL in your default browser.
 
 If you only want the API stack:
 
@@ -115,15 +115,11 @@ Useful flags:
 
 - `--seed-password`
 
-## Migration Workflows
-
-Wave 3 finishes the maintained Cloudflare Workers + Supabase migration by making the `frontend` submodule SPA the default frontend path.
+## Maintained Stack Workflows
 
 Reference doc:
 
-- [`docs/cloudflare-supabase-workers-wave-1.md`](./cloudflare-supabase-workers-wave-1.md)
-- [`docs/cloudflare-supabase-workers-wave-2.md`](./cloudflare-supabase-workers-wave-2.md)
-- [`docs/cloudflare-supabase-workers-wave-3.md`](./cloudflare-supabase-workers-wave-3.md)
+- [`docs/maintained-stack.md`](./maintained-stack.md)
 
 ### Start the maintained local runtime profiles
 
@@ -155,7 +151,7 @@ Profile notes:
 - `web down` stops the frontend service only by default; add `--include-dependencies` to also stop API, auth, and database services.
 - `status` reports only the named service by default; add `--include-dependencies` to include dependency status output.
 
-### Seed only the migration stack
+### Seed the local stack
 
 ```bash
 python ./scripts/dev.py seed-data
@@ -169,12 +165,12 @@ python ./scripts/dev.py contract-smoke --start-workers
 
 This uses the maintained smoke harness under `tests/contract-smoke`.
 
-For local migration runs, the CLI automatically fetches seeded role-appropriate Supabase tokens:
+For local runs, the CLI automatically fetches seeded role-appropriate Supabase tokens:
 
 - developer token for player/developer endpoints
 - moderator token for moderation endpoints
 
-Useful migration flags:
+Useful flags:
 
 - `--start-workers`
 - `--developer-token`
@@ -183,7 +179,7 @@ Useful migration flags:
 - `--moderator-email`
 - `--seed-user-password`
 
-### Run the Wave 2 Workers flow smoke suite
+### Run the Workers flow smoke suite
 
 ```bash
 python ./scripts/dev.py workers-smoke --start-stack
@@ -287,7 +283,7 @@ Important for live local runs:
 
 - the root CLI starts or reuses local Supabase services, reseeds deterministic auth/data/storage fixtures, and starts the Workers API
 - the root CLI resolves seeded developer and moderator access tokens automatically for authenticated contract checks
-- the committed environment template keeps only the maintained Wave 2 variables for the current contract surface
+- the committed environment template keeps only the maintained variables for the current contract surface
 
 If the Workers API is already running and seeded:
 
@@ -351,7 +347,7 @@ The root CLI can populate the maintained authenticated contract checks automatic
 ## Notes
 
 - The maintained local runtime entrypoints are `database`, `auth`, `api`, and `web`.
-- The maintained migration stack expects `node`, `npm`, `supabase`, and `wrangler`.
+- The maintained stack expects `node`, `npm`, `supabase`, and `wrangler`.
 - VS Code tasks in this repo call the Python CLI directly.
 - The supported developer entry point for this repository is `python ./scripts/dev.py ...`; API-local helper scripts under `api/scripts/` are implementation details for CI and the root CLI.
 - Tool executables are resolved from each developer's `PATH`; the CLI does not assume fixed install directories for `node`, `npx`, `postman`, `supabase`, `wrangler`, `docker`, or other required tools.
