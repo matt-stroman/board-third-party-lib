@@ -78,6 +78,19 @@ class DevConfig:
         api_mock_environment: Relative path to the mock Postman environment template.
         api_mock_admin_environment: Relative path to the mock admin environment template.
         api_mock_provision_script: Relative path to the Node.js mock provisioning helper.
+        migration_root_package_json: Relative path to the root npm workspace manifest.
+        migration_spa_root: Relative path to the React SPA workspace.
+        migration_spa_workspace_name: npm workspace name for the React SPA shell.
+        migration_workers_root: Relative path to the Workers API workspace.
+        migration_workers_workspace_name: npm workspace name for the Workers API shell.
+        migration_contract_root: Relative path to the shared TypeScript contract package.
+        supabase_root: Relative path to the Supabase project folder.
+        migration_local_env_template: Relative path to the local migration env example.
+        migration_staging_env_template: Relative path to the staging migration env example.
+        cloudflare_pages_template: Relative path to the Cloudflare Pages config template.
+        cloudflare_workers_template: Relative path to the Cloudflare Workers config template.
+        migration_spa_base_url: Default local React SPA URL.
+        migration_workers_base_url: Default local Workers API URL.
     """
 
     repo_root: Path
@@ -104,6 +117,19 @@ class DevConfig:
     api_mock_environment: str
     api_mock_admin_environment: str
     api_mock_provision_script: str
+    migration_root_package_json: str
+    migration_spa_root: str
+    migration_spa_workspace_name: str
+    migration_workers_root: str
+    migration_workers_workspace_name: str
+    migration_contract_root: str
+    supabase_root: str
+    migration_local_env_template: str
+    migration_staging_env_template: str
+    cloudflare_pages_template: str
+    cloudflare_workers_template: str
+    migration_spa_base_url: str
+    migration_workers_base_url: str
 
 
 class DevCliError(RuntimeError):
@@ -2281,6 +2307,479 @@ def build_subprocess_env(*, extra: dict[str, str] | None = None) -> dict[str, st
     return env
 
 
+def build_workspace_npm_command(*, script_name: str, workspace_name: str) -> list[str]:
+    """Build an ``npm run`` command scoped to a single npm workspace.
+
+    Args:
+        script_name: Workspace script name to invoke.
+        workspace_name: npm workspace package name.
+
+    Returns:
+        Command token list.
+    """
+
+    return ["npm", "run", script_name, "--workspace", workspace_name]
+
+
+def get_root_workspace_manifest_path(config: DevConfig) -> Path:
+    """Return the root migration workspace package manifest path."""
+
+    return config.repo_root / config.migration_root_package_json
+
+
+def ensure_migration_workspace_scaffolding(config: DevConfig) -> None:
+    """Ensure the Wave 1 migration workspace files exist before running commands.
+
+    Args:
+        config: CLI configuration containing migration workspace paths.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If required migration workspace files are missing.
+    """
+
+    required_paths = [
+        ("root migration package manifest", config.repo_root / config.migration_root_package_json),
+        ("SPA workspace", config.repo_root / config.migration_spa_root),
+        ("Workers workspace", config.repo_root / config.migration_workers_root),
+        ("shared contract package", config.repo_root / config.migration_contract_root),
+        ("Supabase project root", config.repo_root / config.supabase_root),
+        ("local migration env template", config.repo_root / config.migration_local_env_template),
+        ("staging migration env template", config.repo_root / config.migration_staging_env_template),
+        ("Cloudflare Pages template", config.repo_root / config.cloudflare_pages_template),
+        ("Cloudflare Workers template", config.repo_root / config.cloudflare_workers_template),
+    ]
+
+    missing = [f"{label}: {path}" for label, path in required_paths if not path.exists()]
+    if missing:
+        preview = "\n".join(missing)
+        raise DevCliError(f"Migration workspace scaffolding is incomplete:\n{preview}")
+
+
+def install_migration_workspace_dependencies(config: DevConfig) -> None:
+    """Install root npm workspace dependencies for the migration scaffolding.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        None.
+    """
+
+    assert_command_available("npm")
+    ensure_migration_workspace_scaffolding(config)
+    manifest_path = get_root_workspace_manifest_path(config)
+    lock_path = manifest_path.with_name("package-lock.json")
+    npm_cmd = ["npm", "ci"] if lock_path.exists() else ["npm", "install"]
+    write_step("Installing migration workspace npm dependencies")
+    run_command(npm_cmd, cwd=config.repo_root)
+
+
+def run_root_python_tests(config: DevConfig) -> None:
+    """Run root-level Python unit tests for developer automation helpers.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        None.
+    """
+
+    assert_command_available("python")
+    tests_root = config.repo_root / "tests" / "root_cli"
+    if not tests_root.exists():
+        print("No root Python tests were found.")
+        return
+
+    write_step("Running root Python tests")
+    run_command(
+        ["python", "-m", "unittest", "discover", "-s", str(tests_root), "-p", "test_*.py"],
+        cwd=config.repo_root,
+    )
+
+
+def ensure_playwright_browser_installed(config: DevConfig) -> None:
+    """Install the Chromium browser for Playwright-based parity tests.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        None.
+    """
+
+    assert_command_available("npx")
+    write_step("Ensuring Playwright Chromium browser is installed")
+    run_command(["npx", "playwright", "install", "chromium"], cwd=config.repo_root)
+
+
+def start_root_web_stack_for_baseline(config: DevConfig) -> tuple[subprocess.Popen, Path]:
+    """Start the current .NET web stack in the background for parity baseline work.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        Tuple of background process handle and log path.
+    """
+
+    command = [
+        sys.executable,
+        str(config.repo_root / "scripts" / "dev.py"),
+        "web",
+        "--no-browser",
+    ]
+    process, log_path = start_background_command_with_log(
+        cmd=command,
+        cwd=config.repo_root,
+        log_name="parity-baseline-web.log",
+        config=config,
+    )
+    wait_for_background_process_http_ready(
+        process=process,
+        url=config.frontend_base_url,
+        description="legacy frontend web UI",
+        log_path=log_path,
+        timeout_seconds=240,
+    )
+    return process, log_path
+
+
+def stop_root_web_stack_for_baseline(config: DevConfig) -> None:
+    """Stop the current .NET web stack after parity baseline work completes."""
+
+    stop_web_stack(config, stop_dependencies_too=True)
+
+
+def resolve_supabase_command_prefix() -> list[str]:
+    """Return the preferred command prefix for invoking the Supabase CLI.
+
+    Returns:
+        Command token prefix.
+
+    Raises:
+        DevCliError: If neither the standalone CLI nor ``npx`` is available.
+    """
+
+    if shutil.which("supabase") is not None:
+        return ["supabase"]
+    if shutil.which("npx") is not None:
+        return ["npx", "supabase"]
+    raise DevCliError("Supabase CLI was not found. Install `supabase` or ensure `npx` is available.")
+
+
+def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
+    """Run a Supabase local workflow command from the repository root.
+
+    Args:
+        config: CLI configuration containing the Supabase project path.
+        action: Supported action name.
+
+    Returns:
+        None.
+    """
+
+    ensure_migration_workspace_scaffolding(config)
+    supabase_root = config.repo_root / config.supabase_root
+    prefix = resolve_supabase_command_prefix()
+
+    if action == "start":
+        write_step("Starting local Supabase services")
+        run_command([*prefix, "start"], cwd=supabase_root)
+        return
+
+    if action == "stop":
+        write_step("Stopping local Supabase services")
+        run_command([*prefix, "stop"], cwd=supabase_root)
+        return
+
+    if action == "status":
+        write_step("Showing local Supabase service status")
+        result = run_command(
+            [*prefix, "status", "-o", "env"],
+            cwd=supabase_root,
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            output = (result.stdout or "").strip()
+            if output:
+                print(output)
+            return
+
+        output = "\n".join(
+            part.strip()
+            for part in ((result.stdout or ""), (result.stderr or ""))
+            if part and part.strip()
+        )
+        if "No such container" in output or "failed to inspect container health" in output:
+            print("Local Supabase services are not running.")
+            return
+        raise DevCliError(
+            "Supabase status command failed."
+            + (f"\n{output}" if output else "")
+        )
+        return
+
+    if action == "db-reset":
+        write_step("Resetting local Supabase database and reseeding")
+        run_command([*prefix, "db", "reset", "--local"], cwd=supabase_root)
+        return
+
+    raise DevCliError(f"Unsupported Supabase action: {action}")
+
+
+def run_migration_spa_command(
+    config: DevConfig,
+    *,
+    action: str,
+    install_dependencies: bool,
+) -> None:
+    """Run a migration React SPA workspace command.
+
+    Args:
+        config: CLI configuration containing migration workspace paths.
+        action: `install`, `build`, or `run`.
+        install_dependencies: Whether to install root npm dependencies first.
+
+    Returns:
+        None.
+    """
+
+    assert_command_available("npm")
+    ensure_migration_workspace_scaffolding(config)
+    if install_dependencies or action == "install":
+        install_migration_workspace_dependencies(config)
+        if action == "install":
+            return
+
+    if action == "build":
+        write_step("Building migration React SPA")
+        run_command(build_workspace_npm_command(script_name="build", workspace_name=config.migration_spa_workspace_name), cwd=config.repo_root)
+        return
+
+    if action == "run":
+        write_step(f"Starting migration React SPA at {config.migration_spa_base_url} (Ctrl+C to stop)")
+        run_command(build_workspace_npm_command(script_name="dev", workspace_name=config.migration_spa_workspace_name), cwd=config.repo_root)
+        return
+
+    raise DevCliError(f"Unsupported SPA action: {action}")
+
+
+def run_migration_workers_command(
+    config: DevConfig,
+    *,
+    action: str,
+    install_dependencies: bool,
+) -> None:
+    """Run a migration Workers API workspace command.
+
+    Args:
+        config: CLI configuration containing migration workspace paths.
+        action: `install`, `build`, or `run`.
+        install_dependencies: Whether to install root npm dependencies first.
+
+    Returns:
+        None.
+    """
+
+    assert_command_available("npm")
+    ensure_migration_workspace_scaffolding(config)
+    if install_dependencies or action == "install":
+        install_migration_workspace_dependencies(config)
+        if action == "install":
+            return
+
+    if action == "build":
+        write_step("Building migration Workers API shell")
+        run_command(build_workspace_npm_command(script_name="build", workspace_name=config.migration_workers_workspace_name), cwd=config.repo_root)
+        return
+
+    if action == "run":
+        write_step(f"Starting migration Workers API at {config.migration_workers_base_url} (Ctrl+C to stop)")
+        run_command(build_workspace_npm_command(script_name="dev", workspace_name=config.migration_workers_workspace_name), cwd=config.repo_root)
+        return
+
+    raise DevCliError(f"Unsupported Workers action: {action}")
+
+
+def run_contract_smoke(
+    config: DevConfig,
+    *,
+    base_url: str,
+    start_backend: bool,
+    token: str | None,
+) -> None:
+    """Run the maintained API contract smoke harness.
+
+    Args:
+        config: CLI configuration containing workspace paths.
+        base_url: Target API base URL.
+        start_backend: Whether to start the legacy backend automatically.
+        token: Optional bearer token for authenticated smoke checks.
+
+    Returns:
+        None.
+    """
+
+    assert_command_available("npm")
+    ensure_migration_workspace_scaffolding(config)
+    install_migration_workspace_dependencies(config)
+
+    backend_process: subprocess.Popen | None = None
+    backend_log_path: Path | None = None
+    if start_backend:
+        if not is_local_http_url(base_url):
+            raise DevCliError("--start-backend can only be used with a local base URL.")
+        if is_https_url(base_url):
+            ensure_dotnet_dev_certificate_trusted()
+        start_dependencies(config, include_keycloak=False)
+        write_step("Starting backend API in the background for contract smoke")
+        backend_process, backend_log_path = start_backend_api_process(config)
+        wait_for_background_process_http_ready(
+            process=backend_process,
+            url=f"{base_url.rstrip('/')}/health/live",
+            description="backend API",
+            log_path=backend_log_path,
+            timeout_seconds=120,
+        )
+    else:
+        ensure_api_base_url_reachable(base_url)
+
+    env = build_subprocess_env(
+        extra={
+            "CONTRACT_SMOKE_BASE_URL": base_url,
+            "CONTRACT_SMOKE_TOKEN": token or "",
+            "NODE_TLS_REJECT_UNAUTHORIZED": "0" if is_local_http_url(base_url) and is_https_url(base_url) else None,
+        }
+    )
+
+    try:
+        write_step("Running maintained API contract smoke harness")
+        run_command(["npm", "run", "test:contract-smoke"], cwd=config.repo_root, env=env)
+    finally:
+        if backend_process is not None:
+            write_step("Stopping background backend API")
+            stop_background_process(backend_process)
+
+
+def run_parity_suite(
+    config: DevConfig,
+    *,
+    update_snapshots: bool,
+    start_stack: bool,
+) -> None:
+    """Run the browser smoke and screenshot parity suite against the current app.
+
+    Args:
+        config: CLI configuration containing repository paths.
+        update_snapshots: Whether to refresh committed screenshot baselines.
+        start_stack: Whether to start the current legacy stack automatically.
+
+    Returns:
+        None.
+    """
+
+    assert_command_available("npm")
+    ensure_migration_workspace_scaffolding(config)
+    install_migration_workspace_dependencies(config)
+    ensure_playwright_browser_installed(config)
+
+    stack_process: subprocess.Popen | None = None
+    try:
+        if start_stack:
+            write_step("Preparing deterministic legacy seed data for parity testing")
+            start_dependencies(config)
+            seed_local_data(config, reset_media=False, seed_password=LOCAL_SEED_DEFAULT_PASSWORD)
+            write_step("Starting the current legacy stack for parity baseline testing")
+            stack_process, log_path = start_root_web_stack_for_baseline(config)
+            print(f"Parity baseline web log: {log_path}")
+        else:
+            frontend_ready, detail = probe_http_url(config.frontend_base_url)
+            if not frontend_ready:
+                raise DevCliError(
+                    f"Frontend base URL is not reachable: {config.frontend_base_url}"
+                    + (f" ({detail})" if detail else "")
+                )
+
+        env = build_subprocess_env(
+            extra={
+                "PARITY_BASE_URL": config.frontend_base_url,
+                "PARITY_ADMIN_USERNAME": "alex.rivera",
+                "PARITY_ADMIN_PASSWORD": LOCAL_SEED_DEFAULT_PASSWORD,
+                "NODE_TLS_REJECT_UNAUTHORIZED": "0" if is_https_url(config.frontend_base_url) else None,
+            }
+        )
+        command = ["npm", "run", "capture:parity-baseline" if update_snapshots else "test:parity"]
+        write_step("Running parity browser baseline suite")
+        run_command(command, cwd=config.repo_root, env=env)
+    finally:
+        if stack_process is not None:
+            write_step("Stopping the legacy stack used for parity baseline testing")
+            stop_root_web_stack_for_baseline(config)
+
+
+def deploy_migration_staging(
+    config: DevConfig,
+    *,
+    pages_only: bool,
+    workers_only: bool,
+    dry_run: bool,
+) -> None:
+    """Run the staging deployment wrappers for the migration workspaces.
+
+    Args:
+        config: CLI configuration containing migration paths.
+        pages_only: Whether to deploy only Cloudflare Pages.
+        workers_only: Whether to deploy only Cloudflare Workers.
+        dry_run: Whether to perform build-only validation instead of deployment.
+
+    Returns:
+        None.
+    """
+
+    if pages_only and workers_only:
+        raise DevCliError("--pages-only and --workers-only cannot be used together.")
+
+    assert_command_available("npm")
+    ensure_migration_workspace_scaffolding(config)
+    install_migration_workspace_dependencies(config)
+
+    if not workers_only:
+        write_step("Building migration SPA for Cloudflare Pages")
+        run_command(build_workspace_npm_command(script_name="build", workspace_name=config.migration_spa_workspace_name), cwd=config.repo_root)
+        if not dry_run:
+            write_step("Deploying Cloudflare Pages staging bundle")
+            run_command(
+                [
+                    "npx",
+                    "wrangler",
+                    "pages",
+                    "deploy",
+                    str(config.repo_root / config.migration_spa_root / "dist"),
+                    "--project-name",
+                    "board-enthusiasts-staging",
+                    "--branch",
+                    "main",
+                ],
+                cwd=config.repo_root,
+            )
+
+    if not pages_only:
+        write_step("Deploying Cloudflare Workers staging bundle")
+        worker_command = [
+            "npx",
+            "wrangler",
+            "deploy",
+            *(["--dry-run"] if dry_run else []),
+            "--config",
+            str(config.repo_root / config.cloudflare_workers_template),
+        ]
+        run_command(worker_command, cwd=config.repo_root)
+
+
 def get_api_root(config: DevConfig) -> Path:
     """Resolve the API submodule root path.
 
@@ -2602,7 +3101,7 @@ def run_doctor(config: DevConfig) -> None:
             print(f"Missing command: {cmd}")
             issues.append(f"Required command missing from PATH: {cmd}")
 
-    for cmd in ("node", "npm", "postman"):
+    for cmd in ("node", "npm", "postman", "supabase", "wrangler"):
         if shutil.which(cmd):
             print(f"Found (API/frontend workflow): {cmd}")
         else:
@@ -2663,6 +3162,9 @@ def run_doctor(config: DevConfig) -> None:
         print("  python ./scripts/dev.py up --skip-restore")
         print("  python ./scripts/dev.py all-tests")
         print("  python ./scripts/dev.py api-test --start-backend --skip-lint")
+        print("  python ./scripts/dev.py spa install")
+        print("  python ./scripts/dev.py workers build")
+        print("  python ./scripts/dev.py supabase status")
     else:
         print("PASS (no issues detected)")
         if optional_issues:
@@ -2680,6 +3182,9 @@ def run_doctor(config: DevConfig) -> None:
         print("  python ./scripts/dev.py all-tests")
         print("  python ./scripts/dev.py api-test --start-backend --skip-lint")
         print("  python ./scripts/dev.py api-lint")
+        print("  python ./scripts/dev.py spa run")
+        print("  python ./scripts/dev.py workers run")
+        print("  python ./scripts/dev.py supabase start")
 
 
 def run_verify(
@@ -2712,6 +3217,7 @@ def run_verify(
     restore_backend(config)
     validate_backend_xml_docs(config)
     run_tests(config, run_integration=run_integration, restore=False)
+    run_root_python_tests(config)
     run_api_spec_lint(config)
 
     if not run_contract_tests:
@@ -2760,6 +3266,7 @@ def run_all_tests(
     restore_backend(config)
     validate_backend_xml_docs(config)
     run_tests(config, run_integration=True, restore=False)
+    run_root_python_tests(config)
 
     restore_frontend(config)
     run_frontend_tests(config, restore=False)
@@ -4723,6 +5230,126 @@ def build_parser() -> argparse.ArgumentParser:
         help="Password assigned to seeded local Keycloak users",
     )
 
+    spa = subparsers.add_parser(
+        "spa",
+        parents=[shared],
+        help="Run migration React SPA workspace workflows",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    spa.add_argument(
+        "action",
+        choices=("install", "build", "run"),
+        nargs="?",
+        default="run",
+        help="Migration SPA action to execute",
+    )
+    spa.add_argument(
+        "--skip-install",
+        action="store_true",
+        help="Do not install root npm workspace dependencies before build/run",
+    )
+
+    workers = subparsers.add_parser(
+        "workers",
+        parents=[shared],
+        help="Run migration Workers API workspace workflows",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    workers.add_argument(
+        "action",
+        choices=("install", "build", "run"),
+        nargs="?",
+        default="run",
+        help="Workers API action to execute",
+    )
+    workers.add_argument(
+        "--skip-install",
+        action="store_true",
+        help="Do not install root npm workspace dependencies before build/run",
+    )
+
+    supabase = subparsers.add_parser(
+        "supabase",
+        parents=[shared],
+        help="Run local Supabase CLI workflows for the migration stack",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    supabase.add_argument(
+        "action",
+        choices=("start", "stop", "status", "db-reset"),
+        help="Supabase local workflow action",
+    )
+
+    contract_smoke = subparsers.add_parser(
+        "contract-smoke",
+        parents=[shared],
+        help="Run the maintained API contract smoke harness",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    contract_smoke.add_argument(
+        "--base-url",
+        "-BaseUrl",
+        default="https://localhost:7085",
+        help="Base URL for the API smoke run",
+    )
+    contract_smoke.add_argument(
+        "--start-backend",
+        "-StartBackend",
+        action="store_true",
+        help="Start the local legacy backend automatically for the smoke run",
+    )
+    contract_smoke.add_argument(
+        "--token",
+        default=None,
+        help="Optional bearer token for authenticated smoke endpoints",
+    )
+
+    parity_test = subparsers.add_parser(
+        "parity-test",
+        parents=[shared],
+        help="Run browser smoke and screenshot-comparison parity tests against the current UX",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parity_test.add_argument(
+        "--start-stack",
+        action="store_true",
+        help="Start the current legacy backend/frontend stack automatically before testing",
+    )
+
+    capture_parity = subparsers.add_parser(
+        "capture-parity-baseline",
+        parents=[shared],
+        help="Refresh committed screenshot baselines for the current UX",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    capture_parity.add_argument(
+        "--start-stack",
+        action="store_true",
+        help="Start the current legacy backend/frontend stack automatically before capturing snapshots",
+    )
+
+    deploy_staging = subparsers.add_parser(
+        "deploy-staging",
+        parents=[shared],
+        help="Run migration staging deployment wrappers for Pages and Workers",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    deploy_staging.add_argument(
+        "--pages-only",
+        action="store_true",
+        help="Deploy only the Cloudflare Pages bundle",
+    )
+    deploy_staging.add_argument(
+        "--workers-only",
+        action="store_true",
+        help="Deploy only the Cloudflare Workers bundle",
+    )
+    deploy_staging.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Build and validate deployment inputs without publishing them",
+    )
+
     return parser
 
 
@@ -4762,6 +5389,19 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
         api_mock_environment="api/postman/environments/board-third-party-library_mock.postman_environment.json",
         api_mock_admin_environment="api/postman/environments/board-third-party-library_mock-admin.postman_environment.json",
         api_mock_provision_script="api/scripts/postman-provision-mock.mjs",
+        migration_root_package_json="package.json",
+        migration_spa_root="apps/spa",
+        migration_spa_workspace_name="@board-enthusiasts/spa",
+        migration_workers_root="apps/workers-api",
+        migration_workers_workspace_name="@board-enthusiasts/workers-api",
+        migration_contract_root="packages/migration-contract",
+        supabase_root="supabase",
+        migration_local_env_template="config/migration.local.env.example",
+        migration_staging_env_template="config/migration.staging.env.example",
+        cloudflare_pages_template="cloudflare/pages/wrangler.template.jsonc",
+        cloudflare_workers_template="cloudflare/workers/wrangler.template.jsonc",
+        migration_spa_base_url="http://127.0.0.1:4173",
+        migration_workers_base_url="http://127.0.0.1:8787",
     )
 
 
@@ -4887,6 +5527,46 @@ def main(argv: Sequence[str] | None = None) -> int:
                 config,
                 reset_media=args.reset_media,
                 seed_password=args.seed_password,
+            )
+        elif args.command == "spa":
+            run_migration_spa_command(
+                config,
+                action=args.action,
+                install_dependencies=not args.skip_install,
+            )
+        elif args.command == "workers":
+            run_migration_workers_command(
+                config,
+                action=args.action,
+                install_dependencies=not args.skip_install,
+            )
+        elif args.command == "supabase":
+            run_supabase_stack_command(config, action=args.action)
+        elif args.command == "contract-smoke":
+            run_contract_smoke(
+                config,
+                base_url=args.base_url,
+                start_backend=args.start_backend,
+                token=args.token,
+            )
+        elif args.command == "parity-test":
+            run_parity_suite(
+                config,
+                update_snapshots=False,
+                start_stack=args.start_stack,
+            )
+        elif args.command == "capture-parity-baseline":
+            run_parity_suite(
+                config,
+                update_snapshots=True,
+                start_stack=args.start_stack,
+            )
+        elif args.command == "deploy-staging":
+            deploy_migration_staging(
+                config,
+                pages_only=args.pages_only,
+                workers_only=args.workers_only,
+                dry_run=args.dry_run,
             )
         else:
             parser.error(f"Unknown command: {args.command}")

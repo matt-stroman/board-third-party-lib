@@ -1,0 +1,13 @@
+{
+  "$schema": "https://developers.cloudflare.com/workers/wrangler/config-schema.json",
+  "name": "board-enthusiasts-api-staging",
+  "main": "../../apps/workers-api/src/worker.ts",
+  "compatibility_date": "2025-03-01",
+  "vars": {
+    "APP_ENV": "staging",
+    "SUPABASE_URL": "https://<project-ref>.supabase.co"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

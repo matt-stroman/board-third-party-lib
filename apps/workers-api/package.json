@@ -1,0 +1,20 @@
+{
+  "name": "@board-enthusiasts/workers-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm exec -- wrangler dev",
+    "build": "npm exec -- wrangler deploy --dry-run",
+    "deploy": "npm exec -- wrangler deploy",
+    "typecheck": "npm exec -- tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "@board-enthusiasts/migration-contract": "file:../../packages/migration-contract"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250320.0",
+    "typescript": "^5.8.0",
+    "wrangler": "^4.11.0"
+  }
+}
