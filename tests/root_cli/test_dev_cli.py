@@ -65,6 +65,60 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             command,
         )
 
+    def test_parse_env_assignments_unquotes_supabase_status_values(self) -> None:
+        parsed = dev.parse_env_assignments(
+            'API_URL="http://127.0.0.1:54321"\nANON_KEY="anon"\nSERVICE_ROLE_KEY="service"\n'
+        )
+
+        self.assertEqual("http://127.0.0.1:54321", parsed["API_URL"])
+        self.assertEqual("anon", parsed["ANON_KEY"])
+        self.assertEqual("service", parsed["SERVICE_ROLE_KEY"])
+
+    def test_build_supabase_bearer_headers_uses_apikey_and_bearer(self) -> None:
+        headers = dev.build_supabase_bearer_headers(api_key="service-role-key")
+
+        self.assertEqual("service-role-key", headers["apikey"])
+        self.assertEqual("Bearer service-role-key", headers["authorization"])
+        self.assertEqual("application/json", headers["accept"])
+
+    def test_has_current_migration_workspace_dependencies_tracks_lockfile_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            args = argparse.Namespace(
+                compose_file="backend/docker-compose.yml",
+                postgres_container_name="board_tpl_postgres",
+                postgres_user="board_tpl_user",
+                postgres_database="board_tpl",
+                keycloak_container_name="board_tpl_keycloak",
+                keycloak_ready_url="https://localhost:8443/realms/board/protocol/openid-connect/auth",
+                backend_project="backend/src/Board.ThirdPartyLibrary.Api/Board.ThirdPartyLibrary.Api.csproj",
+                backend_solution="backend/Board.ThirdPartyLibrary.Backend.sln",
+            )
+            config = dev.config_from_args(args, repo_root)
+
+            (repo_root / "package.json").write_text('{"name":"board-enthusiasts"}', encoding="utf-8")
+            (repo_root / "package-lock.json").write_text('{"lockfileVersion":3}', encoding="utf-8")
+            (repo_root / "node_modules").mkdir()
+            (repo_root / "node_modules" / "tsx").mkdir(parents=True)
+            (repo_root / "node_modules" / "tsx" / "package.json").write_text("{}", encoding="utf-8")
+            (repo_root / "node_modules" / "@supabase" / "supabase-js").mkdir(parents=True)
+            (repo_root / "node_modules" / "@supabase" / "supabase-js" / "package.json").write_text("{}", encoding="utf-8")
+            (repo_root / "node_modules" / "@playwright" / "test").mkdir(parents=True)
+            (repo_root / "node_modules" / "@playwright" / "test" / "package.json").write_text("{}", encoding="utf-8")
+            (repo_root / "node_modules" / ".bin").mkdir(parents=True)
+            (repo_root / "node_modules" / ".bin" / "tsx.cmd").write_text("", encoding="utf-8")
+            (repo_root / "node_modules" / ".bin" / "playwright.cmd").write_text("", encoding="utf-8")
+
+            self.assertFalse(dev.has_current_migration_workspace_dependencies(config))
+
+            dev.record_migration_workspace_dependencies(config)
+
+            self.assertTrue(dev.has_current_migration_workspace_dependencies(config))
+
+            (repo_root / "package-lock.json").write_text('{"lockfileVersion":4}', encoding="utf-8")
+
+            self.assertFalse(dev.has_current_migration_workspace_dependencies(config))
+
 
 if __name__ == "__main__":
     unittest.main()

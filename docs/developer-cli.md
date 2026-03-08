@@ -41,7 +41,7 @@ The developer CLI orchestrates common local development tasks from the repositor
 - run environment diagnostics
 - create/restore local PostgreSQL SQL backups
 - seed deterministic local auth/catalog sample data for UI/UX testing
-- run Wave 1 migration workspace commands for the React SPA, Workers API, Supabase local stack, parity baselines, and staging deployment wrappers
+- run Wave 1 and Wave 2 migration workspace commands for the React SPA, Workers API, Supabase local stack, parity baselines, seeded Supabase data, and staging deployment wrappers
 
 ## Primary Entry Point
 
@@ -158,11 +158,12 @@ Useful flags:
 
 ## Migration Workflows
 
-Wave 1 adds a parallel migration workspace without replacing the current .NET runtime yet.
+Wave 1 and Wave 2 add a parallel migration workspace without replacing the current .NET runtime yet.
 
 Reference doc:
 
 - [`docs/cloudflare-supabase-workers-wave-1.md`](./cloudflare-supabase-workers-wave-1.md)
+- [`docs/cloudflare-supabase-workers-wave-2.md`](./cloudflare-supabase-workers-wave-2.md)
 
 ### Install, build, or run the React SPA shell
 
@@ -189,13 +190,53 @@ python ./scripts/dev.py supabase db-reset
 python ./scripts/dev.py supabase stop
 ```
 
+`supabase db-reset` now reseeds deterministic Supabase auth users, relational demo data, and storage fixtures for the Wave 2 stack.
+
+### Seed only the migration stack
+
+```bash
+python ./scripts/dev.py seed-data --target migration
+python ./scripts/dev.py seed-data --target both
+```
+
 ### Run the maintained API contract smoke harness
 
 ```bash
 python ./scripts/dev.py contract-smoke --start-backend
+python ./scripts/dev.py contract-smoke --target migration --start-workers
 ```
 
-This uses the Wave 1 smoke harness under `tests/contract-smoke`. If you provide a bearer token with `--token`, the harness also validates authenticated maintained endpoints.
+This uses the maintained smoke harness under `tests/contract-smoke`.
+
+For local migration runs, the CLI automatically fetches seeded role-appropriate Supabase tokens:
+
+- developer token for player/developer endpoints
+- moderator token for moderation endpoints
+
+Useful migration flags:
+
+- `--target migration`
+- `--start-workers`
+- `--developer-token`
+- `--moderator-token`
+- `--seed-user-email`
+- `--moderator-email`
+- `--seed-user-password`
+
+### Run the Wave 2 Workers flow smoke suite
+
+```bash
+python ./scripts/dev.py workers-smoke --start-stack
+```
+
+This command verifies the local Supabase + Workers stack end to end, including:
+
+- public catalog list/detail
+- current-user bootstrap and profile mutation
+- developer enrollment and studio workspace flows
+- studio link CRUD
+- studio logo upload and retrieval
+- moderation developer verification flows
 
 ### Run browser parity smoke and screenshot comparison coverage
 
@@ -393,6 +434,8 @@ API workflow commands also expose workflow-specific overrides. Common examples:
 - `workers install|build|run`
 - `supabase start|stop|status|db-reset`
 - `contract-smoke --start-backend`
+- `contract-smoke --target migration --start-workers`
+- `workers-smoke --start-stack`
 - `parity-test --start-stack`
 - `capture-parity-baseline --start-stack`
 - `deploy-staging --dry-run`
@@ -406,10 +449,11 @@ Populate the placeholder auth and resource IDs in a private copy when you want f
 ## Notes
 
 - The `up`, `down`, and `status` commands manage the local PostgreSQL, Mailpit, and Keycloak containers together.
-- The Wave 1 migration scaffolding expects `node`, `npm`, `supabase`, and `wrangler` in addition to the existing .NET/Docker toolchain.
+- The Wave 1 and Wave 2 migration scaffolding expects `node`, `npm`, `supabase`, and `wrangler` in addition to the existing .NET/Docker toolchain.
 - The `down` command uses `docker compose down` and does **not** remove named volumes. Your local Postgres data persists unless you explicitly remove volumes.
 - VS Code tasks in this repo call the Python CLI directly.
 - The supported developer entry point for this repository is `python ./scripts/dev.py ...`; API-local helper scripts under `api/scripts/` are implementation details for CI and the root CLI.
 - Tool executables are resolved from each developer's `PATH`; the CLI does not assume fixed install directories for `dotnet`, `node`, `npx`, `postman`, `docker`, or other required tools.
+- Migration workspace dependency installs are now cached by lockfile fingerprint so routine Wave 2 commands do not reinstall the entire npm workspace unnecessarily.
 
 

@@ -1,7 +1,10 @@
 import { maintainedApiRoutes } from "../../packages/migration-contract/src/index";
 
 const baseUrl = (process.env.CONTRACT_SMOKE_BASE_URL ?? "https://localhost:7085").replace(/\/$/, "");
-const bearerToken = (process.env.CONTRACT_SMOKE_TOKEN ?? "").trim();
+const fallbackToken = (process.env.CONTRACT_SMOKE_TOKEN ?? "").trim();
+const playerToken = (process.env.CONTRACT_SMOKE_PLAYER_TOKEN ?? "").trim();
+const developerToken = (process.env.CONTRACT_SMOKE_DEVELOPER_TOKEN ?? "").trim();
+const moderatorToken = (process.env.CONTRACT_SMOKE_MODERATOR_TOKEN ?? "").trim();
 
 interface SmokeResult {
   route: string;
@@ -14,13 +17,29 @@ async function fetchRoute(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${baseUrl}${path}`, init);
 }
 
-function buildHeaders(): HeadersInit {
-  if (!bearerToken) {
+function getRouteToken(access: (typeof maintainedApiRoutes)[number]["access"]): string {
+  if (access === "public") {
+    return "";
+  }
+
+  if (access === "moderator") {
+    return moderatorToken || fallbackToken;
+  }
+
+  if (access === "developer") {
+    return developerToken || playerToken || fallbackToken;
+  }
+
+  return playerToken || developerToken || moderatorToken || fallbackToken;
+}
+
+function buildHeaders(token: string): HeadersInit {
+  if (!token) {
     return {};
   }
 
   return {
-    Authorization: `Bearer ${bearerToken}`
+    Authorization: `Bearer ${token}`
   };
 }
 
@@ -33,17 +52,29 @@ async function run(): Promise<void> {
         ? "/catalog?pageNumber=1&pageSize=2"
         : route.path === "/moderation/developers"
           ? "/moderation/developers?search=emma"
+          : route.path === "/identity/me/profile" && route.method === "PUT"
+            ? "/identity/me/profile"
           : route.path;
+
+    const body =
+      route.path === "/identity/me/profile" && route.method === "PUT"
+        ? JSON.stringify({ displayName: "Emma Torres" })
+        : undefined;
+    const routeToken = getRouteToken(route.access);
 
     const response = await fetchRoute(path, {
       method: route.method,
-      headers: buildHeaders()
+      headers: {
+        ...buildHeaders(routeToken),
+        ...(body ? { "content-type": "application/json" } : {})
+      },
+      body
     });
 
     const ok =
       route.authMode === "public"
         ? response.ok
-        : bearerToken
+        : routeToken
           ? response.ok
           : response.status === 401;
 

@@ -21,17 +21,22 @@ export interface MaintainedApiRoute {
   method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
   description: string;
+  access: MaintainedAccessLevel;
   authMode: "public" | "token-optional" | "token-required";
 }
 
 export const maintainedApiRoutes: ReadonlyArray<MaintainedApiRoute> = [
-  { method: "GET", path: "/health/live", description: "Live health probe", authMode: "public" },
-  { method: "GET", path: "/health/ready", description: "Ready health probe", authMode: "public" },
-  { method: "GET", path: "/catalog", description: "Public catalog listing", authMode: "public" },
-  { method: "GET", path: "/studios", description: "Public studio listing", authMode: "public" },
-  { method: "GET", path: "/identity/me", description: "Current-user bootstrap", authMode: "token-optional" },
-  { method: "GET", path: "/identity/me/profile", description: "Current-user profile read", authMode: "token-optional" },
-  { method: "GET", path: "/identity/me/developer-enrollment", description: "Developer access read model", authMode: "token-optional" },
-  { method: "GET", path: "/developer/studios", description: "Developer studio workspace list", authMode: "token-optional" },
-  { method: "GET", path: "/moderation/developers", description: "Moderation developer search", authMode: "token-optional" }
+  { method: "GET", path: "/health/live", description: "Live health probe", access: "public", authMode: "public" },
+  { method: "GET", path: "/health/ready", description: "Ready health probe", access: "public", authMode: "public" },
+  { method: "GET", path: "/catalog", description: "Public catalog listing", access: "public", authMode: "public" },
+  { method: "GET", path: "/studios", description: "Public studio listing", access: "public", authMode: "public" },
+  { method: "GET", path: "/catalog/blue-harbor-games/lantern-drift", description: "Public catalog detail", access: "public", authMode: "public" },
+  { method: "GET", path: "/studios/blue-harbor-games", description: "Public studio detail", access: "public", authMode: "public" },
+  { method: "GET", path: "/identity/me", description: "Current-user bootstrap", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/identity/me/profile", description: "Current-user profile read", access: "player", authMode: "token-required" },
+  { method: "PUT", path: "/identity/me/profile", description: "Current-user profile update", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/identity/me/developer-enrollment", description: "Developer access read model", access: "player", authMode: "token-required" },
+  { method: "POST", path: "/identity/me/developer-enrollment", description: "Developer self-enrollment", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/developer/studios", description: "Developer studio workspace list", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/moderation/developers", description: "Moderation developer search", access: "moderator", authMode: "token-required" }
 ];

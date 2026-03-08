@@ -5,8 +5,12 @@
   "compatibility_date": "2025-03-01",
   "vars": {
     "APP_ENV": "staging",
-    "SUPABASE_URL": "https://<project-ref>.supabase.co"
+    "SUPABASE_URL": "https://<project-ref>.supabase.co",
+    "SUPABASE_ANON_KEY": "env(SUPABASE_ANON_KEY)",
+    "SUPABASE_MEDIA_BUCKET": "catalog-media"
   },
+  // Provision the service role key out of band:
+  //   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
   "observability": {
     "enabled": true
   }

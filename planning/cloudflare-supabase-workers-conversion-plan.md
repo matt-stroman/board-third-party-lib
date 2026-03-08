@@ -140,7 +140,7 @@ Objective: lock the migration target, capture the current UX contract, and estab
 
 ## Wave 2: Platform And API Cutover
 
-Status: planned
+Status: implemented locally on March 8, 2026; live remote staging validation pending provider credentials
 
 Objective: replace Keycloak, PostgreSQL app access patterns, local file storage, and .NET backend behavior with Supabase and Workers while keeping the frontend migration unblocked.
 

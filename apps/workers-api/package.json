@@ -4,13 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "npm exec -- wrangler dev",
+    "dev": "npm exec -- wrangler dev --ip 127.0.0.1 --port 8787",
     "build": "npm exec -- wrangler deploy --dry-run",
     "deploy": "npm exec -- wrangler deploy",
     "typecheck": "npm exec -- tsc --project tsconfig.json"
   },
   "dependencies": {
-    "@board-enthusiasts/migration-contract": "file:../../packages/migration-contract"
+    "@board-enthusiasts/migration-contract": "file:../../packages/migration-contract",
+    "@supabase/supabase-js": "^2.57.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250320.0",

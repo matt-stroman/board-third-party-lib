@@ -2358,6 +2358,91 @@ def ensure_migration_workspace_scaffolding(config: DevConfig) -> None:
         raise DevCliError(f"Migration workspace scaffolding is incomplete:\n{preview}")
 
 
+def get_migration_workspace_install_state_path(config: DevConfig) -> Path:
+    """Return the state file used to track the current npm workspace install.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        State file path under the shared CLI logs directory.
+    """
+
+    return config.repo_root / ".dev-cli-logs" / "migration-workspace-install.sha256"
+
+
+def get_migration_workspace_install_fingerprint(config: DevConfig) -> str:
+    """Build a fingerprint for the current root npm workspace dependency graph.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        SHA-256 fingerprint for the active dependency manifest/lock state.
+    """
+
+    manifest_path = get_root_workspace_manifest_path(config)
+    lock_path = manifest_path.with_name("package-lock.json")
+    fingerprint_source = lock_path if lock_path.exists() else manifest_path
+    return hashlib.sha256(fingerprint_source.read_bytes()).hexdigest()
+
+
+def has_current_migration_workspace_dependencies(config: DevConfig) -> bool:
+    """Return whether the installed root npm workspace matches the current lock state.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        ``True`` when ``node_modules`` exists and the recorded install fingerprint
+        matches the current dependency manifest state.
+    """
+
+    node_modules_path = config.repo_root / "node_modules"
+    if not node_modules_path.exists():
+        return False
+
+    required_paths = (
+        node_modules_path / "tsx" / "package.json",
+        node_modules_path / "@supabase" / "supabase-js" / "package.json",
+        node_modules_path / "@playwright" / "test" / "package.json",
+    )
+    if any(not path.exists() for path in required_paths):
+        return False
+
+    required_binaries = (
+        (node_modules_path / ".bin" / "tsx").exists() or (node_modules_path / ".bin" / "tsx.cmd").exists(),
+        (node_modules_path / ".bin" / "playwright").exists() or (node_modules_path / ".bin" / "playwright.cmd").exists(),
+    )
+    if not all(required_binaries):
+        return False
+
+    state_path = get_migration_workspace_install_state_path(config)
+    if not state_path.exists():
+        return False
+
+    recorded_fingerprint = state_path.read_text(encoding="utf-8").strip()
+    if not recorded_fingerprint:
+        return False
+
+    return recorded_fingerprint == get_migration_workspace_install_fingerprint(config)
+
+
+def record_migration_workspace_dependencies(config: DevConfig) -> None:
+    """Record the current npm workspace install fingerprint after a successful install.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        None.
+    """
+
+    state_path = get_migration_workspace_install_state_path(config)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(get_migration_workspace_install_fingerprint(config), encoding="utf-8")
+
+
 def install_migration_workspace_dependencies(config: DevConfig) -> None:
     """Install root npm workspace dependencies for the migration scaffolding.
 
@@ -2370,11 +2455,13 @@ def install_migration_workspace_dependencies(config: DevConfig) -> None:
 
     assert_command_available("npm")
     ensure_migration_workspace_scaffolding(config)
-    manifest_path = get_root_workspace_manifest_path(config)
-    lock_path = manifest_path.with_name("package-lock.json")
-    npm_cmd = ["npm", "ci"] if lock_path.exists() else ["npm", "install"]
+    if has_current_migration_workspace_dependencies(config):
+        print("Migration workspace npm dependencies are already current.")
+        return
+
     write_step("Installing migration workspace npm dependencies")
-    run_command(npm_cmd, cwd=config.repo_root)
+    run_command(["npm", "install"], cwd=config.repo_root)
+    record_migration_workspace_dependencies(config)
 
 
 def run_root_python_tests(config: DevConfig) -> None:
@@ -2470,6 +2557,242 @@ def resolve_supabase_command_prefix() -> list[str]:
     raise DevCliError("Supabase CLI was not found. Install `supabase` or ensure `npx` is available.")
 
 
+def parse_env_assignments(text: str) -> dict[str, str]:
+    """Parse ``KEY=value`` lines into a dictionary.
+
+    Args:
+        text: Newline-delimited environment assignment text.
+
+    Returns:
+        Parsed environment mapping.
+    """
+
+    parsed: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        normalized_value = value.strip()
+        if len(normalized_value) >= 2 and normalized_value[0] == normalized_value[-1] == '"':
+            normalized_value = normalized_value[1:-1]
+        parsed[key.strip()] = normalized_value
+    return parsed
+
+
+def get_supabase_status_env(config: DevConfig) -> dict[str, str]:
+    """Return local Supabase runtime environment details from the CLI.
+
+    Args:
+        config: CLI configuration containing the Supabase project path.
+
+    Returns:
+        Parsed environment mapping emitted by ``supabase status -o env``.
+
+    Raises:
+        DevCliError: If Supabase is not running or status output is incomplete.
+    """
+
+    prefix = resolve_supabase_command_prefix()
+    result = run_command(
+        [*prefix, "status", "-o", "env"],
+        cwd=config.repo_root / config.supabase_root,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        output = "\n".join(
+            part.strip()
+            for part in ((result.stdout or ""), (result.stderr or ""))
+            if part and part.strip()
+        )
+        if "No such container" in output or "failed to inspect container health" in output:
+            raise DevCliError("Local Supabase services are not running. Start them with 'python ./scripts/dev.py supabase start'.")
+        raise DevCliError("Supabase status command failed." + (f"\n{output}" if output else ""))
+
+    parsed = parse_env_assignments(result.stdout or "")
+    required = ("API_URL", "ANON_KEY", "SERVICE_ROLE_KEY")
+    missing = [name for name in required if not parsed.get(name)]
+    if missing:
+        raise DevCliError(
+            "Supabase status output did not include the expected runtime keys: "
+            + ", ".join(missing)
+        )
+    return parsed
+
+
+def get_local_supabase_runtime(config: DevConfig) -> dict[str, str]:
+    """Build the normalized local Supabase runtime environment mapping.
+
+    Args:
+        config: CLI configuration containing the Supabase project path.
+
+    Returns:
+        Mapping containing the API URL plus anon and service keys.
+    """
+
+    status_env = get_supabase_status_env(config)
+    return {
+        "SUPABASE_URL": status_env["API_URL"],
+        "SUPABASE_ANON_KEY": status_env["ANON_KEY"],
+        "SUPABASE_SERVICE_ROLE_KEY": status_env["SERVICE_ROLE_KEY"],
+        "SUPABASE_MEDIA_BUCKET": "catalog-media",
+    }
+
+
+def build_supabase_bearer_headers(*, api_key: str) -> dict[str, str]:
+    """Build the standard Supabase API headers for a bearer-authenticated request.
+
+    Args:
+        api_key: Supabase anon or service-role API key.
+
+    Returns:
+        Header mapping suitable for admin/storage/rest API probes.
+    """
+
+    return {
+        "apikey": api_key,
+        "authorization": f"Bearer {api_key}",
+        "accept": "application/json",
+    }
+
+
+def probe_http_endpoint(
+    *,
+    url: str,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    data: bytes | None = None,
+    timeout_seconds: int = 10,
+) -> tuple[bool, str | None]:
+    """Probe an HTTP endpoint and report whether it returned a success status.
+
+    Args:
+        url: Endpoint URL to probe.
+        method: HTTP method to use.
+        headers: Optional request headers.
+        data: Optional request body.
+        timeout_seconds: Request timeout in seconds.
+
+    Returns:
+        Tuple of ``(reachable, detail)`` where ``detail`` contains a failure
+        description when the probe was unsuccessful.
+    """
+
+    request = urllib.request.Request(url, method=method, data=data, headers=headers or {})
+    context = None
+    if is_local_http_url(url) and is_https_url(url):
+        context = ssl._create_unverified_context()
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds, context=context) as response:
+            status_code = getattr(response, "status", 200)
+            if 200 <= status_code < 400:
+                return True, None
+            return False, f"HTTP {status_code}"
+    except urllib.error.HTTPError as ex:
+        detail = ex.read().decode("utf-8", errors="replace").strip()
+        message = f"HTTP {ex.code} {ex.reason}"
+        if detail:
+            message = f"{message}: {detail}"
+        return False, message
+    except (
+        ConnectionAbortedError,
+        ConnectionError,
+        OSError,
+        http.client.RemoteDisconnected,
+        urllib.error.URLError,
+        TimeoutError,
+    ) as ex:
+        return False, str(ex)
+
+
+def wait_for_local_supabase_http_ready(
+    *,
+    runtime_env: dict[str, str],
+    timeout_seconds: int = 120,
+) -> None:
+    """Wait until the core local Supabase REST and storage endpoints are ready.
+
+    Args:
+        runtime_env: Resolved local Supabase runtime environment values.
+        timeout_seconds: Maximum time to wait before failing.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If the local Supabase HTTP surface does not become ready.
+    """
+
+    service_headers = build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SERVICE_ROLE_KEY"])
+    base_url = runtime_env["SUPABASE_URL"].rstrip("/")
+    checks = (
+        (
+            "Supabase REST API",
+            f"{base_url}/rest/v1/migration_wave_state?select=key&limit=1",
+            service_headers,
+        ),
+        (
+            "Supabase Storage API",
+            f"{base_url}/storage/v1/bucket",
+            service_headers,
+        ),
+    )
+
+    write_step(f"Waiting for local Supabase HTTP readiness (up to {timeout_seconds} seconds)")
+    deadline = time.time() + timeout_seconds
+    last_failures: list[str] = []
+    while time.time() < deadline:
+        failures: list[str] = []
+        for description, url, headers in checks:
+            ready, detail = probe_http_endpoint(url=url, headers=headers)
+            if not ready:
+                failures.append(f"{description}: {detail or 'not ready'}")
+
+        if not failures:
+            print("Local Supabase HTTP services are ready.")
+            return
+
+        last_failures = failures
+        time.sleep(2)
+
+    detail = "; ".join(last_failures)
+    raise DevCliError(
+        "Timed out waiting for local Supabase HTTP services to become ready."
+        + (f"\nLast probe failures: {detail}" if detail else "")
+    )
+
+
+def get_workers_dev_vars_path(config: DevConfig) -> Path:
+    """Return the local Wrangler dev vars file path for the Workers workspace."""
+
+    return config.repo_root / config.migration_workers_root / ".dev.vars"
+
+
+def write_workers_local_dev_vars(config: DevConfig, *, runtime_env: dict[str, str]) -> Path:
+    """Write local Workers runtime bindings for Wrangler dev.
+
+    Args:
+        config: CLI configuration containing the Workers workspace path.
+        runtime_env: Supabase runtime environment values.
+
+    Returns:
+        Path to the written ``.dev.vars`` file.
+    """
+
+    dev_vars_path = get_workers_dev_vars_path(config)
+    lines = [
+        "APP_ENV=local",
+        f"SUPABASE_URL={runtime_env['SUPABASE_URL']}",
+        f"SUPABASE_ANON_KEY={runtime_env['SUPABASE_ANON_KEY']}",
+        f"SUPABASE_SERVICE_ROLE_KEY={runtime_env['SUPABASE_SERVICE_ROLE_KEY']}",
+        f"SUPABASE_MEDIA_BUCKET={runtime_env['SUPABASE_MEDIA_BUCKET']}",
+    ]
+    dev_vars_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return dev_vars_path
+
+
 def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
     """Run a Supabase local workflow command from the repository root.
 
@@ -2525,7 +2848,24 @@ def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
 
     if action == "db-reset":
         write_step("Resetting local Supabase database and reseeding")
-        run_command([*prefix, "db", "reset", "--local"], cwd=supabase_root)
+        result = run_command(
+            [*prefix, "db", "reset", "--local"],
+            cwd=supabase_root,
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            output = "\n".join(
+                part.strip()
+                for part in ((result.stdout or ""), (result.stderr or ""))
+                if part and part.strip()
+            )
+            if "Error status 502" in output:
+                get_supabase_status_env(config)
+                print("Supabase db reset completed with a transient 502 during service restart; continuing.")
+            else:
+                raise DevCliError("Supabase db reset failed." + (f"\n{output}" if output else ""))
+        seed_migration_data(config, seed_password=LOCAL_SEED_DEFAULT_PASSWORD)
         return
 
     raise DevCliError(f"Unsupported Supabase action: {action}")
@@ -2598,6 +2938,10 @@ def run_migration_workers_command(
         return
 
     if action == "run":
+        runtime_env = get_local_supabase_runtime(config)
+        wait_for_local_supabase_http_ready(runtime_env=runtime_env)
+        dev_vars_path = write_workers_local_dev_vars(config, runtime_env=runtime_env)
+        print(f"Workers dev bindings file: {dev_vars_path}")
         write_step(f"Starting migration Workers API at {config.migration_workers_base_url} (Ctrl+C to stop)")
         run_command(build_workspace_npm_command(script_name="dev", workspace_name=config.migration_workers_workspace_name), cwd=config.repo_root)
         return
@@ -2605,12 +2949,231 @@ def run_migration_workers_command(
     raise DevCliError(f"Unsupported Workers action: {action}")
 
 
+def seed_migration_data(config: DevConfig, *, seed_password: str) -> None:
+    """Seed deterministic Supabase auth, data, and storage fixtures for Wave 2.
+
+    Args:
+        config: CLI configuration containing migration workspace paths.
+        seed_password: Password assigned to seeded local Supabase auth users.
+
+    Returns:
+        None.
+    """
+
+    assert_command_available("npm")
+    ensure_migration_workspace_scaffolding(config)
+    install_migration_workspace_dependencies(config)
+    runtime_env = get_local_supabase_runtime(config)
+    asset_root = (
+        config.repo_root
+        / "frontend"
+        / "src"
+        / "Board.ThirdPartyLibrary.Frontend.Web"
+        / "wwwroot"
+        / "test-images"
+        / "seed-catalog"
+    ).resolve()
+    if not asset_root.exists():
+        raise DevCliError(f"Migration seed asset root was not found: {asset_root}")
+
+    write_step("Seeding local Supabase auth, storage, and relational demo data")
+    run_command(
+        [
+            "npm",
+            "run",
+            "seed:migration",
+            "--",
+            "--supabase-url",
+            runtime_env["SUPABASE_URL"],
+            "--service-role-key",
+            runtime_env["SUPABASE_SERVICE_ROLE_KEY"],
+            "--password",
+            seed_password,
+            "--asset-root",
+            str(asset_root),
+            "--bucket",
+            runtime_env["SUPABASE_MEDIA_BUCKET"],
+        ],
+        cwd=config.repo_root,
+    )
+
+
+def fetch_supabase_access_token(*, supabase_url: str, anon_key: str, email: str, password: str) -> str:
+    """Exchange email/password credentials for a Supabase access token.
+
+    Args:
+        supabase_url: Supabase API base URL.
+        anon_key: Supabase anon key.
+        email: Seeded user email.
+        password: Seeded user password.
+
+    Returns:
+        Access token string.
+    """
+
+    request = urllib.request.Request(
+        f"{supabase_url.rstrip('/')}/auth/v1/token?grant_type=password",
+        data=json.dumps({"email": email, "password": password}).encode("utf-8"),
+        headers={
+            "apikey": anon_key,
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, context=ssl._create_unverified_context()) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as ex:
+        detail = ex.read().decode("utf-8", errors="replace")
+        raise DevCliError(
+            f"Failed to fetch a Supabase access token for '{email}'.\n{detail}"
+        ) from ex
+
+    access_token = str(payload.get("access_token") or "").strip()
+    if not access_token:
+        raise DevCliError(f"Supabase auth response for '{email}' did not include an access token.")
+    return access_token
+
+
+def start_migration_workers_process(config: DevConfig, *, runtime_env: dict[str, str]) -> tuple[subprocess.Popen, Path]:
+    """Start the local Workers API in the background.
+
+    Args:
+        config: CLI configuration containing migration workspace paths.
+        runtime_env: Resolved local Supabase runtime environment values.
+
+    Returns:
+        Tuple of process handle and log path.
+    """
+
+    dev_vars_path = write_workers_local_dev_vars(config, runtime_env=runtime_env)
+    print(f"Workers dev bindings file: {dev_vars_path}")
+    command = build_workspace_npm_command(script_name="dev", workspace_name=config.migration_workers_workspace_name)
+    process, log_path = start_background_command_with_log(
+        cmd=command,
+        cwd=config.repo_root,
+        log_name="workers-api.log",
+        config=config,
+    )
+    wait_for_background_process_http_ready(
+        process=process,
+        url=f"{config.migration_workers_base_url.rstrip('/')}/health/ready",
+        description="migration Workers API",
+        log_path=log_path,
+        timeout_seconds=120,
+    )
+    return process, log_path
+
+
+def run_workers_smoke(
+    config: DevConfig,
+    *,
+    base_url: str,
+    moderator_token: str,
+    developer_token: str,
+) -> None:
+    """Run the Wave 2 Workers flow smoke suite.
+
+    Args:
+        config: CLI configuration containing repository paths.
+        base_url: Target Workers API base URL.
+        moderator_token: Bearer token for the seeded moderator user.
+        developer_token: Bearer token for the seeded developer user.
+
+    Returns:
+        None.
+    """
+
+    env = build_subprocess_env(
+        extra={
+            "WORKERS_SMOKE_BASE_URL": base_url,
+            "WORKERS_SMOKE_MODERATOR_TOKEN": moderator_token,
+            "WORKERS_SMOKE_DEVELOPER_TOKEN": developer_token,
+            "NODE_TLS_REJECT_UNAUTHORIZED": "0" if is_local_http_url(base_url) and is_https_url(base_url) else None,
+        }
+    )
+    write_step("Running Wave 2 Workers flow smoke suite")
+    run_command(["npm", "run", "test:workers-smoke"], cwd=config.repo_root, env=env)
+
+
+def run_workers_flow_smoke_command(
+    config: DevConfig,
+    *,
+    start_stack: bool,
+    base_url: str,
+    moderator_email: str,
+    developer_email: str,
+    seed_password: str,
+) -> None:
+    """Run the Wave 2 end-to-end Workers smoke suite.
+
+    Args:
+        config: CLI configuration containing repository paths.
+        start_stack: Whether to start and seed the local Supabase + Workers stack.
+        base_url: Target Workers API base URL.
+        moderator_email: Seeded moderator account email.
+        developer_email: Seeded developer account email.
+        seed_password: Password assigned to seeded auth users.
+
+    Returns:
+        None.
+    """
+
+    ensure_migration_workspace_scaffolding(config)
+    install_migration_workspace_dependencies(config)
+
+    workers_process: subprocess.Popen | None = None
+    resolved_base_url = base_url
+    try:
+        if start_stack:
+            run_supabase_stack_command(config, action="start")
+            run_supabase_stack_command(config, action="db-reset")
+            runtime_env = get_local_supabase_runtime(config)
+            resolved_base_url = config.migration_workers_base_url
+            write_step("Starting migration Workers API in the background for Wave 2 smoke")
+            workers_process, workers_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
+            print(f"Workers API log: {workers_log_path}")
+        else:
+            ensure_api_base_url_reachable(resolved_base_url)
+            runtime_env = get_local_supabase_runtime(config)
+
+        moderator_token = fetch_supabase_access_token(
+            supabase_url=runtime_env["SUPABASE_URL"],
+            anon_key=runtime_env["SUPABASE_ANON_KEY"],
+            email=moderator_email,
+            password=seed_password,
+        )
+        developer_token = fetch_supabase_access_token(
+            supabase_url=runtime_env["SUPABASE_URL"],
+            anon_key=runtime_env["SUPABASE_ANON_KEY"],
+            email=developer_email,
+            password=seed_password,
+        )
+        run_workers_smoke(
+            config,
+            base_url=resolved_base_url,
+            moderator_token=moderator_token,
+            developer_token=developer_token,
+        )
+    finally:
+        if workers_process is not None:
+            write_step("Stopping background migration Workers API")
+            stop_background_process(workers_process)
+
+
 def run_contract_smoke(
     config: DevConfig,
     *,
     base_url: str,
     start_backend: bool,
+    start_workers: bool,
+    target: str,
     token: str | None,
+    moderator_token: str | None,
+    developer_token: str | None,
+    seed_user_email: str | None,
+    moderator_email: str | None,
+    seed_user_password: str | None,
 ) -> None:
     """Run the maintained API contract smoke harness.
 
@@ -2618,7 +3181,14 @@ def run_contract_smoke(
         config: CLI configuration containing workspace paths.
         base_url: Target API base URL.
         start_backend: Whether to start the legacy backend automatically.
+        start_workers: Whether to start the migration Workers stack automatically.
+        target: `legacy` or `migration`.
         token: Optional bearer token for authenticated smoke checks.
+        moderator_token: Optional moderator bearer token for role-specific smoke checks.
+        developer_token: Optional developer bearer token for role-specific smoke checks.
+        seed_user_email: Optional seeded user email used to fetch a migration auth token.
+        moderator_email: Optional seeded moderator email used to fetch a migration auth token.
+        seed_user_password: Optional seeded user password used to fetch a migration auth token.
 
     Returns:
         None.
@@ -2630,6 +3200,22 @@ def run_contract_smoke(
 
     backend_process: subprocess.Popen | None = None
     backend_log_path: Path | None = None
+    workers_process: subprocess.Popen | None = None
+    runtime_env: dict[str, str] | None = None
+    resolved_base_url = base_url
+    resolved_token = token or ""
+    resolved_moderator_token = moderator_token or ""
+    resolved_developer_token = developer_token or ""
+
+    if start_backend and start_workers:
+        raise DevCliError("--start-backend and --start-workers cannot be used together.")
+    if target not in {"legacy", "migration"}:
+        raise DevCliError(f"Unsupported contract smoke target: {target}")
+    if target == "legacy" and start_workers:
+        raise DevCliError("--start-workers can only be used with '--target migration'.")
+    if target == "migration" and start_backend:
+        raise DevCliError("--start-backend cannot be used with '--target migration'.")
+
     if start_backend:
         if not is_local_http_url(base_url):
             raise DevCliError("--start-backend can only be used with a local base URL.")
@@ -2645,14 +3231,54 @@ def run_contract_smoke(
             log_path=backend_log_path,
             timeout_seconds=120,
         )
+    elif start_workers:
+        if base_url != config.migration_workers_base_url and not is_local_http_url(base_url):
+            raise DevCliError("--start-workers can only be used with the local Workers base URL.")
+        run_supabase_stack_command(config, action="start")
+        run_supabase_stack_command(config, action="db-reset")
+        runtime_env = get_local_supabase_runtime(config)
+        resolved_base_url = config.migration_workers_base_url
+        write_step("Starting migration Workers API in the background for contract smoke")
+        workers_process, workers_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
+        print(f"Workers API log: {workers_log_path}")
     else:
-        ensure_api_base_url_reachable(base_url)
+        ensure_api_base_url_reachable(resolved_base_url)
+
+    if target == "migration" and runtime_env is None and is_local_http_url(resolved_base_url):
+        runtime_env = get_local_supabase_runtime(config)
+
+    if target == "migration" and runtime_env is not None:
+        developer_email = seed_user_email or (LOCAL_SEED_DEVELOPER_EMAIL if start_workers else None)
+        resolved_moderator_email = moderator_email or (LOCAL_SEED_MODERATOR_EMAIL if start_workers else None)
+        seed_password = seed_user_password or LOCAL_SEED_DEFAULT_PASSWORD
+
+        if developer_email and not resolved_developer_token:
+            resolved_developer_token = fetch_supabase_access_token(
+                supabase_url=runtime_env["SUPABASE_URL"],
+                anon_key=runtime_env["SUPABASE_ANON_KEY"],
+                email=developer_email,
+                password=seed_password,
+            )
+
+        if resolved_moderator_email and not resolved_moderator_token:
+            resolved_moderator_token = fetch_supabase_access_token(
+                supabase_url=runtime_env["SUPABASE_URL"],
+                anon_key=runtime_env["SUPABASE_ANON_KEY"],
+                email=resolved_moderator_email,
+                password=seed_password,
+            )
+
+        if not resolved_token:
+            resolved_token = resolved_developer_token or resolved_moderator_token
 
     env = build_subprocess_env(
         extra={
-            "CONTRACT_SMOKE_BASE_URL": base_url,
-            "CONTRACT_SMOKE_TOKEN": token or "",
-            "NODE_TLS_REJECT_UNAUTHORIZED": "0" if is_local_http_url(base_url) and is_https_url(base_url) else None,
+            "CONTRACT_SMOKE_BASE_URL": resolved_base_url,
+            "CONTRACT_SMOKE_TOKEN": resolved_token,
+            "CONTRACT_SMOKE_PLAYER_TOKEN": resolved_developer_token or resolved_token,
+            "CONTRACT_SMOKE_DEVELOPER_TOKEN": resolved_developer_token or resolved_token,
+            "CONTRACT_SMOKE_MODERATOR_TOKEN": resolved_moderator_token or resolved_token,
+            "NODE_TLS_REJECT_UNAUTHORIZED": "0" if is_local_http_url(resolved_base_url) and is_https_url(resolved_base_url) else None,
         }
     )
 
@@ -2663,6 +3289,9 @@ def run_contract_smoke(
         if backend_process is not None:
             write_step("Stopping background backend API")
             stop_background_process(backend_process)
+        if workers_process is not None:
+            write_step("Stopping background migration Workers API")
+            stop_background_process(workers_process)
 
 
 def run_parity_suite(
@@ -3435,6 +4064,8 @@ LOCAL_KEYCLOAK_ADMIN_USERNAME = "admin"
 LOCAL_KEYCLOAK_ADMIN_PASSWORD = "admin"
 LOCAL_KEYCLOAK_DEFAULT_REALM = "board-enthusiasts"
 LOCAL_SEED_DEFAULT_PASSWORD = "ChangeMe!123"
+LOCAL_SEED_MODERATOR_EMAIL = "alex.rivera@boardtpl.local"
+LOCAL_SEED_DEVELOPER_EMAIL = "emma.torres@boardtpl.local"
 LOCAL_SEED_IMAGE_BASE_PATH = Path("frontend/src/Board.ThirdPartyLibrary.Frontend.Web/wwwroot/test-images/seed-catalog")
 LEGACY_LOCAL_SEED_GENERATED_IMAGE_PATH = Path("frontend/src/Board.ThirdPartyLibrary.Frontend.Web/wwwroot/test-images/generated")
 
@@ -5229,6 +5860,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=LOCAL_SEED_DEFAULT_PASSWORD,
         help="Password assigned to seeded local Keycloak users",
     )
+    seed_data.add_argument(
+        "--target",
+        choices=("legacy", "migration", "both"),
+        default="legacy",
+        help="Seed the legacy stack, the migration stack, or both",
+    )
 
     spa = subparsers.add_parser(
         "spa",
@@ -5299,9 +5936,77 @@ def build_parser() -> argparse.ArgumentParser:
         help="Start the local legacy backend automatically for the smoke run",
     )
     contract_smoke.add_argument(
+        "--start-workers",
+        action="store_true",
+        help="Start the local Supabase + Workers migration stack automatically for the smoke run",
+    )
+    contract_smoke.add_argument(
+        "--target",
+        choices=("legacy", "migration"),
+        default="legacy",
+        help="Smoke target stack",
+    )
+    contract_smoke.add_argument(
         "--token",
         default=None,
-        help="Optional bearer token for authenticated smoke endpoints",
+        help="Optional fallback bearer token for authenticated smoke endpoints",
+    )
+    contract_smoke.add_argument(
+        "--moderator-token",
+        default=None,
+        help="Optional moderator bearer token for role-specific smoke endpoints",
+    )
+    contract_smoke.add_argument(
+        "--developer-token",
+        default=None,
+        help="Optional developer bearer token for role-specific smoke endpoints",
+    )
+    contract_smoke.add_argument(
+        "--seed-user-email",
+        default=LOCAL_SEED_DEVELOPER_EMAIL,
+        help="Seeded Supabase developer email used to fetch a migration auth token automatically",
+    )
+    contract_smoke.add_argument(
+        "--moderator-email",
+        default=LOCAL_SEED_MODERATOR_EMAIL,
+        help="Seeded Supabase moderator email used to fetch a migration auth token automatically",
+    )
+    contract_smoke.add_argument(
+        "--seed-user-password",
+        default=LOCAL_SEED_DEFAULT_PASSWORD,
+        help="Seeded Supabase auth password used to fetch migration auth tokens automatically",
+    )
+
+    workers_smoke = subparsers.add_parser(
+        "workers-smoke",
+        parents=[shared],
+        help="Run end-to-end Wave 2 Workers auth, data, and upload smoke coverage",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    workers_smoke.add_argument(
+        "--start-stack",
+        action="store_true",
+        help="Start and reseed the local Supabase + Workers stack automatically",
+    )
+    workers_smoke.add_argument(
+        "--base-url",
+        default="http://127.0.0.1:8787",
+        help="Workers API base URL",
+    )
+    workers_smoke.add_argument(
+        "--moderator-email",
+        default="alex.rivera@boardtpl.local",
+        help="Seeded moderator account email",
+    )
+    workers_smoke.add_argument(
+        "--developer-email",
+        default="emma.torres@boardtpl.local",
+        help="Seeded developer account email",
+    )
+    workers_smoke.add_argument(
+        "--seed-password",
+        default=LOCAL_SEED_DEFAULT_PASSWORD,
+        help="Seeded auth password",
     )
 
     parity_test = subparsers.add_parser(
@@ -5523,11 +6228,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "db-restore":
             db_restore(config, input_path=args.input)
         elif args.command == "seed-data":
-            seed_local_data(
-                config,
-                reset_media=args.reset_media,
-                seed_password=args.seed_password,
-            )
+            if args.target in ("legacy", "both"):
+                seed_local_data(
+                    config,
+                    reset_media=args.reset_media,
+                    seed_password=args.seed_password,
+                )
+            if args.target in ("migration", "both"):
+                run_supabase_stack_command(config, action="start")
+                seed_migration_data(
+                    config,
+                    seed_password=args.seed_password,
+                )
         elif args.command == "spa":
             run_migration_spa_command(
                 config,
@@ -5547,7 +6259,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 config,
                 base_url=args.base_url,
                 start_backend=args.start_backend,
+                start_workers=args.start_workers,
+                target=args.target,
                 token=args.token,
+                moderator_token=args.moderator_token,
+                developer_token=args.developer_token,
+                seed_user_email=args.seed_user_email,
+                moderator_email=args.moderator_email,
+                seed_user_password=args.seed_user_password,
+            )
+        elif args.command == "workers-smoke":
+            run_workers_flow_smoke_command(
+                config,
+                start_stack=args.start_stack,
+                base_url=args.base_url,
+                moderator_email=args.moderator_email,
+                developer_email=args.developer_email,
+                seed_password=args.seed_password,
             )
         elif args.command == "parity-test":
             run_parity_suite(

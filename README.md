@@ -8,7 +8,7 @@ Current implementation status:
 - EF Core migrations for `users`, `user_board_profiles`, `studios`, `studio_memberships`, `studio_links`, `titles`, `title_metadata_versions`, `title_media_assets`, `title_releases`, `release_artifacts`, `supported_publishers`, `integration_connections`, `title_integration_bindings`, `player_owned_titles`, `player_wishlist_entries`, `title_reports`, `title_report_messages`, `user_notifications`, and `user_platform_roles` are implemented
 - Wave 7 delivered the shared workspace shells, in-place developer studio workflows, deterministic local seed data, shared browse/studio catalog UX, and studio public-branding/link management
 - Wave 8 delivered player personalization and moderation follow-up workflows for wishlist, My Games, title reports, and notifications
-- the current migration wave is Wave 1 foundation for the Cloudflare, Supabase, and Workers conversion plan
+- the current migration wave is Wave 2 platform and API cutover for the Cloudflare, Supabase, and Workers conversion plan
 - the next product wave after the migration branch resumes is Wave 9 unified commerce and entitlements
 
 ## Table of Contents
@@ -56,6 +56,7 @@ git submodule status
 - Project-wide developer docs:
   - Developer CLI (root automation commands): [`docs/developer-cli.md`](docs/developer-cli.md)
   - Wave 1 migration foundation: [`docs/cloudflare-supabase-workers-wave-1.md`](docs/cloudflare-supabase-workers-wave-1.md)
+  - Wave 2 platform/API cutover: [`docs/cloudflare-supabase-workers-wave-2.md`](docs/cloudflare-supabase-workers-wave-2.md)
 - Backend-specific developer docs (in backend submodule):
   - Backend phase 1 (PostgreSQL local setup): [`backend/docs/backend-phase-1-postgres-setup.md`](backend/docs/backend-phase-1-postgres-setup.md)
   - New developer setup / quick start (current backend MVP): [`backend/docs/new-developer-setup.md`](backend/docs/new-developer-setup.md)
@@ -103,6 +104,8 @@ python ./scripts/dev.py down
 python ./scripts/dev.py spa run
 python ./scripts/dev.py workers run
 python ./scripts/dev.py supabase status
+python ./scripts/dev.py contract-smoke --target migration --start-workers
+python ./scripts/dev.py workers-smoke --start-stack
 python ./scripts/dev.py parity-test --start-stack
 python ./scripts/dev.py deploy-staging --dry-run
 ```
