@@ -31,7 +31,7 @@ The developer CLI orchestrates common local development tasks from the repositor
 - start/stop/reuse local Supabase services
 - run the maintained backend API
 - run maintained backend verification
-- run all major validation checks in one pass (backend docs + backend/frontend tests + API lint + API contract)
+- run all major validation checks in one pass (maintained backend tests + root CLI tests + frontend tests + API lint + API contract)
 - authenticate Postman CLI when Postman workspace or mock operations are needed
 - lint the Git-tracked OpenAPI specification with Redocly CLI
 - run API contract tests
@@ -106,7 +106,7 @@ python ./scripts/dev.py up --dependencies-only
 ### Seed local sample data for the maintained Wave 2 stack
 
 ```bash
-python ./scripts/dev.py seed-data --reset-media
+python ./scripts/dev.py seed-data
 ```
 
 This command:
@@ -122,7 +122,6 @@ Title card/hero/logo media should be checked-in PNGs, while studio logos remain 
 
 Useful flags:
 
-- `--reset-media` clears the obsolete legacy generated-media cache before validation
 - `--seed-password`
 
 ### Run the frontend web UI
@@ -176,7 +175,7 @@ python ./scripts/dev.py supabase stop
 ### Seed only the migration stack
 
 ```bash
-python ./scripts/dev.py seed-data --target migration
+python ./scripts/dev.py seed-data
 ```
 
 ### Run the maintained API contract smoke harness
@@ -194,7 +193,6 @@ For local migration runs, the CLI automatically fetches seeded role-appropriate 
 
 Useful migration flags:
 
-- `--target migration`
 - `--start-workers`
 - `--developer-token`
 - `--moderator-token`
@@ -220,7 +218,7 @@ This command verifies the local Supabase + Workers stack end to end, including:
 ### Run browser parity smoke and screenshot comparison coverage
 
 ```bash
-python ./scripts/dev.py parity-test --start-stack
+python ./scripts/dev.py parity-test
 ```
 
 This command runs the Playwright-based parity suite under `tests/parity` against an already running reference frontend.
@@ -228,7 +226,7 @@ This command runs the Playwright-based parity suite under `tests/parity` against
 ### Refresh the committed screenshot baselines
 
 ```bash
-python ./scripts/dev.py capture-parity-baseline --start-stack
+python ./scripts/dev.py capture-parity-baseline
 ```
 
 ### Run staging deployment wrappers for Pages and Workers
@@ -361,10 +359,10 @@ Workflow-specific overrides remain available where they still map to the maintai
 - `spa install|build|run`
 - `workers install|build|run`
 - `supabase start|stop|status|db-reset`
-- `contract-smoke --target migration --start-workers`
+- `contract-smoke --start-workers`
 - `workers-smoke --start-stack`
-- `parity-test --start-stack`
-- `capture-parity-baseline --start-stack`
+- `parity-test`
+- `capture-parity-baseline`
 - `deploy-staging --dry-run`
 
 For live API contract execution, the default environment template is:

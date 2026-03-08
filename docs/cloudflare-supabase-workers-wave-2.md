@@ -23,8 +23,8 @@ Primary local migration flows:
 python ./scripts/dev.py supabase start
 python ./scripts/dev.py supabase db-reset
 python ./scripts/dev.py workers run
-python ./scripts/dev.py seed-data --target migration
-python ./scripts/dev.py contract-smoke --target migration --start-workers
+python ./scripts/dev.py seed-data
+python ./scripts/dev.py contract-smoke --start-workers
 python ./scripts/dev.py workers-smoke --start-stack
 python ./scripts/dev.py deploy-staging --dry-run
 ```
@@ -58,7 +58,7 @@ Wave 2 verification that passed locally on March 8, 2026:
 python -m unittest discover -s tests/root_cli -p "test_*.py"
 npm run typecheck:migration
 npm run build:migration
-python ./scripts/dev.py contract-smoke --target migration --start-workers
+python ./scripts/dev.py contract-smoke --start-workers
 python ./scripts/dev.py workers-smoke --start-stack
 python ./scripts/dev.py deploy-staging --dry-run
 ```

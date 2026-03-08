@@ -30,6 +30,12 @@ dev = load_dev_cli_module()
 class DevCliMigrationHelperTests(unittest.TestCase):
     """Covers the pure helper logic added for Wave 1 migration scaffolding."""
 
+    @staticmethod
+    def create_args() -> argparse.Namespace:
+        """Create a minimal argument namespace for config construction."""
+
+        return argparse.Namespace()
+
     def test_is_local_supabase_url_reports_expected_values(self) -> None:
         self.assertTrue(dev.is_local_http_url("http://127.0.0.1:54321"))
         self.assertTrue(dev.is_local_http_url("https://localhost:7277"))
@@ -38,16 +44,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
     def test_config_from_args_keeps_root_relative_migration_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = pathlib.Path(temp_dir)
-            args = argparse.Namespace(
-                compose_file="backend/docker-compose.yml",
-                postgres_container_name="board_tpl_postgres",
-                postgres_user="board_tpl_user",
-                postgres_database="board_tpl",
-                keycloak_container_name="board_tpl_keycloak",
-                keycloak_ready_url="https://localhost:8443/realms/board/protocol/openid-connect/auth",
-                backend_project="backend/src/Board.ThirdPartyLibrary.Api/Board.ThirdPartyLibrary.Api.csproj",
-                backend_solution="backend/Board.ThirdPartyLibrary.Backend.sln",
-            )
+            args = self.create_args()
 
             config = dev.config_from_args(args, repo_root)
 
@@ -85,16 +82,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
     def test_has_current_migration_workspace_dependencies_tracks_lockfile_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = pathlib.Path(temp_dir)
-            args = argparse.Namespace(
-                compose_file="backend/docker-compose.yml",
-                postgres_container_name="board_tpl_postgres",
-                postgres_user="board_tpl_user",
-                postgres_database="board_tpl",
-                keycloak_container_name="board_tpl_keycloak",
-                keycloak_ready_url="https://localhost:8443/realms/board/protocol/openid-connect/auth",
-                backend_project="backend/src/Board.ThirdPartyLibrary.Api/Board.ThirdPartyLibrary.Api.csproj",
-                backend_solution="backend/Board.ThirdPartyLibrary.Backend.sln",
-            )
+            args = self.create_args()
             config = dev.config_from_args(args, repo_root)
 
             (repo_root / "package.json").write_text('{"name":"board-enthusiasts"}', encoding="utf-8")
@@ -141,16 +129,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             collection_path.write_text("{}", encoding="utf-8")
             environment_path.write_text("{}", encoding="utf-8")
 
-            args = argparse.Namespace(
-                compose_file="backend/docker-compose.yml",
-                postgres_container_name="board_tpl_postgres",
-                postgres_user="board_tpl_user",
-                postgres_database="board_tpl",
-                keycloak_container_name="board_tpl_keycloak",
-                keycloak_ready_url="https://localhost:8443/realms/board/protocol/openid-connect/auth",
-                backend_project="backend/src/Board.ThirdPartyLibrary.Api/Board.ThirdPartyLibrary.Api.csproj",
-                backend_solution="backend/Board.ThirdPartyLibrary.Backend.sln",
-            )
+            args = self.create_args()
             config = dev.config_from_args(args, repo_root)
 
             with (
@@ -185,7 +164,6 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     contract_execution_mode="live",
                     report_path=repo_root / "api" / "postman-cli-reports" / "contract-tests.xml",
                     lint_spec=False,
-                    start_backend=False,
                     start_workers=True,
                     developer_token=None,
                     moderator_token=None,
@@ -209,6 +187,15 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             self.assertIn("moderatorAccessToken=moderator-token", invoked_command)
             self.assertIn(f"baseUrl={config.migration_workers_base_url}", invoked_command)
             stop_background_process.assert_called_once()
+
+    def test_parity_commands_no_longer_accept_start_stack(self) -> None:
+        parser = dev.build_parser()
+
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["parity-test", "--start-stack"])
+
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["capture-parity-baseline", "--start-stack"])
 
 
 if __name__ == "__main__":

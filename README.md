@@ -98,8 +98,8 @@ python ./scripts/dev.py down
 python ./scripts/dev.py spa run
 python ./scripts/dev.py workers run
 python ./scripts/dev.py supabase status
-python ./scripts/dev.py contract-smoke --target migration --start-workers
+python ./scripts/dev.py contract-smoke --start-workers
 python ./scripts/dev.py workers-smoke --start-stack
-python ./scripts/dev.py parity-test --start-stack
+python ./scripts/dev.py parity-test
 python ./scripts/dev.py deploy-staging --dry-run
 ```
