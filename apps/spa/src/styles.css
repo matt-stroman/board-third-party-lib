@@ -1,0 +1,106 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(243, 154, 46, 0.22), transparent 24%),
+    radial-gradient(circle at top right, rgba(77, 117, 244, 0.18), transparent 22%),
+    linear-gradient(180deg, #17151a 0%, #141217 100%);
+  color: #f6f1e8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+a {
+  color: #a8f1ff;
+  text-decoration: none;
+}
+
+code {
+  font-family: "Cascadia Code", monospace;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 2rem;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+  align-items: flex-start;
+  margin-bottom: 2rem;
+}
+
+.brand {
+  font-size: 2rem;
+  font-weight: 800;
+}
+
+.subhead {
+  color: #c7d4e0;
+  margin-top: 0.4rem;
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.nav a {
+  padding: 0.7rem 1rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.main-grid {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr);
+}
+
+.panel {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 1.5rem;
+  padding: 1.5rem;
+  background: rgba(12, 14, 19, 0.68);
+  backdrop-filter: blur(18px);
+}
+
+.sidebar ul {
+  margin: 1rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #9fe6ff;
+}
+
+.marker {
+  margin-top: 1rem;
+  color: #ffd7a2;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    padding: 1rem;
+  }
+
+  .app-header,
+  .main-grid {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+}

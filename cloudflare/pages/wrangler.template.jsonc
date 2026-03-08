@@ -1,0 +1,10 @@
+{
+  "$schema": "https://developers.cloudflare.com/workers/wrangler/config-schema.json",
+  "name": "board-enthusiasts-pages-staging",
+  "compatibility_date": "2025-03-01",
+  "pages_build_output_dir": "../../apps/spa/dist",
+  "vars": {
+    "VITE_API_BASE_URL": "https://api.staging.boardenthusiasts.com",
+    "VITE_SUPABASE_URL": "https://<project-ref>.supabase.co"
+  }
+}

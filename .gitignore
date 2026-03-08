@@ -10,3 +10,20 @@ __pycache__/
 
 # Local build/test artifacts
 artifacts/
+
+# Node/npm workspace artifacts
+node_modules/
+apps/*/node_modules/
+apps/*/dist/
+packages/*/node_modules/
+*.tsbuildinfo
+tests/parity/.auth/
+tests/parity/test-results/
+tests/parity/playwright-report/
+test-results/
+playwright-report/
+
+# Cloudflare and Supabase local artifacts
+.wrangler/
+supabase/.branches/
+supabase/.temp/

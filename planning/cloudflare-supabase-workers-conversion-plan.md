@@ -73,7 +73,7 @@ Conversion work must therefore treat the current UI as a reference implementatio
 
 ## Wave 1: Foundation And Parity Baseline
 
-Status: planned
+Status: implemented on March 8, 2026
 
 Objective: lock the migration target, capture the current UX contract, and establish local/staging scaffolding before feature porting begins.
 

@@ -16,6 +16,7 @@ This document provides quick guidance, common workflows, and project-specific no
 - [Purpose](#purpose)
 - [Primary Entry Point](#primary-entry-point)
 - [Common Workflows](#common-workflows)
+- [Migration Workflows](#migration-workflows)
 - [Database Backup and Restore](#database-backup-and-restore)
 - [Configuration Overrides](#configuration-overrides)
 - [Notes](#notes)
@@ -40,6 +41,7 @@ The developer CLI orchestrates common local development tasks from the repositor
 - run environment diagnostics
 - create/restore local PostgreSQL SQL backups
 - seed deterministic local auth/catalog sample data for UI/UX testing
+- run Wave 1 migration workspace commands for the React SPA, Workers API, Supabase local stack, parity baselines, and staging deployment wrappers
 
 ## Primary Entry Point
 
@@ -153,6 +155,69 @@ Useful flags:
 - `--skip-npm-install`
 - `--skip-css-build`
 - `--skip-restore`
+
+## Migration Workflows
+
+Wave 1 adds a parallel migration workspace without replacing the current .NET runtime yet.
+
+Reference doc:
+
+- [`docs/cloudflare-supabase-workers-wave-1.md`](./cloudflare-supabase-workers-wave-1.md)
+
+### Install, build, or run the React SPA shell
+
+```bash
+python ./scripts/dev.py spa install
+python ./scripts/dev.py spa build
+python ./scripts/dev.py spa run
+```
+
+### Install, build, or run the Workers API shell
+
+```bash
+python ./scripts/dev.py workers install
+python ./scripts/dev.py workers build
+python ./scripts/dev.py workers run
+```
+
+### Start, stop, inspect, or reset local Supabase services
+
+```bash
+python ./scripts/dev.py supabase start
+python ./scripts/dev.py supabase status
+python ./scripts/dev.py supabase db-reset
+python ./scripts/dev.py supabase stop
+```
+
+### Run the maintained API contract smoke harness
+
+```bash
+python ./scripts/dev.py contract-smoke --start-backend
+```
+
+This uses the Wave 1 smoke harness under `tests/contract-smoke`. If you provide a bearer token with `--token`, the harness also validates authenticated maintained endpoints.
+
+### Run browser parity smoke and screenshot comparison coverage
+
+```bash
+python ./scripts/dev.py parity-test --start-stack
+```
+
+This command starts the current .NET backend/frontend stack if requested, signs into the seeded local Keycloak realm, and runs the Playwright-based parity suite under `tests/parity`.
+
+### Refresh the committed screenshot baselines
+
+```bash
+python ./scripts/dev.py capture-parity-baseline --start-stack
+```
+
+### Run staging deployment wrappers for Pages and Workers
+
+```bash
+python ./scripts/dev.py deploy-staging --dry-run
+python ./scripts/dev.py deploy-staging --pages-only
+python ./scripts/dev.py deploy-staging --workers-only
+```
 
 ### Stop dependencies
 
@@ -324,16 +389,24 @@ API workflow commands also expose workflow-specific overrides. Common examples:
 - `web-stop --down-dependencies`
 - `frontend --hot-reload`
 - `seed-data --seed-password <value>`
+- `spa install|build|run`
+- `workers install|build|run`
+- `supabase start|stop|status|db-reset`
+- `contract-smoke --start-backend`
+- `parity-test --start-stack`
+- `capture-parity-baseline --start-stack`
+- `deploy-staging --dry-run`
 
 For live API contract execution, the default environment template is:
 
-- `api/postman/environments/board-third-party-library_local.postman_environment.json`
+- `api/postman/environments/board-enthusiasts_local.postman_environment.json`
 
 Populate the placeholder auth and resource IDs in a private copy when you want full authenticated create/update coverage against a local backend.
 
 ## Notes
 
 - The `up`, `down`, and `status` commands manage the local PostgreSQL, Mailpit, and Keycloak containers together.
+- The Wave 1 migration scaffolding expects `node`, `npm`, `supabase`, and `wrangler` in addition to the existing .NET/Docker toolchain.
 - The `down` command uses `docker compose down` and does **not** remove named volumes. Your local Postgres data persists unless you explicitly remove volumes.
 - VS Code tasks in this repo call the Python CLI directly.
 - The supported developer entry point for this repository is `python ./scripts/dev.py ...`; API-local helper scripts under `api/scripts/` are implementation details for CI and the root CLI.

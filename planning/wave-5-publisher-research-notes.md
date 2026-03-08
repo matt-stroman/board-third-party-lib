@@ -4,7 +4,7 @@
 
 This document captures early research used to shape Wave 5 planning before implementation starts.
 
-It is intentionally focused on what known third-party publisher/store platforms appear to support from accessible official documentation, and how that should influence the Board Third Party Library design.
+It is intentionally focused on what known third-party publisher/store platforms appear to support from accessible official documentation, and how that should influence the Board Enthusiasts design.
 
 ## Current Planning Conclusion
 
