@@ -47,6 +47,7 @@ The SPA must keep route parity for current user-facing experiences such as `/pla
 - Visual design, layout, copy hierarchy, information scent, and interaction flow must remain materially unchanged.
 - Existing API contract semantics should be preserved where still aligned to maintained behavior, even if the implementation substrate changes.
 - Local development and automated verification must remain accessible through `python ./scripts/dev.py ...`.
+- Each migration wave must update the committed local developer run instructions so contributors can still run the relevant stack from the repository root.
 - Staging deployment must be reproducible and scriptable.
 - New provider-managed capabilities must not leak provider-specific behavior into the visible UX unless the product explicitly wants that change.
 
@@ -124,6 +125,10 @@ Objective: lock the migration target, capture the current UX contract, and estab
   - `npm`
   - `supabase` CLI
   - `wrangler`
+- publish a Wave 1 local runbook describing exactly how to run:
+  - the legacy stack
+  - the migration shells
+  - the baseline parity and contract verification commands
 
 ### Chunk 4: Verification Baseline
 
@@ -136,6 +141,7 @@ Objective: lock the migration target, capture the current UX contract, and estab
 - parity reference artifacts committed
 - root automation can start local new-stack dependencies and app shells
 - browser smoke tests execute against the current implementation baseline
+- committed docs explain the local run path for the legacy and migration scaffolding stacks
 - staging configuration templates exist for Cloudflare and Supabase targets
 
 ## Wave 2: Platform And API Cutover
@@ -184,6 +190,11 @@ Objective: replace Keycloak, PostgreSQL app access patterns, local file storage,
 - provide local auth fixture provisioning for demo/test accounts
 - ensure local reset/reseed is idempotent and fast enough for routine test use
 - keep contract and browser tests runnable against either old or new stack during the transition
+- publish a Wave 2 local runbook describing:
+  - required local dependencies
+  - how to reset and seed Supabase locally
+  - how to run the Workers API locally
+  - how to execute contract smoke and Workers flow smoke locally
 
 ### Chunk 5: Staging Provider Wiring
 
@@ -200,6 +211,7 @@ Objective: replace Keycloak, PostgreSQL app access patterns, local file storage,
 - staging environment is remotely reachable on Cloudflare/Supabase infrastructure
 - contract smoke tests for the minimum maintained demo surface pass against Workers
 - image upload and retrieval flows work in local and staging environments
+- committed docs explain the local Supabase + Workers workflow for the maintained Wave 2 surface
 
 ## Wave 3: Frontend Port And Full Cutover
 
@@ -231,6 +243,7 @@ Objective: replace the current Blazor UI with a static-hosted SPA that is visual
 - switch root workflows and CI/test automation to the new stack as primary
 - remove obsolete .NET and Keycloak runtime dependencies after parity sign-off
 - update docs, agent guidance, and root automation help text to reflect the new default stack
+- publish a Wave 3 local runbook describing the post-cutover default local development path with the legacy runtime removed
 
 ### Wave 3 Test Gate
 
@@ -238,6 +251,7 @@ Objective: replace the current Blazor UI with a static-hosted SPA that is visual
 - maintained demo workflows pass in local and staging environments
 - root developer automation defaults to the new stack
 - obsolete stack can be removed without breaking maintained workflows
+- committed docs explain the final local developer workflow after cutover
 
 ## Local Developer Workflow Target State
 
