@@ -3522,6 +3522,12 @@ def run_api_contract_tests(
     report_path: Path,
     lint_spec: bool,
     start_backend: bool,
+    start_workers: bool,
+    developer_token: str | None,
+    moderator_token: str | None,
+    developer_email: str | None,
+    moderator_email: str | None,
+    seed_user_password: str | None,
 ) -> None:
     """Run the Git-tracked Postman contract test collection with Postman CLI.
 
@@ -3536,6 +3542,12 @@ def run_api_contract_tests(
         report_path: JUnit report output path.
         lint_spec: Whether to lint the spec before running the collection.
         start_backend: Whether to start the local backend automatically for the run.
+        start_workers: Whether to start the local Supabase + Workers stack automatically for the run.
+        developer_token: Optional developer bearer token override for authenticated contract checks.
+        moderator_token: Optional moderator bearer token override for moderation contract checks.
+        developer_email: Optional seeded developer email used to fetch a local access token automatically.
+        moderator_email: Optional seeded moderator email used to fetch a local access token automatically.
+        seed_user_password: Optional seeded auth password used to fetch local access tokens automatically.
     Returns:
         None.
 
@@ -3557,6 +3569,15 @@ def run_api_contract_tests(
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     backend_process: subprocess.Popen | None = None
+    workers_process: subprocess.Popen | None = None
+    runtime_env: dict[str, str] | None = None
+    resolved_base_url = base_url
+    resolved_developer_token = (developer_token or "").strip()
+    resolved_moderator_token = (moderator_token or "").strip()
+
+    if start_backend and start_workers:
+        raise DevCliError("--start-backend and --start-workers cannot be used together.")
+
     if start_backend:
         if not is_local_http_url(base_url):
             raise DevCliError("--start-backend can only be used with a local base URL.")
@@ -3568,7 +3589,7 @@ def run_api_contract_tests(
         try:
             wait_for_background_process_http_ready(
                 process=backend_process,
-                url=base_url,
+                url=f"{base_url.rstrip('/')}/health/live",
                 description="backend API",
                 log_path=backend_log_path,
                 timeout_seconds=60,
@@ -3582,11 +3603,59 @@ def run_api_contract_tests(
                 f"{ex}\nBackend startup log: {backend_log_path}"
                 + (f"\n{log_excerpt}" if log_excerpt else "")
             ) from ex
+    elif start_workers:
+        if base_url != config.migration_workers_base_url and not is_local_http_url(base_url):
+            raise DevCliError("--start-workers can only be used with the local Workers base URL.")
+        run_supabase_stack_command(config, action="start")
+        run_supabase_stack_command(config, action="db-reset")
+        runtime_env = get_local_supabase_runtime(config)
+        resolved_base_url = config.migration_workers_base_url
+        write_step("Starting migration Workers API in the background for contract tests")
+        workers_process, workers_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
+        print(f"Workers API log: {workers_log_path}")
     else:
-        ensure_api_base_url_reachable(base_url)
+        ensure_api_base_url_reachable(resolved_base_url)
+
+    if runtime_env is None and is_local_http_url(resolved_base_url):
+        try:
+            runtime_env = get_local_supabase_runtime(config)
+        except DevCliError:
+            runtime_env = None
+
+    if runtime_env is not None:
+        resolved_developer_email = developer_email or (LOCAL_SEED_DEVELOPER_EMAIL if start_workers else None)
+        resolved_moderator_email = moderator_email or (LOCAL_SEED_MODERATOR_EMAIL if start_workers else None)
+        resolved_seed_password = seed_user_password or LOCAL_SEED_DEFAULT_PASSWORD
+
+        if resolved_developer_email and not resolved_developer_token:
+            resolved_developer_token = fetch_supabase_access_token(
+                supabase_url=runtime_env["SUPABASE_URL"],
+                anon_key=runtime_env["SUPABASE_ANON_KEY"],
+                email=resolved_developer_email,
+                password=resolved_seed_password,
+            )
+
+        if resolved_moderator_email and not resolved_moderator_token:
+            resolved_moderator_token = fetch_supabase_access_token(
+                supabase_url=runtime_env["SUPABASE_URL"],
+                anon_key=runtime_env["SUPABASE_ANON_KEY"],
+                email=resolved_moderator_email,
+                password=resolved_seed_password,
+            )
 
     write_step("Running API contract tests with Postman CLI")
     try:
+        env_vars = [
+            "--env-var",
+            f"baseUrl={resolved_base_url}",
+            "--env-var",
+            f"contractExecutionMode={contract_execution_mode}",
+        ]
+        if resolved_developer_token:
+            env_vars.extend(["--env-var", f"developerAccessToken={resolved_developer_token}"])
+        if resolved_moderator_token:
+            env_vars.extend(["--env-var", f"moderatorAccessToken={resolved_moderator_token}"])
+
         run_command(
             [
                 "postman",
@@ -3595,10 +3664,7 @@ def run_api_contract_tests(
                 str(collection_path),
                 "--environment",
                 str(environment_path),
-                "--env-var",
-                f"baseUrl={base_url}",
-                "--env-var",
-                f"contractExecutionMode={contract_execution_mode}",
+                *env_vars,
                 "--bail",
                 "failure",
                 "--reporters",
@@ -3607,7 +3673,7 @@ def run_api_contract_tests(
                 str(report_path),
                 "--working-dir",
                 str(api_root),
-                *(["--insecure"] if is_local_http_url(base_url) and is_https_url(base_url) else []),
+                *(["--insecure"] if is_local_http_url(resolved_base_url) and is_https_url(resolved_base_url) else []),
             ],
             cwd=api_root,
         )
@@ -3615,6 +3681,9 @@ def run_api_contract_tests(
         if backend_process is not None:
             write_step("Stopping background backend API")
             stop_background_process(backend_process)
+        if workers_process is not None:
+            write_step("Stopping background migration Workers API")
+            stop_background_process(workers_process)
 
 
 def provision_api_mock(
@@ -3790,7 +3859,7 @@ def run_doctor(config: DevConfig) -> None:
         print("  python ./scripts/dev.py up --dependencies-only")
         print("  python ./scripts/dev.py up --skip-restore")
         print("  python ./scripts/dev.py all-tests")
-        print("  python ./scripts/dev.py api-test --start-backend --skip-lint")
+        print("  python ./scripts/dev.py api-test --start-workers --skip-lint")
         print("  python ./scripts/dev.py spa install")
         print("  python ./scripts/dev.py workers build")
         print("  python ./scripts/dev.py supabase status")
@@ -3809,7 +3878,7 @@ def run_doctor(config: DevConfig) -> None:
         print("  python ./scripts/dev.py up --dependencies-only")
         print("  python ./scripts/dev.py up --skip-restore")
         print("  python ./scripts/dev.py all-tests")
-        print("  python ./scripts/dev.py api-test --start-backend --skip-lint")
+        print("  python ./scripts/dev.py api-test --start-workers --skip-lint")
         print("  python ./scripts/dev.py api-lint")
         print("  python ./scripts/dev.py spa run")
         print("  python ./scripts/dev.py workers run")
@@ -3826,6 +3895,7 @@ def run_verify(
     contract_execution_mode: str,
     report_path: Path,
     start_backend: bool,
+    start_workers: bool,
 ) -> None:
     """Run the main developer verification workflow from the repository root.
 
@@ -3838,6 +3908,7 @@ def run_verify(
         contract_execution_mode: Contract execution mode (`live` or `mock`).
         report_path: JUnit report output path for Postman CLI.
         start_backend: Whether to auto-start the backend for contract runs.
+        start_workers: Whether to auto-start the Workers migration stack for contract runs.
 
     Returns:
         None.
@@ -3861,6 +3932,12 @@ def run_verify(
         report_path=report_path,
         lint_spec=False,
         start_backend=start_backend,
+        start_workers=start_workers,
+        developer_token=None,
+        moderator_token=None,
+        developer_email=LOCAL_SEED_DEVELOPER_EMAIL,
+        moderator_email=LOCAL_SEED_MODERATOR_EMAIL,
+        seed_user_password=LOCAL_SEED_DEFAULT_PASSWORD,
     )
 
 
@@ -3873,6 +3950,7 @@ def run_all_tests(
     contract_execution_mode: str,
     report_path: Path,
     start_backend: bool,
+    start_workers: bool,
 ) -> None:
     """Run the full cross-repository validation workflow in one command.
 
@@ -3884,6 +3962,7 @@ def run_all_tests(
         contract_execution_mode: Contract execution mode (`live` or `mock`).
         report_path: JUnit report output path for Postman CLI contract runs.
         start_backend: Whether to auto-start backend/dependencies for contract runs.
+        start_workers: Whether to auto-start the Workers migration stack for contract runs.
 
     Returns:
         None.
@@ -3909,6 +3988,12 @@ def run_all_tests(
         report_path=report_path,
         lint_spec=False,
         start_backend=start_backend,
+        start_workers=start_workers,
+        developer_token=None,
+        moderator_token=None,
+        developer_email=LOCAL_SEED_DEVELOPER_EMAIL,
+        moderator_email=LOCAL_SEED_MODERATOR_EMAIL,
+        seed_user_password=LOCAL_SEED_DEFAULT_PASSWORD,
     )
 
 
@@ -5643,7 +5728,7 @@ def build_parser() -> argparse.ArgumentParser:
     all_tests.add_argument(
         "--base-url",
         "-BaseUrl",
-        default="https://localhost:7085",
+        default="http://127.0.0.1:8787",
         help="Base URL injected into contract test runs",
     )
     all_tests.add_argument(
@@ -5660,10 +5745,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="JUnit report output path for Postman contract runs",
     )
     all_tests.add_argument(
-        "--no-start-backend",
-        "-NoStartBackend",
+        "--start-backend",
         action="store_true",
-        help="Do not auto-start local dependencies/backend for contract tests",
+        help="Start the legacy backend automatically for contract tests",
+    )
+    all_tests.add_argument(
+        "--start-workers",
+        action="store_true",
+        help="Start the local Supabase + Workers stack automatically for contract tests",
     )
 
     verify = subparsers.add_parser(
@@ -5687,7 +5776,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument(
         "--base-url",
         "-BaseUrl",
-        default="https://localhost:7085",
+        default="http://127.0.0.1:8787",
         help="Base URL injected into contract test runs",
     )
     verify.add_argument(
@@ -5708,6 +5797,11 @@ def build_parser() -> argparse.ArgumentParser:
         "-StartBackend",
         action="store_true",
         help="Start local dependencies and the backend automatically for contract tests",
+    )
+    verify.add_argument(
+        "--start-workers",
+        action="store_true",
+        help="Start the local Supabase + Workers stack automatically for contract tests",
     )
 
     subparsers.add_parser(
@@ -5751,7 +5845,7 @@ def build_parser() -> argparse.ArgumentParser:
     api_test.add_argument(
         "--base-url",
         "-BaseUrl",
-        default="https://localhost:7085",
+        default="http://127.0.0.1:8787",
         help="Base URL injected into the collection run",
     )
     api_test.add_argument(
@@ -5778,6 +5872,36 @@ def build_parser() -> argparse.ArgumentParser:
         "-StartBackend",
         action="store_true",
         help="Start local dependencies and the backend API automatically for the collection run",
+    )
+    api_test.add_argument(
+        "--start-workers",
+        action="store_true",
+        help="Start the local Supabase + Workers stack automatically for the collection run",
+    )
+    api_test.add_argument(
+        "--developer-token",
+        default=None,
+        help="Optional developer bearer token override for authenticated contract checks",
+    )
+    api_test.add_argument(
+        "--moderator-token",
+        default=None,
+        help="Optional moderator bearer token override for moderation contract checks",
+    )
+    api_test.add_argument(
+        "--developer-email",
+        default=LOCAL_SEED_DEVELOPER_EMAIL,
+        help="Seeded Supabase developer email used to resolve a local access token automatically",
+    )
+    api_test.add_argument(
+        "--moderator-email",
+        default=LOCAL_SEED_MODERATOR_EMAIL,
+        help="Seeded Supabase moderator email used to resolve a local access token automatically",
+    )
+    api_test.add_argument(
+        "--seed-user-password",
+        default=LOCAL_SEED_DEFAULT_PASSWORD,
+        help="Seeded Supabase auth password used to resolve local access tokens automatically",
     )
 
     api_mock = subparsers.add_parser(
@@ -6181,7 +6305,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 base_url=args.base_url,
                 contract_execution_mode=args.contract_execution_mode,
                 report_path=(config.repo_root / args.report_path).resolve(),
-                start_backend=not args.no_start_backend,
+                start_backend=args.start_backend,
+                start_workers=args.start_workers,
             )
         elif args.command == "verify":
             run_verify(
@@ -6193,6 +6318,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 contract_execution_mode=args.contract_execution_mode,
                 report_path=(config.repo_root / args.report_path).resolve(),
                 start_backend=args.start_backend,
+                start_workers=args.start_workers,
             )
         elif args.command == "doctor":
             run_doctor(config)
@@ -6209,6 +6335,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 report_path=(config.repo_root / args.report_path).resolve(),
                 lint_spec=not args.skip_lint,
                 start_backend=args.start_backend,
+                start_workers=args.start_workers,
+                developer_token=args.developer_token,
+                moderator_token=args.moderator_token,
+                developer_email=args.developer_email,
+                moderator_email=args.moderator_email,
+                seed_user_password=args.seed_user_password,
             )
         elif args.command == "api-mock":
             provision_api_mock(

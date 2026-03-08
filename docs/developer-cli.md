@@ -76,10 +76,10 @@ If you only want to run the frontend from the root workspace:
 python ./scripts/dev.py frontend --hot-reload
 ```
 
-If you want to run API contract tests from the same terminal session without manually keeping the backend open, use:
+If you want to run API contract tests from the same terminal session without manually keeping the Workers stack open, use:
 
 ```bash
-python ./scripts/dev.py api-test --start-backend --skip-lint
+python ./scripts/dev.py api-test --start-workers --skip-lint
 ```
 
 ### Run the full local web stack
@@ -288,10 +288,10 @@ python ./scripts/dev.py all-tests
 
 This command runs backend XML docs validation, backend unit/integration tests, frontend tests, OpenAPI lint, and API contract tests in one pass.
 
-If you are already running the API manually:
+To include the maintained contract run against the local Supabase + Workers stack:
 
 ```bash
-python ./scripts/dev.py all-tests --no-start-backend
+python ./scripts/dev.py all-tests --start-workers
 ```
 
 ### Run the main repository verification workflow
@@ -303,7 +303,7 @@ python ./scripts/dev.py verify --skip-contract-tests
 Include the maintained contract tests in the same pass:
 
 ```bash
-python ./scripts/dev.py verify --start-backend
+python ./scripts/dev.py verify --start-workers
 ```
 
 This workflow validates backend XML docs, runs backend tests, lints the OpenAPI spec, and optionally executes the Postman contract suite.
@@ -323,23 +323,22 @@ If you prefer not to keep a separate login step, `api-mock` and `api-sync` also 
 python ./scripts/dev.py api-lint
 ```
 
-### Run API contract tests against the local backend
+### Run API contract tests against the local Workers stack
 
 ```bash
-python ./scripts/dev.py api-test
+python ./scripts/dev.py api-test --start-workers
 ```
 
 Important for live local runs:
 
-- the committed local environment file contains placeholder values for authenticated and persistence-backed success paths such as `accessToken`, `studioId`, `studioSlug`, `titleId`, and `titleSlug`
-- the committed local environment file also leaves `studioLinkId` as a placeholder for studio-link update/delete flows
-- the collection skips those success-path assertions until you replace the placeholders with real local values
-- health and unauthenticated/public catalog coverage still runs with the committed template as-is
+- the root CLI starts or reuses local Supabase services, reseeds deterministic auth/data/storage fixtures, and starts the Workers API
+- the root CLI resolves seeded developer and moderator access tokens automatically for authenticated contract checks
+- the committed environment template keeps only the maintained Wave 2 variables for the current contract surface
 
-If the backend is not already running, start it automatically for the test run:
+If the Workers API is already running and seeded:
 
 ```bash
-python ./scripts/dev.py api-test --start-backend --skip-lint
+python ./scripts/dev.py api-test --skip-lint
 ```
 
 ### Run API contract tests against a mock URL
@@ -444,7 +443,7 @@ For live API contract execution, the default environment template is:
 
 - `api/postman/environments/board-enthusiasts_local.postman_environment.json`
 
-Populate the placeholder auth and resource IDs in a private copy when you want full authenticated create/update coverage against a local backend.
+The root CLI can populate the maintained authenticated contract checks automatically for the local Workers stack by resolving seeded developer and moderator tokens.
 
 ## Notes
 

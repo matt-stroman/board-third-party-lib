@@ -8,6 +8,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 def load_dev_cli_module():
@@ -118,6 +119,96 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             (repo_root / "package-lock.json").write_text('{"lockfileVersion":4}', encoding="utf-8")
 
             self.assertFalse(dev.has_current_migration_workspace_dependencies(config))
+
+    def test_api_test_parser_defaults_to_local_workers_base_url(self) -> None:
+        parser = dev.build_parser()
+
+        args = parser.parse_args(["api-test"])
+
+        self.assertEqual("http://127.0.0.1:8787", args.base_url)
+        self.assertFalse(args.start_workers)
+        self.assertEqual(dev.LOCAL_SEED_DEVELOPER_EMAIL, args.developer_email)
+        self.assertEqual(dev.LOCAL_SEED_MODERATOR_EMAIL, args.moderator_email)
+
+    def test_run_api_contract_tests_starts_workers_and_injects_seeded_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            api_root = repo_root / "api"
+            collection_path = api_root / "postman" / "collections" / "board-enthusiasts-api.contract-tests.postman_collection.json"
+            environment_path = api_root / "postman" / "environments" / "board-enthusiasts_local.postman_environment.json"
+            collection_path.parent.mkdir(parents=True, exist_ok=True)
+            environment_path.parent.mkdir(parents=True, exist_ok=True)
+            collection_path.write_text("{}", encoding="utf-8")
+            environment_path.write_text("{}", encoding="utf-8")
+
+            args = argparse.Namespace(
+                compose_file="backend/docker-compose.yml",
+                postgres_container_name="board_tpl_postgres",
+                postgres_user="board_tpl_user",
+                postgres_database="board_tpl",
+                keycloak_container_name="board_tpl_keycloak",
+                keycloak_ready_url="https://localhost:8443/realms/board/protocol/openid-connect/auth",
+                backend_project="backend/src/Board.ThirdPartyLibrary.Api/Board.ThirdPartyLibrary.Api.csproj",
+                backend_solution="backend/Board.ThirdPartyLibrary.Backend.sln",
+            )
+            config = dev.config_from_args(args, repo_root)
+
+            with (
+                mock.patch.object(dev, "assert_command_available"),
+                mock.patch.object(dev, "run_api_spec_lint"),
+                mock.patch.object(dev, "run_supabase_stack_command") as run_supabase_stack_command,
+                mock.patch.object(
+                    dev,
+                    "get_local_supabase_runtime",
+                    return_value={
+                        "SUPABASE_URL": "http://127.0.0.1:54321",
+                        "SUPABASE_ANON_KEY": "anon-key",
+                    },
+                ),
+                mock.patch.object(
+                    dev,
+                    "start_migration_workers_process",
+                    return_value=(mock.Mock(spec=[]), repo_root / ".dev-cli-logs" / "workers-api.log"),
+                ) as start_workers_process,
+                mock.patch.object(
+                    dev,
+                    "fetch_supabase_access_token",
+                    side_effect=["developer-token", "moderator-token"],
+                ) as fetch_token,
+                mock.patch.object(dev, "run_command") as run_command,
+                mock.patch.object(dev, "stop_background_process") as stop_background_process,
+            ):
+                dev.run_api_contract_tests(
+                    config,
+                    environment_path=environment_path,
+                    base_url=config.migration_workers_base_url,
+                    contract_execution_mode="live",
+                    report_path=repo_root / "api" / "postman-cli-reports" / "contract-tests.xml",
+                    lint_spec=False,
+                    start_backend=False,
+                    start_workers=True,
+                    developer_token=None,
+                    moderator_token=None,
+                    developer_email=dev.LOCAL_SEED_DEVELOPER_EMAIL,
+                    moderator_email=dev.LOCAL_SEED_MODERATOR_EMAIL,
+                    seed_user_password=dev.LOCAL_SEED_DEFAULT_PASSWORD,
+                )
+
+            self.assertEqual(
+                [
+                    mock.call(config, action="start"),
+                    mock.call(config, action="db-reset"),
+                ],
+                run_supabase_stack_command.call_args_list,
+            )
+            start_workers_process.assert_called_once()
+            self.assertEqual(2, fetch_token.call_count)
+            run_command.assert_called_once()
+            invoked_command = run_command.call_args.args[0]
+            self.assertIn("developerAccessToken=developer-token", invoked_command)
+            self.assertIn("moderatorAccessToken=moderator-token", invoked_command)
+            self.assertIn(f"baseUrl={config.migration_workers_base_url}", invoked_command)
+            stop_background_process.assert_called_once()
 
 
 if __name__ == "__main__":

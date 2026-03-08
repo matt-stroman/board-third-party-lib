@@ -98,7 +98,7 @@ python ./scripts/dev.py up
 python ./scripts/dev.py all-tests
 python ./scripts/dev.py verify --skip-contract-tests
 python ./scripts/dev.py api-lint
-python ./scripts/dev.py api-test --start-backend
+python ./scripts/dev.py api-test --start-workers
 python ./scripts/dev.py test
 python ./scripts/dev.py down
 python ./scripts/dev.py spa run
