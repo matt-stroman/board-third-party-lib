@@ -3519,7 +3519,7 @@ def run_doctor(config: DevConfig) -> None:
             print(f"Missing command: {cmd}")
             issues.append(f"Required command missing from PATH: {cmd}")
 
-    for cmd in ("node", "npm", "postman", "supabase", "wrangler"):
+    for cmd in ("node", "npm", "postman"):
         if shutil.which(cmd):
             print(f"Found (API/frontend workflow): {cmd}")
         else:
@@ -3527,6 +3527,23 @@ def run_doctor(config: DevConfig) -> None:
             optional_issues.append(
                 f"Optional API/frontend workflow command missing from PATH: {cmd}"
             )
+
+    if shutil.which("supabase") or shutil.which("npx"):
+        print("Found (migration workflow): supabase")
+    else:
+        print("Missing optional migration workflow command: supabase")
+        optional_issues.append(
+            "Optional migration workflow command missing from PATH: supabase (or npx fallback)"
+        )
+
+    local_wrangler_path = config.repo_root / "node_modules" / ".bin" / ("wrangler.cmd" if os.name == "nt" else "wrangler")
+    if shutil.which("wrangler") or local_wrangler_path.exists():
+        print("Found (migration workflow): wrangler")
+    else:
+        print("Missing optional migration workflow command: wrangler")
+        optional_issues.append(
+            "Optional migration workflow command missing from PATH: wrangler (run `python ./scripts/dev.py bootstrap` to install workspace tooling)"
+        )
 
     backend_path = config.repo_root / "backend"
     frontend_path = config.repo_root / "frontend"
@@ -3550,20 +3567,24 @@ def run_doctor(config: DevConfig) -> None:
         result = run_command(["docker", "--version"], check=False, capture_output=False)
         if result.returncode != 0:
             issues.append("docker is installed but `docker --version` failed")
-        write_step("Docker Compose version")
-        result = run_command(["docker", "compose", "version"], check=False, capture_output=False)
-        if result.returncode != 0:
-            issues.append("Docker Compose is unavailable (`docker compose version` failed)")
         daemon_check = run_command(["docker", "info"], check=False, capture_output=True, text=True)
         if daemon_check.returncode != 0:
             issues.append("Docker daemon is not reachable (start Docker Desktop/Engine)")
 
-    compose_full_path = config.repo_root / config.compose_file
-    if compose_full_path.exists():
-        print(f"Compose file found: {compose_full_path}")
-    else:
-        print(f"Compose file missing: {compose_full_path}")
-        issues.append(f"Compose file not found: {compose_full_path}")
+    maintained_paths = [
+        ("Migration root package", config.repo_root / config.migration_root_package_json),
+        ("Workers workspace", config.repo_root / config.migration_workers_root),
+        ("Workers Wrangler config", config.repo_root / config.migration_workers_root / "wrangler.jsonc"),
+        ("Supabase project root", config.repo_root / config.supabase_root),
+        ("Supabase config", config.repo_root / config.supabase_root / "config.toml"),
+    ]
+    write_step("Maintained stack paths")
+    for label, path in maintained_paths:
+        if path.exists():
+            print(f"{label} found: {path}")
+        else:
+            print(f"{label} missing: {path}")
+            issues.append(f"{label} not found: {path}")
 
     print()
     write_step("Doctor summary")
@@ -3574,8 +3595,8 @@ def run_doctor(config: DevConfig) -> None:
         print()
         print("Suggested next steps:")
         print("  python ./scripts/dev.py bootstrap")
-        print("  python ./scripts/dev.py web --hot-reload")
-        print("  python ./scripts/dev.py frontend --hot-reload")
+        print("  python ./scripts/dev.py web")
+        print("  python ./scripts/dev.py frontend")
         print("  python ./scripts/dev.py up --dependencies-only")
         print("  python ./scripts/dev.py up --skip-restore")
         print("  python ./scripts/dev.py all-tests")
@@ -3593,8 +3614,8 @@ def run_doctor(config: DevConfig) -> None:
         print()
         print("Suggested next steps:")
         print("  python ./scripts/dev.py bootstrap")
-        print("  python ./scripts/dev.py web --hot-reload")
-        print("  python ./scripts/dev.py frontend --hot-reload")
+        print("  python ./scripts/dev.py web")
+        print("  python ./scripts/dev.py frontend")
         print("  python ./scripts/dev.py up --dependencies-only")
         print("  python ./scripts/dev.py up --skip-restore")
         print("  python ./scripts/dev.py all-tests")
