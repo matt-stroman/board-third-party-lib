@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Root migration workspace for the Cloudflare, Supabase, and Workers conversion.",
   "workspaces": [
-    "apps/*",
+    "frontend",
     "backend/apps/*",
     "packages/*"
   ],

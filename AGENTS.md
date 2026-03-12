@@ -45,13 +45,13 @@ A [Postman](https://learning.postman.com/docs/design-apis/overview) API-first de
 
 Path: `backend/`
 
-An ASP.NET Core Web API using PostgresSQL.
+A Cloudflare Workers API with Supabase-backed auth, database, and storage.
 
 ### Frontend
 
 Path `frontend/`
 
-TBD; will most likely be a .NET Maui application in order to provide C# consistency and cross-platform compatibility.
+A React + TypeScript SPA built with Vite.
 
 ## Technologies, Documentation, and Planning
 
@@ -61,8 +61,8 @@ TBD; will most likely be a .NET Maui application in order to provide C# consiste
 ## Current Architecture Alignment
 
 - Keep the maintained API contract aligned only to behavior that is implemented or being actively delivered in the same change set.
-- Keycloak owns authentication lifecycle concerns such as self-registration, password reset, email verification, account linking, brokered SSO providers, user roles, etc.
-- The application database should own only application data and local projections keyed to Keycloak subject identifiers.
+- Supabase Auth owns the maintained authentication lifecycle concerns for the stack.
+- The application database should own only application data and local projections keyed to Supabase auth user identifiers.
 - New externally visible features must follow API-first and TDD order: contract/examples/tests first, implementation second.
 
 ## Coding Standard
@@ -74,7 +74,7 @@ TBD; will most likely be a .NET Maui application in order to provide C# consiste
 - New backend behavior must start with failing unit/integration tests before production code is added.
 - When refactoring, do not leave commented out code or stale/unused code. That can always be recovered via version history. Prefer keeping the codebase current and clean.
 - Root developer automation must be exposed through `python ./scripts/dev.py ...`; do not require contributors to use ad hoc submodule-local entrypoints for routine setup, test, or sync workflows.
-- During the Cloudflare/Supabase/Workers migration, keep new stack scaffolding rooted in the top-level npm workspace (`apps/*`, `packages/*`) and continue exposing routine workflows through `python ./scripts/dev.py ...`.
+- Keep the maintained stack rooted in the active workspace and submodule layout: backend-owned runtime code in `backend/`, frontend-owned runtime code in `frontend/`, and shared root orchestration in `python ./scripts/dev.py ...`.
 - Avoid divergent code paths for different environments whenever reasonably possible. Prefer configuring local and other non-production environments to emulate production behavior closely. Add environment-specific code only when there is no practical way to align the environment itself with production expectations.
 - All non-private members and types must be clearly documented with applicable and appropriate tagging (e.g. XML docs for C#, Javadoc for JS, etc.)
 - In docs, when providing links, do so with the `[]()` link syntax so that they are proper clickable links. Also add any anchors and such so that users can easily navigate through the documents. Favor doc usability, with good use of markdown syntax (including, but not limited to, blocks, quotes, inline code and code blocks, info/warning/notice boxes, etc.)

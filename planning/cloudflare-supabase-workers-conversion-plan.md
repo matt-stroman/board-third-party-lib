@@ -215,7 +215,7 @@ Objective: replace Keycloak, PostgreSQL app access patterns, local file storage,
 
 ## Wave 3: Frontend Port And Full Cutover
 
-Status: planned
+Status: implemented
 
 Objective: replace the current Blazor UI with a static-hosted SPA that is visually and behaviorally indistinguishable to users, then retire the obsolete stack.
 

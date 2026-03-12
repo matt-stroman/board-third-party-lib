@@ -1,14 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import { maintainedUiRoutes } from "../../packages/migration-contract/src/index";
 
-const adminUsername = process.env.PARITY_ADMIN_USERNAME ?? "alex.rivera";
+const adminEmail = process.env.PARITY_ADMIN_EMAIL ?? "alex.rivera@boardtpl.local";
 const adminPassword = process.env.PARITY_ADMIN_PASSWORD ?? "ChangeMe!123";
 
 async function signInAsAdmin(page: Page): Promise<void> {
-  await page.goto("/auth/signin?returnUrl=%2Fplayer");
-  await page.locator("#username").fill(adminUsername);
-  await page.locator("#password").fill(adminPassword);
-  await page.locator("#kc-login").click();
+  await page.goto("/auth/signin?returnTo=%2Fplayer");
+  await page.getByLabel("Email").fill(adminEmail);
+  await page.getByLabel("Password").fill(adminPassword);
+  await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL("**/player");
 }
 

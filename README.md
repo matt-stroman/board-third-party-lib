@@ -6,8 +6,7 @@ Current implementation status:
 
 - the maintained backend runtime now lives in the [`backend`](backend) submodule as Supabase + Cloudflare Workers
 - the maintained executable API contract now lives in the [`api`](api) submodule and targets the Workers/Supabase surface only
-- the current SPA under [`apps/spa`](apps/spa) is still an in-progress migration shell; Wave 3 remains responsible for the full frontend cutover
-- the current migration wave is Wave 2 platform and API cutover for the Cloudflare, Supabase, and Workers conversion plan
+- the maintained frontend runtime now lives in the [`frontend`](frontend) submodule as a React + TypeScript SPA
 
 ## Table of Contents
 
@@ -20,20 +19,23 @@ Current implementation status:
 
 This repository currently tracks backend and frontend as git submodules.
 
-Quick start (maintained local migration stack from the root workspace):
+Quick start (maintained local stack from the repository root):
 
 ```bash
 python ./scripts/dev.py bootstrap
-python ./scripts/dev.py web
+python ./scripts/dev.py web --hot-reload
 ```
 
-This starts local Supabase services, the maintained Workers backend, and the migration SPA.
+This starts local Supabase services, the maintained Workers backend, and the SPA.
+If the local Supabase volume is empty, the `api` and `web` entrypoints automatically seed the deterministic demo catalog before the backend starts.
+If the running local Supabase schema is missing required checked-in tables from newer migrations, `api` and `web` automatically reset the local database and reseed before continuing.
+Run `python ./scripts/dev.py seed-data` whenever you want to refresh the full checked-in local demo catalog fixture set after seed changes.
 
 Quick start (backend API only):
 
 ```bash
 python ./scripts/dev.py bootstrap
-python ./scripts/dev.py up
+python ./scripts/dev.py api
 ```
 
 Initialize them after clone:
@@ -52,8 +54,7 @@ git submodule status
 
 - Project-wide developer docs:
   - Developer CLI (root automation commands): [`docs/developer-cli.md`](docs/developer-cli.md)
-  - Wave 1 migration foundation: [`docs/cloudflare-supabase-workers-wave-1.md`](docs/cloudflare-supabase-workers-wave-1.md)
-  - Wave 2 platform/API cutover: [`docs/cloudflare-supabase-workers-wave-2.md`](docs/cloudflare-supabase-workers-wave-2.md)
+  - Maintained stack overview: [`docs/maintained-stack.md`](docs/maintained-stack.md)
 - Backend-specific developer docs (in backend submodule):
   - Backend local runbook: [`backend/docs/workers-backend-local-runbook.md`](backend/docs/workers-backend-local-runbook.md)
 
@@ -84,20 +85,21 @@ Examples:
 ```bash
 python ./scripts/dev.py doctor
 python ./scripts/dev.py bootstrap
-python ./scripts/dev.py web
-python ./scripts/dev.py web-status
-python ./scripts/dev.py web-stop --down-dependencies
-python ./scripts/dev.py frontend
-python ./scripts/dev.py up
+python ./scripts/dev.py database up
+python ./scripts/dev.py auth up
+python ./scripts/dev.py api
+python ./scripts/dev.py api down
+python ./scripts/dev.py api down --include-dependencies
+python ./scripts/dev.py web --hot-reload
+python ./scripts/dev.py web status
+python ./scripts/dev.py web status --include-dependencies
+python ./scripts/dev.py web down
+python ./scripts/dev.py web down --include-dependencies
 python ./scripts/dev.py all-tests
 python ./scripts/dev.py verify --skip-contract-tests
 python ./scripts/dev.py api-lint
 python ./scripts/dev.py api-test --start-workers
 python ./scripts/dev.py test
-python ./scripts/dev.py down
-python ./scripts/dev.py spa run
-python ./scripts/dev.py workers run
-python ./scripts/dev.py supabase status
 python ./scripts/dev.py contract-smoke --start-workers
 python ./scripts/dev.py workers-smoke --start-stack
 python ./scripts/dev.py parity-test

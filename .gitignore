@@ -27,5 +27,6 @@ playwright-report/
 .wrangler/
 backend/apps/workers-api/.dev.vars
 backend/apps/workers-api/.wrangler/
+supabase/.temp/
 backend/supabase/.branches/
 backend/supabase/.temp/

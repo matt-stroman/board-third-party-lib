@@ -57,6 +57,17 @@ async function run(): Promise<void> {
 
   await assertJson("/identity/me", { headers: authHeaders(developerToken, "") }, 200, "identity bootstrap");
   await assertJson("/identity/me/profile", { headers: authHeaders(developerToken, "") }, 200, "profile read");
+  const notifications = (await assertJson("/identity/me/notifications", { headers: authHeaders(developerToken, "") }, 200, "notification list")) as {
+    notifications: Array<{ id: string }>;
+  };
+  if (notifications.notifications.length > 0) {
+    await assertJson(
+      `/identity/me/notifications/${notifications.notifications[0]!.id}/read`,
+      { method: "POST", headers: authHeaders(developerToken, "") },
+      200,
+      "notification read"
+    );
+  }
   await assertJson(
     "/identity/me/profile",
     {
@@ -67,6 +78,30 @@ async function run(): Promise<void> {
     200,
     "profile update"
   );
+  await assertJson(
+    "/identity/me/board-profile",
+    {
+      method: "PUT",
+      headers: authHeaders(developerToken),
+      body: JSON.stringify({
+        boardUserId: "board_workers_smoke",
+        displayName: "Workers Smoke",
+        avatarUrl: "https://example.invalid/board-workers-smoke.png"
+      })
+    },
+    200,
+    "board profile upsert"
+  );
+  await assertJson("/identity/me/board-profile", { headers: authHeaders(developerToken, "") }, 200, "board profile read");
+  await assertJson(
+    "/identity/me/board-profile",
+    {
+      method: "DELETE",
+      headers: authHeaders(developerToken, "")
+    },
+    204,
+    "board profile delete"
+  );
   await assertJson("/identity/me/developer-enrollment", { headers: authHeaders(developerToken, "") }, 200, "developer enrollment read");
   await assertJson(
     "/identity/me/developer-enrollment",
@@ -74,7 +109,7 @@ async function run(): Promise<void> {
     200,
     "developer enrollment write"
   );
-  results.push({ ok: true, label: "identity flows", detail: "bootstrap, profile, and developer enrollment succeeded" });
+  results.push({ ok: true, label: "identity flows", detail: "bootstrap, notifications, profile, board profile, and developer enrollment succeeded" });
 
   const managedStudios = (await assertJson("/developer/studios", { headers: authHeaders(developerToken, "") }, 200, "managed studios")) as {
     studios: Array<{ id: string; slug: string }>;
@@ -92,7 +127,7 @@ async function run(): Promise<void> {
       body: JSON.stringify({
         slug: "ember-cove-lab",
         displayName: "Ember Cove Lab",
-        description: "Temporary Wave 2 smoke studio."
+        description: "Temporary maintained-stack smoke studio."
       })
     },
     201,

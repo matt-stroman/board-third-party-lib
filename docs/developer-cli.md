@@ -16,7 +16,7 @@ This document provides quick guidance, common workflows, and project-specific no
 - [Purpose](#purpose)
 - [Primary Entry Point](#primary-entry-point)
 - [Common Workflows](#common-workflows)
-- [Migration Workflows](#migration-workflows)
+- [Maintained Stack Workflows](#maintained-stack-workflows)
 - [Configuration Overrides](#configuration-overrides)
 - [Notes](#notes)
 
@@ -25,11 +25,7 @@ This document provides quick guidance, common workflows, and project-specific no
 The developer CLI orchestrates common local development tasks from the repository root:
 
 - bootstrap submodules and install maintained workspace dependencies
-- run the full local web stack from the repository root
-- inspect/stop the locally launched root web stack
-- run the maintained SPA frontend from the repository root
-- start/stop/reuse local Supabase services
-- run the maintained backend API
+- run the maintained local runtime profiles for database, auth, API, and full web UI testing
 - run maintained backend verification
 - run all major validation checks in one pass (maintained backend tests + root CLI tests + frontend tests + API lint + API contract)
 - authenticate Postman CLI when Postman workspace or mock operations are needed
@@ -38,7 +34,7 @@ The developer CLI orchestrates common local development tasks from the repositor
 - provision/sync Postman mocks and workspace artifacts
 - run environment diagnostics
 - seed deterministic local auth/catalog sample data for UI/UX testing
-- run Wave 1 and Wave 2 migration workspace commands for the React SPA, Workers API, Supabase local stack, parity baselines, seeded Supabase data, and staging deployment wrappers
+- run parity baselines, seeded Supabase data, and staging deployment wrappers
 
 ## Primary Entry Point
 
@@ -54,15 +50,16 @@ python ./scripts/dev.py <command> [options]
 
 ```bash
 python ./scripts/dev.py bootstrap
-python ./scripts/dev.py web
+python ./scripts/dev.py web --hot-reload
 ```
 
-This starts local Supabase services, the maintained Workers backend, and the migration SPA, then opens the frontend URL in your default browser.
+This starts local Supabase services, the maintained Workers backend, and the SPA, then opens the frontend URL in your default browser.
+If the local Supabase volume is empty, `api` and `web` automatically seed the deterministic demo catalog before the backend starts.
 
-If you only want to run the frontend from the root workspace:
+If you only want the API stack:
 
 ```bash
-python ./scripts/dev.py frontend
+python ./scripts/dev.py api
 ```
 
 If you want to run API contract tests from the same terminal session without manually keeping the Workers stack open, use:
@@ -71,39 +68,34 @@ If you want to run API contract tests from the same terminal session without man
 python ./scripts/dev.py api-test --start-workers --skip-lint
 ```
 
-### Run the maintained local web stack
+### Run the maintained local runtime profiles
 
 ```bash
-python ./scripts/dev.py web
+python ./scripts/dev.py database up
+python ./scripts/dev.py auth up
+python ./scripts/dev.py api
+python ./scripts/dev.py web --hot-reload
 ```
 
-The maintained frontend part of this workflow runs through the Vite SPA dev server, while the maintained backend runs through Wrangler against local Supabase services.
+These map directly to the supported local testing scenarios:
 
-Useful flags:
+- `database up|down|status`: PostgreSQL only
+- `auth up|down|status`: PostgreSQL + Supabase Auth
+- `api up|down|status`: PostgreSQL + Supabase Auth + Workers backend
+- `web [up]|down|status`: PostgreSQL + Supabase Auth + Workers backend + SPA
+
+For `down` and `status`, add `--include-dependencies` when you want the command to traverse the dependency chain instead of operating only on the named service.
+
+The maintained frontend runs through the Vite SPA dev server, while the maintained backend runs through Wrangler against local Supabase services.
+
+Useful `web` flags:
 
 - `--no-browser`
-- `--skip-backend-restore`
-- `--skip-npm-install`
-- `--backend-url`
-- `--frontend-url`
+- `--skip-install`
+- `--hot-reload`
+- `--include-dependencies` for `web down` and `web status`
 
-### Check or stop the local web stack
-
-```bash
-python ./scripts/dev.py web-status
-python ./scripts/dev.py web-stop
-python ./scripts/dev.py web-stop --down-dependencies
-```
-
-Use `web-stop` when a previous `web` session was interrupted and left the backend/frontend processes running.
-
-### Start only local dependencies (no API)
-
-```bash
-python ./scripts/dev.py up --dependencies-only
-```
-
-### Seed local sample data for the maintained Wave 2 stack
+### Seed local sample data for the maintained stack
 
 ```bash
 python ./scripts/dev.py seed-data
@@ -113,7 +105,7 @@ This command:
 
 - ensures local Supabase services are running
 - provisions/updates deterministic local Supabase auth users
-- validates the checked-in title and studio media bundles under `frontend/src/Board.ThirdPartyLibrary.Frontend.Web/wwwroot/test-images/seed-catalog`
+- validates the checked-in title and studio media bundles under `frontend/public/seed-catalog`
 - repopulates local Supabase studio/title/media data used by the maintained Workers surface
 - seeds public studio banners plus studio support/social links alongside the studio records
 
@@ -124,59 +116,71 @@ Useful flags:
 
 - `--seed-password`
 
-### Run the frontend web UI
-
-```bash
-python ./scripts/dev.py frontend
-```
-
-This standalone frontend workflow runs the maintained SPA shell through the Vite dev server.
-
-Useful flags:
-
-- `--skip-npm-install`
-
-## Migration Workflows
-
-Wave 1 and Wave 2 establish the maintained Cloudflare Workers + Supabase backend path and the SPA migration shell.
+## Maintained Stack Workflows
 
 Reference doc:
 
-- [`docs/cloudflare-supabase-workers-wave-1.md`](./cloudflare-supabase-workers-wave-1.md)
-- [`docs/cloudflare-supabase-workers-wave-2.md`](./cloudflare-supabase-workers-wave-2.md)
+- [`docs/maintained-stack.md`](./maintained-stack.md)
 
-### Install, build, or run the React SPA shell
-
-```bash
-python ./scripts/dev.py spa install
-python ./scripts/dev.py spa build
-python ./scripts/dev.py spa run
-```
-
-### Install, build, or run the Workers API shell
+### Start the maintained local runtime profiles
 
 ```bash
-python ./scripts/dev.py workers install
-python ./scripts/dev.py workers build
-python ./scripts/dev.py workers run
+python ./scripts/dev.py database up
+python ./scripts/dev.py auth up
+python ./scripts/dev.py api
+python ./scripts/dev.py web --hot-reload
 ```
 
-### Start, stop, inspect, or reset local Supabase services
+The profile commands are the maintained entrypoints for local runtime work. Use the matching `down` and `status` actions when needed:
 
 ```bash
-python ./scripts/dev.py supabase start
-python ./scripts/dev.py supabase status
-python ./scripts/dev.py supabase db-reset
-python ./scripts/dev.py supabase stop
+python ./scripts/dev.py database status
+python ./scripts/dev.py auth down
+python ./scripts/dev.py api status
+python ./scripts/dev.py web down
+python ./scripts/dev.py api down --include-dependencies
+python ./scripts/dev.py web status --include-dependencies
 ```
 
-`supabase db-reset` now reseeds deterministic Supabase auth users, relational demo data, and storage fixtures for the Wave 2 stack.
+Profile notes:
 
-### Seed only the migration stack
+- `database up` uses `supabase db start` to launch PostgreSQL only.
+- `auth up` uses a filtered `supabase start -x ...` profile that keeps only the services needed for auth testing.
+- `api` and `web` use filtered Supabase profiles plus the maintained Workers and SPA dev servers.
+- `api` and `web` automatically seed deterministic demo data when the local Supabase stack has no catalog rows yet.
+- `api` and `web` also detect when the running local Supabase schema is missing required checked-in tables from newer migrations; in that case they automatically run the local reset/reseed flow before startup continues.
+- `web --hot-reload` keeps Vite and Wrangler in their watch-based local development mode.
+- `api down` stops the backend service only by default; add `--include-dependencies` to also stop auth and database services.
+- `web down` stops the frontend service only by default; add `--include-dependencies` to also stop API, auth, and database services.
+- `status` reports only the named service by default; add `--include-dependencies` to include dependency status output.
+- Local auth-facing profiles keep the Supabase email catcher available for signup and recovery flows. When `auth`, `api`, or `web` is running, open [http://127.0.0.1:54324](http://127.0.0.1:54324) to inspect local confirmation and recovery emails.
+- The maintained local Supabase config sets the sender to `Board Enthusiasts <noreply@boardenthusiasts.com>` in [`backend/supabase/config.toml`](../backend/supabase/config.toml). The checked-in branded HTML templates live under [`backend/supabase/templates/`](../backend/supabase/templates/). If a hosted Supabase project is used for staging or production, mirror both that sender identity and those template bodies in the hosted Auth email settings.
+- Hosted Supabase Auth redirect allowlists must include the maintained SPA callback routes, not just the site origin. At minimum mirror the local pattern for `/auth/signin` and `/auth/signin?mode=recovery` on each hosted frontend origin.
+- The maintained web UI now supports both the email link and the Supabase `{code}` value for signup confirmation and password recovery, and the checked-in templates surface both paths in the branded message body.
+- Signup persists `firstName` and `lastName` into Supabase auth user metadata, and the maintained email templates greet the recipient by first name when that metadata is present.
+- Hosted frontend runtime configuration must use HTTPS for both `VITE_SUPABASE_URL` and `VITE_API_BASE_URL`. The SPA only permits plain HTTP for loopback local development endpoints.
+- On Windows, Docker-backed Supabase commands attempt to launch Docker Desktop automatically when the daemon is unavailable. If `supabase stop` stalls, the CLI falls back to project-scoped Docker container cleanup instead of waiting indefinitely.
+
+### Seed the local stack
 
 ```bash
 python ./scripts/dev.py seed-data
 ```
+
+This refreshes the running local Supabase stack with the full checked-in demo catalog fixture set, including the broader browse/studio seed data used by the maintained UI.
+Use it when you intentionally want to refresh demo rows after changing seed definitions or media; you should not need it just to pick up newly pulled local migrations when starting `api` or `web`.
+
+The maintained local seed roster currently includes 24 users:
+- player coverage across the full roster
+- 6 developer-capable users
+- 2 moderators
+- 1 admin
+- 1 super admin
+
+Primary seeded accounts:
+- developer: `emma.torres@boardtpl.local`
+- moderator/admin: `alex.rivera@boardtpl.local`
+- password: `ChangeMe!123`
 
 ### Run the maintained API contract smoke harness
 
@@ -186,12 +190,12 @@ python ./scripts/dev.py contract-smoke --start-workers
 
 This uses the maintained smoke harness under `tests/contract-smoke`.
 
-For local migration runs, the CLI automatically fetches seeded role-appropriate Supabase tokens:
+For local runs, the CLI automatically fetches seeded role-appropriate Supabase tokens:
 
 - developer token for player/developer endpoints
 - moderator token for moderation endpoints
 
-Useful migration flags:
+Useful flags:
 
 - `--start-workers`
 - `--developer-token`
@@ -200,7 +204,7 @@ Useful migration flags:
 - `--moderator-email`
 - `--seed-user-password`
 
-### Run the Wave 2 Workers flow smoke suite
+### Run the Workers flow smoke suite
 
 ```bash
 python ./scripts/dev.py workers-smoke --start-stack
@@ -237,17 +241,12 @@ python ./scripts/dev.py deploy-staging --pages-only
 python ./scripts/dev.py deploy-staging --workers-only
 ```
 
-### Stop dependencies
-
-```bash
-python ./scripts/dev.py down
-```
-
 ### Check local tool and environment status
 
 ```bash
 python ./scripts/dev.py doctor
-python ./scripts/dev.py status
+python ./scripts/dev.py database status
+python ./scripts/dev.py web status
 ```
 
 ### Run backend tests
@@ -264,6 +263,7 @@ python ./scripts/dev.py all-tests
 ```
 
 This command runs maintained backend verification, frontend tests, OpenAPI lint, and API contract tests in one pass.
+It also runs the maintained workspace-wide TypeScript typecheck before the backend and frontend suites.
 
 To include the maintained contract run against the local Supabase + Workers stack:
 
@@ -284,6 +284,7 @@ python ./scripts/dev.py verify --start-workers
 ```
 
 This workflow validates the maintained backend, lints the OpenAPI spec, and optionally executes the Postman contract suite.
+It also covers the maintained workspace-wide TypeScript typecheck, frontend tests, and the root Python CLI tests.
 
 ### Authenticate Postman CLI for workspace or mock operations
 
@@ -309,7 +310,7 @@ Important for live local runs:
 
 - the root CLI starts or reuses local Supabase services, reseeds deterministic auth/data/storage fixtures, and starts the Workers API
 - the root CLI resolves seeded developer and moderator access tokens automatically for authenticated contract checks
-- the committed environment template keeps only the maintained Wave 2 variables for the current contract surface
+- the committed environment template keeps only the maintained variables for the current contract surface
 
 If the Workers API is already running and seeded:
 
@@ -351,14 +352,13 @@ Workflow-specific overrides remain available where they still map to the maintai
 - `api-lint`
 - `api-mock --mode shared|ephemeral`
 - `api-sync --skip-mock`
-- `web`
-- `web-status`
-- `web-stop --down-dependencies`
-- `frontend`
+- `database up|down|status`
+- `auth up|down|status`
+- `api up|down|status`
+- `web [up]|down|status`
+- `api down|status --include-dependencies`
+- `web down|status --include-dependencies`
 - `seed-data --seed-password <value>`
-- `spa install|build|run`
-- `workers install|build|run`
-- `supabase start|stop|status|db-reset`
 - `contract-smoke --start-workers`
 - `workers-smoke --start-stack`
 - `parity-test`
@@ -373,11 +373,11 @@ The root CLI can populate the maintained authenticated contract checks automatic
 
 ## Notes
 
-- The `up`, `down`, and `status` commands now target the maintained local Supabase dependency path.
-- The Wave 1 and Wave 2 migration scaffolding expects `node`, `npm`, `supabase`, and `wrangler`.
+- The maintained local runtime entrypoints are `database`, `auth`, `api`, and `web`.
+- The maintained stack expects `node`, `npm`, `supabase`, and `wrangler`.
 - VS Code tasks in this repo call the Python CLI directly.
 - The supported developer entry point for this repository is `python ./scripts/dev.py ...`; API-local helper scripts under `api/scripts/` are implementation details for CI and the root CLI.
 - Tool executables are resolved from each developer's `PATH`; the CLI does not assume fixed install directories for `node`, `npx`, `postman`, `supabase`, `wrangler`, `docker`, or other required tools.
-- Migration workspace dependency installs are now cached by lockfile fingerprint so routine Wave 2 commands do not reinstall the entire npm workspace unnecessarily.
+- Migration workspace dependency installs are cached by lockfile fingerprint so routine commands do not reinstall the entire npm workspace unnecessarily.
 
 

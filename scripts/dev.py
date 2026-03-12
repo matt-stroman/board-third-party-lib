@@ -3,9 +3,7 @@
 
 This script is the primary developer automation entry point for:
 - bootstrap/setup (`bootstrap`)
-- dependency lifecycle (`up`, `down`, `status`)
-- full local web stack execution (`web`)
-- frontend web UI execution (`frontend`)
+- database/auth/API/web runtime profiles (`database`, `auth`, `api`, `web`)
 - full-stack verification in one pass (`all-tests`)
 - repository verification (`verify`)
 - backend testing (`test`)
@@ -26,6 +24,7 @@ import http.client
 import json
 import math
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -53,8 +52,6 @@ class DevConfig:
     Attributes:
         repo_root: Repository root directory.
         frontend_root: Relative path to the frontend submodule root.
-        frontend_web_project: Relative path to the frontend web project file.
-        frontend_solution: Relative path to the frontend solution file.
         frontend_package_json: Relative path to the frontend package manifest.
         backend_base_url: Default local backend base URL.
         frontend_base_url: Default local frontend base URL.
@@ -72,8 +69,8 @@ class DevConfig:
         migration_workers_workspace_name: npm workspace name for the Workers API shell.
         migration_contract_root: Relative path to the shared TypeScript contract package.
         supabase_root: Relative path to the Supabase project folder.
-        migration_local_env_template: Relative path to the local migration env example.
-        migration_staging_env_template: Relative path to the staging migration env example.
+        migration_local_env_template: Relative path to the local env example.
+        migration_staging_env_template: Relative path to the staging env example.
         cloudflare_pages_template: Relative path to the Cloudflare Pages config template.
         cloudflare_workers_template: Relative path to the Cloudflare Workers config template.
         migration_spa_base_url: Default local React SPA URL.
@@ -82,8 +79,6 @@ class DevConfig:
 
     repo_root: Path
     frontend_root: str
-    frontend_web_project: str
-    frontend_solution: str
     frontend_package_json: str
     backend_base_url: str
     frontend_base_url: str
@@ -115,18 +110,78 @@ class DevCliError(RuntimeError):
 
 REDOCLY_CLI_VERSION = "2.20.3"
 
+SUPABASE_PROFILE_DATABASE = "database"
+SUPABASE_PROFILE_AUTH = "auth"
+SUPABASE_PROFILE_API = "api"
+SUPABASE_PROFILE_WEB = "web"
 
-def get_web_stack_state_path(config: DevConfig) -> Path:
-    """Return the on-disk state file used for locally launched web stack processes.
+SUPABASE_PROFILE_EXCLUDES: dict[str, tuple[str, ...]] = {
+    SUPABASE_PROFILE_AUTH: (
+        "studio",
+        "storage-api",
+        "imgproxy",
+        "postgres-meta",
+        "realtime",
+        "postgrest",
+        "edge-runtime",
+        "logflare",
+        "vector",
+        "supavisor",
+    ),
+    SUPABASE_PROFILE_API: (
+        "studio",
+        "imgproxy",
+        "postgres-meta",
+        "realtime",
+        "edge-runtime",
+        "logflare",
+        "vector",
+        "supavisor",
+    ),
+    SUPABASE_PROFILE_WEB: (
+        "studio",
+        "imgproxy",
+        "postgres-meta",
+        "realtime",
+        "edge-runtime",
+        "logflare",
+        "vector",
+        "supavisor",
+    ),
+}
+
+SUPABASE_PROFILE_DESCRIPTIONS: dict[str, str] = {
+    SUPABASE_PROFILE_DATABASE: "database only",
+    SUPABASE_PROFILE_AUTH: "database + auth",
+    SUPABASE_PROFILE_API: "database + auth + backend dependencies",
+    SUPABASE_PROFILE_WEB: "database + auth + backend dependencies",
+}
+
+LOCAL_SUPABASE_DB_HOST = "127.0.0.1"
+LOCAL_SUPABASE_DB_PORT = 54322
+LOCAL_SUPABASE_URL = "http://127.0.0.1:54321"
+LOCAL_SUPABASE_AUTH_URL = "http://127.0.0.1:54321/auth/v1/health"
+SUPABASE_STOP_TIMEOUT_SECONDS = 30
+
+
+def get_stack_state_path(config: DevConfig, *, stack_name: str) -> Path:
+    """Return the on-disk state file used for managed local stack processes.
 
     Args:
         config: CLI configuration containing the repository root.
+        stack_name: Logical stack name used in the state file name.
 
     Returns:
         State file path under the shared CLI logs directory.
     """
 
-    return config.repo_root / ".dev-cli-logs" / "web-stack-state.json"
+    return config.repo_root / ".dev-cli-logs" / f"{stack_name}-state.json"
+
+
+def get_runtime_profile_state_path(config: DevConfig) -> Path:
+    """Return the on-disk state file used for the active local runtime profile."""
+
+    return get_stack_state_path(config, stack_name="runtime-profile")
 
 
 def write_step(message: str) -> None:
@@ -140,6 +195,20 @@ def write_step(message: str) -> None:
     """
 
     print(f"==> {message}")
+
+
+def print_console_text(text: str) -> None:
+    """Print text while tolerating Windows console encoding limitations."""
+
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        if hasattr(sys.stdout, "buffer"):
+            sys.stdout.buffer.write(text.encode(sys.stdout.encoding or "utf-8", errors="replace"))
+            sys.stdout.buffer.write(b"\n")
+            sys.stdout.buffer.flush()
+        else:
+            print(text.encode("utf-8", errors="replace").decode("utf-8"))
 
 
 def quote_cmd(parts: Sequence[str]) -> str:
@@ -166,6 +235,7 @@ def run_command(
     stdout=None,
     stderr=None,
     env: dict[str, str] | None = None,
+    timeout_seconds: float | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a subprocess command with consistent error handling.
 
@@ -179,6 +249,7 @@ def run_command(
         stdout: Optional stdout destination override.
         stderr: Optional stderr destination override.
         env: Optional environment variables for the subprocess.
+        timeout_seconds: Optional timeout applied to the subprocess execution.
 
     Returns:
         The completed subprocess result.
@@ -206,6 +277,7 @@ def run_command(
         stdout=stdout,
         stderr=stderr,
         env=env,
+        timeout=timeout_seconds,
     )
     if check and result.returncode != 0:
         raise DevCliError(f"Command failed ({result.returncode}): {quote_cmd(resolved_cmd)}")
@@ -713,28 +785,30 @@ def stop_background_process(process: subprocess.Popen) -> None:
         process.wait(timeout=5)
 
 
-def save_web_stack_state(config: DevConfig, *, state: dict[str, object]) -> Path:
-    """Persist the locally launched web stack process metadata.
+def save_stack_state(config: DevConfig, *, stack_name: str, state: dict[str, object]) -> Path:
+    """Persist locally launched stack process metadata.
 
     Args:
         config: CLI configuration containing the repository root.
+        stack_name: Logical stack name used for the state file.
         state: Serializable process metadata to write.
 
     Returns:
         The written state file path.
     """
 
-    state_path = get_web_stack_state_path(config)
+    state_path = get_stack_state_path(config, stack_name=stack_name)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
     return state_path
 
 
-def load_web_stack_state(config: DevConfig) -> dict[str, object] | None:
-    """Load the persisted web stack state file if present and valid.
+def load_stack_state(config: DevConfig, *, stack_name: str) -> dict[str, object] | None:
+    """Load a persisted stack state file if present and valid.
 
     Args:
         config: CLI configuration containing the repository root.
+        stack_name: Logical stack name used for the state file.
 
     Returns:
         Parsed state mapping, or ``None`` when the file is absent.
@@ -743,27 +817,61 @@ def load_web_stack_state(config: DevConfig) -> dict[str, object] | None:
         DevCliError: If the file exists but cannot be parsed.
     """
 
-    state_path = get_web_stack_state_path(config)
+    state_path = get_stack_state_path(config, stack_name=stack_name)
     if not state_path.exists():
         return None
 
     try:
         return json.loads(state_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as ex:
-        raise DevCliError(f"Web stack state file is invalid JSON: {state_path}") from ex
+        raise DevCliError(f"Stack state file is invalid JSON: {state_path}") from ex
 
 
-def clear_web_stack_state(config: DevConfig) -> None:
-    """Delete the persisted web stack state file when present.
+def clear_stack_state(config: DevConfig, *, stack_name: str) -> None:
+    """Delete a persisted stack state file when present.
 
     Args:
         config: CLI configuration containing the repository root.
+        stack_name: Logical stack name used for the state file.
 
     Returns:
         None.
     """
 
-    get_web_stack_state_path(config).unlink(missing_ok=True)
+    get_stack_state_path(config, stack_name=stack_name).unlink(missing_ok=True)
+
+
+def save_runtime_profile_state(config: DevConfig, *, profile: str) -> Path:
+    """Persist the active local runtime profile."""
+
+    state_path = get_runtime_profile_state_path(config)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"profile": profile}, indent=2), encoding="utf-8")
+    return state_path
+
+
+def load_runtime_profile_state(config: DevConfig) -> str | None:
+    """Return the last known active local runtime profile when present."""
+
+    state_path = get_runtime_profile_state_path(config)
+    if not state_path.exists():
+        return None
+
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as ex:
+        raise DevCliError(f"Runtime profile state file is invalid JSON: {state_path}") from ex
+
+    profile = payload.get("profile")
+    if isinstance(profile, str) and profile:
+        return profile
+    return None
+
+
+def clear_runtime_profile_state(config: DevConfig) -> None:
+    """Delete the persisted local runtime profile state when present."""
+
+    get_runtime_profile_state_path(config).unlink(missing_ok=True)
 
 
 def is_process_running(pid: int) -> bool:
@@ -871,37 +979,6 @@ def start_background_command(
     return process
 
 
-DOTNET_WATCH_ENC_CRASH_MARKERS = (
-    "An unexpected error occurred: System.InvalidOperationException: Unexpected value 'Block'",
-    "Microsoft.CodeAnalysis.CSharp.LambdaUtilities.TryGetCorrespondingLambdaBody",
-)
-
-
-def is_known_dotnet_watch_enc_crash(*, return_code: int, log_path: Path | None = None) -> bool:
-    """Return whether a ``dotnet watch`` exit matches the known Roslyn EnC crash signature.
-
-    Args:
-        return_code: Process exit code from ``dotnet watch``.
-        log_path: Optional log file path to inspect for crash markers.
-
-    Returns:
-        ``True`` when the exit/signature matches the known crash pattern.
-    """
-
-    if return_code != -1:
-        return False
-
-    if log_path is None or not log_path.exists():
-        return True
-
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return True
-
-    return any(marker in text for marker in DOTNET_WATCH_ENC_CRASH_MARKERS)
-
-
 def ensure_api_base_url_reachable(base_url: str) -> None:
     """Ensure the target API base URL is reachable before contract execution.
 
@@ -923,8 +1000,8 @@ def ensure_api_base_url_reachable(base_url: str) -> None:
     if is_local_http_url(base_url):
         raise DevCliError(
             f"API base URL is not reachable: {base_url}{detail_suffix}\n"
-            "Start the maintained backend in another terminal with 'python ./scripts/dev.py workers run' "
-            "or rerun this command with '--start-backend'."
+            "Start the maintained backend in another terminal with 'python ./scripts/dev.py api' "
+            "or rerun this command with '--start-workers'."
         )
 
     raise DevCliError(f"API base URL is not reachable: {base_url}{detail_suffix}")
@@ -958,7 +1035,7 @@ def restore_backend(config: DevConfig) -> None:
     """Prepare the maintained backend workspace dependencies.
 
     Args:
-        config: CLI configuration containing migration workspace paths.
+        config: CLI configuration containing workspace paths.
 
     Returns:
         None.
@@ -972,125 +1049,219 @@ def restore_backend(config: DevConfig) -> None:
     install_migration_workspace_dependencies(config)
 
 
-def start_dependencies(config: DevConfig) -> None:
-    """Start or reuse the maintained local backend dependencies.
+def stop_managed_stack_processes(config: DevConfig, *, stack_name: str) -> bool:
+    """Stop any tracked managed application processes for the supplied stack."""
 
-    Args:
-        config: CLI configuration containing migration workspace paths.
+    state = load_stack_state(config, stack_name=stack_name)
+    if state is None:
+        return False
 
-    Returns:
-        None.
+    for key, label in (
+        ("frontend", "frontend web UI"),
+        ("backend", "backend API"),
+    ):
+        entry = state.get(key)
+        if not isinstance(entry, dict):
+            continue
 
-    Raises:
-        DevCliError: If Supabase CLI is unavailable or local services cannot start.
-    """
-    run_supabase_stack_command(config, action="start")
+        pid = int(entry.get("pid", 0))
+        if pid <= 0:
+            continue
+
+        if is_process_running(pid):
+            write_step(f"Stopping {label}")
+            stop_process_by_pid(pid)
+        else:
+            print(f"{label} is already stopped (PID {pid}).")
+
+    clear_stack_state(config, stack_name=stack_name)
+    return True
 
 
-def stop_dependencies(config: DevConfig) -> None:
-    """Stop the maintained local backend dependencies.
+def stop_all_managed_application_processes(config: DevConfig) -> None:
+    """Stop any tracked managed API/web application processes."""
 
-    Args:
-        config: CLI configuration containing compose and PostgreSQL settings.
+    stop_managed_stack_processes(config, stack_name="web")
+    stop_managed_stack_processes(config, stack_name="api")
 
-    Returns:
-        None.
 
-    Raises:
-        DevCliError: If the Supabase CLI command fails.
-    """
+def start_runtime_profile(config: DevConfig, *, profile: str) -> None:
+    """Start the maintained local runtime for the supplied profile."""
+
+    ensure_migration_workspace_scaffolding(config)
+    ensure_docker_daemon_available()
+    prefix = resolve_supabase_command_prefix()
+
+    write_step(f"Starting local {SUPABASE_PROFILE_DESCRIPTIONS[profile]} runtime")
+    run_command(
+        build_supabase_profile_start_command(prefix=prefix, profile=profile),
+        cwd=config.repo_root / config.supabase_root,
+    )
+    save_runtime_profile_state(config, profile=profile)
+
+
+def restart_runtime_profile(config: DevConfig, *, profile: str) -> None:
+    """Restart the maintained local runtime using the supplied profile."""
+
+    stop_runtime_profile(config)
+    start_runtime_profile(config, profile=profile)
+
+
+def ensure_runtime_profile(config: DevConfig, *, profile: str) -> None:
+    """Ensure the maintained local runtime matches the supplied profile."""
+
+    active_profile = load_runtime_profile_state(config)
+    reusable_profiles = {profile}
+    if profile in (SUPABASE_PROFILE_API, SUPABASE_PROFILE_WEB):
+        reusable_profiles = {SUPABASE_PROFILE_API, SUPABASE_PROFILE_WEB, None}
+
+    if active_profile not in reusable_profiles:
+        restart_runtime_profile(config, profile=profile)
+        return
+
+    write_step(f"Reusing local {SUPABASE_PROFILE_DESCRIPTIONS[profile]} runtime")
+    stop_all_managed_application_processes(config)
+    try:
+        runtime_env = get_local_supabase_runtime(config)
+        wait_for_local_supabase_http_ready(runtime_env=runtime_env)
+    except DevCliError:
+        print("Existing local runtime was unavailable; restarting local services.")
+        restart_runtime_profile(config, profile=profile)
+        return
+
+    save_runtime_profile_state(config, profile=profile)
+
+
+def stop_runtime_profile(config: DevConfig) -> None:
+    """Stop the maintained local runtime profile and clear tracked process state."""
+
+    stop_all_managed_application_processes(config)
     run_supabase_stack_command(config, action="stop")
+    clear_runtime_profile_state(config)
 
 
-def show_status(config: DevConfig) -> None:
-    """Show the maintained local backend dependency status.
+def show_runtime_status(config: DevConfig, *, expected_profile: str | None = None) -> None:
+    """Show the current maintained local runtime status."""
 
-    Args:
-        config: CLI configuration containing compose and dependency settings.
+    active_profile = load_runtime_profile_state(config)
+    if active_profile:
+        print(f"Tracked runtime profile: {active_profile}")
+    else:
+        print("Tracked runtime profile: none")
 
-    Returns:
-        None.
-    """
+    if expected_profile is not None and active_profile not in (None, expected_profile):
+        print(f"Requested profile: {expected_profile}")
 
     run_supabase_stack_command(config, action="status")
 
 
-def run_backend_api(config: DevConfig, *, do_restore: bool) -> None:
-    """Run the maintained backend API locally.
+def is_managed_service_running(config: DevConfig, *, stack_name: str, service_key: str) -> bool:
+    """Return whether a tracked managed service process is currently running."""
 
-    Args:
-        config: CLI configuration containing backend project paths.
-        do_restore: Whether to run ``dotnet restore`` before starting the API.
+    state = load_stack_state(config, stack_name=stack_name)
+    if not isinstance(state, dict):
+        return False
 
-    Returns:
-        None.
+    entry = state.get(service_key)
+    if not isinstance(entry, dict):
+        return False
 
-    Raises:
-        DevCliError: If required migration workspace files or local Supabase runtime are unavailable.
-    """
-    run_supabase_stack_command(config, action="start")
-    run_migration_workers_command(config, action="run", install_dependencies=do_restore)
+    pid = int(entry.get("pid", 0))
+    return is_process_running(pid)
 
 
-def run_frontend_web_ui(
-    config: DevConfig,
-    *,
-    bootstrap: bool,
-    do_npm_install: bool,
-    do_css_build: bool,
-    do_restore: bool,
-    hot_reload: bool,
-) -> None:
-    """Run the frontend web UI from the repository root.
+def print_frontend_service_status(config: DevConfig) -> None:
+    """Print status for the maintained frontend service only."""
 
-    Args:
-        config: CLI configuration containing frontend paths.
-        bootstrap: Whether to initialize submodules before running.
-        do_npm_install: Whether to install frontend JavaScript dependencies first.
-        do_css_build: Whether to build Tailwind CSS before launching the app.
-        do_restore: Whether to restore the frontend .NET project before launching.
-        hot_reload: Whether to enable frontend hot reload, including Tailwind watch.
+    state = load_stack_state(config, stack_name="web")
+    if state is None:
+        print("web: not running")
+        return
 
-    Returns:
-        None.
+    entry = state.get("frontend")
+    if not isinstance(entry, dict):
+        print("web: not running")
+        return
 
-    Raises:
-        DevCliError: If required commands are unavailable or frontend files are missing.
-    """
+    pid = int(entry.get("pid", 0))
+    running = is_process_running(pid)
+    print(f"web: {'running' if running else 'not running'}")
+    if pid > 0:
+        print(f"  pid: {pid}")
+    url = entry.get("url")
+    if isinstance(url, str) and url:
+        print(f"  url: {url}")
 
-    del do_css_build, do_restore, hot_reload
-    if bootstrap:
-        ensure_submodules(config)
-    run_migration_spa_command(config, action="run", install_dependencies=do_npm_install)
+
+def print_backend_service_status(config: DevConfig) -> None:
+    """Print status for the maintained backend service only."""
+
+    state = load_stack_state(config, stack_name="api")
+    if state is None:
+        print("api: not running")
+        return
+
+    entry = state.get("backend")
+    if not isinstance(entry, dict):
+        print("api: not running")
+        return
+
+    pid = int(entry.get("pid", 0))
+    running = is_process_running(pid)
+    print(f"api: {'running' if running else 'not running'}")
+    if pid > 0:
+        print(f"  pid: {pid}")
+    url = entry.get("url")
+    if isinstance(url, str) and url:
+        print(f"  url: {url}")
+
+
+def print_auth_service_status() -> None:
+    """Print status for the local auth service only."""
+
+    reachable, detail = probe_http_url(LOCAL_SUPABASE_AUTH_URL)
+    detail_suffix = f" ({detail})" if detail else ""
+    print(f"auth: {'running' if reachable else 'not running'}{detail_suffix}")
+
+
+def print_database_service_status() -> None:
+    """Print status for the local PostgreSQL service only."""
+
+    running = can_connect_to_tcp_port(host=LOCAL_SUPABASE_DB_HOST, port=LOCAL_SUPABASE_DB_PORT)
+    print(f"database: {'running' if running else 'not running'}")
+    if running:
+        print(f"  host: {LOCAL_SUPABASE_DB_HOST}")
+        print(f"  port: {LOCAL_SUPABASE_DB_PORT}")
+
+
+def stop_frontend_service(config: DevConfig) -> bool:
+    """Stop the maintained frontend service only."""
+
+    return stop_managed_stack_processes(config, stack_name="web")
+
+
+def stop_backend_service(config: DevConfig) -> bool:
+    """Stop the maintained backend service only."""
+
+    return stop_managed_stack_processes(config, stack_name="api")
 
 
 def run_full_local_web_stack(
     config: DevConfig,
     *,
     bootstrap: bool,
-    do_backend_restore: bool,
-    do_frontend_npm_install: bool,
-    do_frontend_css_build: bool,
-    do_frontend_restore: bool,
+    install_dependencies: bool,
     hot_reload: bool,
     open_browser_on_ready: bool,
-    backend_url: str,
-    frontend_url: str,
 ) -> None:
-    """Run the maintained local migration web stack together.
+    """Run the maintained local web stack together.
 
     Args:
         config: CLI configuration containing repository paths and defaults.
         bootstrap: Whether to initialize submodules before running.
-        do_backend_restore: Whether to install/update shared npm workspace dependencies before launch.
-        do_frontend_npm_install: Whether to install/update shared npm workspace dependencies before launch.
-        do_frontend_css_build: Unused compatibility parameter retained for older call sites.
-        do_frontend_restore: Unused compatibility parameter retained for older call sites.
-        hot_reload: Unused compatibility parameter retained for older call sites.
+        install_dependencies: Whether to install/update shared npm workspace dependencies before launch.
+        hot_reload: Whether to run the frontend/backend through their watch-based local dev servers.
         open_browser_on_ready: Whether to open the system browser when the frontend is reachable.
-        backend_url: Backend URL to bind and probe.
-        frontend_url: Frontend URL to bind, probe, and open in the browser.
-
     Returns:
         None.
 
@@ -1098,16 +1269,21 @@ def run_full_local_web_stack(
         DevCliError: If required tools are unavailable or any launched process exits unexpectedly.
     """
 
+    backend_url = config.migration_workers_base_url
+    frontend_url = config.migration_spa_base_url
+
     if bootstrap:
         ensure_submodules(config)
 
     assert_command_available("npm")
-    del do_frontend_css_build, do_frontend_restore, hot_reload
     ensure_migration_workspace_scaffolding(config)
-    if do_backend_restore or do_frontend_npm_install:
+    if install_dependencies:
         install_migration_workspace_dependencies(config)
 
-    run_supabase_stack_command(config, action="start")
+    if hot_reload:
+        print("Hot reload enabled via Vite and Wrangler dev mode.")
+
+    ensure_runtime_profile(config, profile=SUPABASE_PROFILE_WEB)
 
     backend_process: subprocess.Popen | None = None
     frontend_process: subprocess.Popen | None = None
@@ -1119,47 +1295,54 @@ def run_full_local_web_stack(
         ensure_local_url_port_available(url=frontend_url, description="frontend web UI")
 
         runtime_env = get_local_supabase_runtime(config)
+        ensure_local_demo_seed_data(config, runtime_env=runtime_env)
 
         write_step("Starting maintained backend API in the background")
         backend_process, backend_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
         print(f"Backend log: {backend_log_path}")
-        write_step("Starting migration SPA in the background")
+        write_step("Starting SPA in the background")
         frontend_process, frontend_log_path = start_background_command_with_log(
             cmd=build_workspace_npm_command(script_name="dev", workspace_name=config.migration_spa_workspace_name),
             cwd=config.repo_root,
             log_name="migration-spa.log",
             config=config,
+            env=build_migration_frontend_environment(config, runtime_env=runtime_env),
         )
         print(f"Frontend log: {frontend_log_path}")
         wait_for_background_process_http_ready(
             process=frontend_process,
             url=frontend_url,
-            description="migration SPA",
+            description="SPA",
             log_path=frontend_log_path,
         )
 
-        state: dict[str, object] = {
+        frontend_state: dict[str, object] = {
             "started_at_utc": datetime.now(timezone.utc).isoformat(),
-            "backend": {
-                "pid": backend_process.pid,
-                "url": backend_url,
-                "log_path": str(backend_log_path),
-            },
             "frontend": {
                 "pid": frontend_process.pid,
                 "url": frontend_url,
                 "log_path": str(frontend_log_path),
             },
         }
+        backend_state: dict[str, object] = {
+            "started_at_utc": datetime.now(timezone.utc).isoformat(),
+            "backend": {
+                "pid": backend_process.pid,
+                "url": backend_url,
+                "log_path": str(backend_log_path),
+            },
+        }
 
-        state_path = save_web_stack_state(config, state=state)
-        print(f"Web stack state: {state_path}")
+        api_state_path = save_stack_state(config, stack_name="api", state=backend_state)
+        web_state_path = save_stack_state(config, stack_name="web", state=frontend_state)
+        print(f"API stack state: {api_state_path}")
+        print(f"Web stack state: {web_state_path}")
 
         if open_browser_on_ready:
             write_step(f"Opening browser to {frontend_url}")
             webbrowser.open(frontend_url)
 
-        print("Local migration web stack is running. Press Ctrl+C to stop backend and frontend.")
+        print("Local web stack is running. Press Ctrl+C to stop backend and frontend.")
         while True:
             time.sleep(2)
 
@@ -1176,108 +1359,161 @@ def run_full_local_web_stack(
     except KeyboardInterrupt:
         print("\nStopping local web stack.")
     finally:
-        clear_web_stack_state(config)
+        clear_stack_state(config, stack_name="web")
+        clear_stack_state(config, stack_name="api")
         if frontend_process is not None:
             write_step("Stopping frontend web UI")
             stop_background_process(frontend_process)
         if backend_process is not None:
             write_step("Stopping backend API")
             stop_background_process(backend_process)
+        run_supabase_stack_command(config, action="stop")
+        clear_runtime_profile_state(config)
 
 
-def show_web_stack_status(config: DevConfig) -> None:
-    """Show status for the locally launched backend/frontend web stack processes.
+def run_local_api_stack(
+    config: DevConfig,
+    *,
+    bootstrap: bool,
+    install_dependencies: bool,
+) -> None:
+    """Run the maintained local API stack together."""
 
-    Args:
-        config: CLI configuration containing the repository root.
+    backend_url = config.migration_workers_base_url
 
-    Returns:
-        None.
-    """
+    if bootstrap:
+        ensure_submodules(config)
 
-    state = load_web_stack_state(config)
-    if state is None:
-        print("No active root-managed web stack state file was found.")
-        print("Start it with: python ./scripts/dev.py web --hot-reload")
+    assert_command_available("npm")
+    ensure_migration_workspace_scaffolding(config)
+    if install_dependencies:
+        install_migration_workspace_dependencies(config)
+
+    ensure_runtime_profile(config, profile=SUPABASE_PROFILE_API)
+
+    backend_process: subprocess.Popen | None = None
+    backend_log_path: Path | None = None
+
+    try:
+        ensure_local_url_port_available(url=backend_url, description="backend API")
+        runtime_env = get_local_supabase_runtime(config)
+        ensure_local_demo_seed_data(config, runtime_env=runtime_env)
+
+        write_step("Starting maintained backend API in the background")
+        backend_process, backend_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
+        print(f"Backend log: {backend_log_path}")
+
+        state: dict[str, object] = {
+            "started_at_utc": datetime.now(timezone.utc).isoformat(),
+            "backend": {
+                "pid": backend_process.pid,
+                "url": backend_url,
+                "log_path": str(backend_log_path),
+            },
+        }
+        state_path = save_stack_state(config, stack_name="api", state=state)
+        print(f"API stack state: {state_path}")
+        print("Local API stack is running. Press Ctrl+C to stop backend and local services.")
+
+        while True:
+            time.sleep(2)
+            if backend_process.poll() is not None:
+                raise DevCliError(f"Backend API exited unexpectedly. Review log: {backend_log_path}")
+    except KeyboardInterrupt:
+        print("\nStopping local API stack.")
+    finally:
+        clear_stack_state(config, stack_name="api")
+        if backend_process is not None:
+            write_step("Stopping backend API")
+            stop_background_process(backend_process)
+        run_supabase_stack_command(config, action="stop")
+        clear_runtime_profile_state(config)
+
+
+def show_database_command_status(config: DevConfig, *, include_dependencies: bool) -> None:
+    """Show status for the database command."""
+
+    del config, include_dependencies
+    print_database_service_status()
+
+
+def show_auth_command_status(config: DevConfig, *, include_dependencies: bool) -> None:
+    """Show status for the auth command."""
+
+    del config
+    print_auth_service_status()
+    if include_dependencies:
+        print_database_service_status()
+
+
+def show_api_command_status(config: DevConfig, *, include_dependencies: bool) -> None:
+    """Show status for the api command."""
+
+    print_backend_service_status(config)
+    if include_dependencies:
+        print_auth_service_status()
+        print_database_service_status()
+
+
+def show_web_command_status(config: DevConfig, *, include_dependencies: bool) -> None:
+    """Show status for the web command."""
+
+    print_frontend_service_status(config)
+    if include_dependencies:
+        print_backend_service_status(config)
+        print_auth_service_status()
+        print_database_service_status()
+
+
+def handle_database_down(config: DevConfig, *, include_dependencies: bool) -> None:
+    """Handle `database down`."""
+
+    del include_dependencies
+    stop_runtime_profile(config)
+    print("Database runtime stopped.")
+
+
+def handle_auth_down(config: DevConfig, *, include_dependencies: bool) -> None:
+    """Handle `auth down`."""
+
+    stop_frontend_service(config)
+    stop_backend_service(config)
+    if include_dependencies:
+        stop_runtime_profile(config)
+        print("Auth runtime and dependencies stopped.")
         return
 
-    print(f"State file: {get_web_stack_state_path(config)}")
-    started_at = state.get("started_at_utc")
-    if isinstance(started_at, str) and started_at:
-        print(f"Started at (UTC): {started_at}")
-
-    active_count = 0
-    stale_entries: list[str] = []
-    for key in ("backend", "frontend", "css_watch"):
-        entry = state.get(key)
-        if not isinstance(entry, dict):
-            continue
-
-        pid = int(entry.get("pid", 0))
-        label = key.replace("_", " ")
-        running = is_process_running(pid)
-        status = "running" if running else "not running"
-        print(f"{label}: PID {pid} ({status})")
-
-        url = entry.get("url")
-        if isinstance(url, str) and url:
-            print(f"  url: {url}")
-
-        log_path = entry.get("log_path")
-        if isinstance(log_path, str) and log_path:
-            print(f"  log: {log_path}")
-
-        if running:
-            active_count += 1
-        else:
-            stale_entries.append(label)
-
-    if active_count == 0:
-        print("No tracked web stack processes are still running.")
-        if stale_entries:
-            print("The state file is stale. Remove it with: python ./scripts/dev.py web-stop")
+    restart_runtime_profile(config, profile=SUPABASE_PROFILE_DATABASE)
+    print("Auth runtime stopped. Database remains available.")
 
 
-def stop_web_stack(config: DevConfig, *, stop_dependencies_too: bool) -> None:
-    """Stop the locally launched backend/frontend web stack processes.
+def handle_api_down(config: DevConfig, *, include_dependencies: bool) -> None:
+    """Handle `api down`."""
 
-    Args:
-        config: CLI configuration containing the repository root.
-        stop_dependencies_too: Whether to also stop local Supabase services.
+    stop_frontend_service(config)
+    stop_backend_service(config)
+    if include_dependencies:
+        stop_runtime_profile(config)
+        print("API runtime and dependencies stopped.")
+        return
 
-    Returns:
-        None.
-    """
+    restart_runtime_profile(config, profile=SUPABASE_PROFILE_AUTH)
+    print("API runtime stopped. Auth and database remain available.")
 
-    state = load_web_stack_state(config)
-    if state is None:
-        print("No active root-managed web stack state file was found.")
-    else:
-        for key, label in (
-            ("frontend", "frontend web UI"),
-            ("css_watch", "frontend Tailwind watch"),
-            ("backend", "backend API"),
-        ):
-            entry = state.get(key)
-            if not isinstance(entry, dict):
-                continue
 
-            pid = int(entry.get("pid", 0))
-            if pid <= 0:
-                continue
+def handle_web_down(config: DevConfig, *, include_dependencies: bool) -> None:
+    """Handle `web down`."""
 
-            if is_process_running(pid):
-                write_step(f"Stopping {label}")
-                stop_process_by_pid(pid)
-            else:
-                print(f"{label} is already stopped (PID {pid}).")
+    stop_frontend_service(config)
+    if include_dependencies:
+        stop_backend_service(config)
+        stop_runtime_profile(config)
+        print("Web runtime and dependencies stopped.")
+        return
 
-        clear_web_stack_state(config)
-        print("Cleared root-managed web stack state.")
-
-    if stop_dependencies_too:
-        stop_dependencies(config)
-        print("Dependencies stopped.")
+    if is_managed_service_running(config, stack_name="api", service_key="backend"):
+        save_runtime_profile_state(config, profile=SUPABASE_PROFILE_API)
+    print("Web runtime stopped. API, auth, and database remain available.")
 
 
 def start_background_command_with_log(
@@ -1308,82 +1544,11 @@ def start_background_command_with_log(
     return process, log_path
 
 
-def get_frontend_web_launch_command(project_path: Path, *, hot_reload: bool) -> list[str]:
-    """Return the frontend web launch command.
-
-    Args:
-        project_path: Frontend web project path.
-        hot_reload: Whether to launch with ``dotnet watch``.
-
-    Returns:
-        Command tokens for launching the frontend web app.
-    """
-
-    if hot_reload:
-        return ["dotnet", "watch", "--project", str(project_path), "run", "--no-restore", "--no-launch-profile"]
-
-    return ["dotnet", "run", "--project", str(project_path), "--no-restore", "--no-launch-profile"]
-
-
-def build_frontend_web_environment(*, frontend_url: str, hot_reload: bool) -> dict[str, str]:
-    """Build the environment used by frontend web runs.
-
-    Args:
-        frontend_url: URL the frontend should bind to.
-        hot_reload: Whether frontend hot reload is enabled.
-
-    Returns:
-        Environment variables for the frontend process.
-    """
-
-    extra = {
-        "ASPNETCORE_URLS": frontend_url,
-        "ASPNETCORE_ENVIRONMENT": "Development",
-    }
-    if hot_reload:
-        extra["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true"
-
-    return build_subprocess_env(extra=extra)
-
-
-def start_frontend_web_process_with_log(
-    config: DevConfig,
-    *,
-    frontend_url: str,
-    hot_reload: bool,
-) -> tuple[subprocess.Popen, Path]:
-    """Start the frontend web app and return both process and log path.
-
-    Args:
-        config: CLI configuration containing frontend paths.
-        frontend_url: URL the frontend should bind to.
-        hot_reload: Whether frontend hot reload is enabled.
-
-    Returns:
-        Tuple of process handle and log file path.
-    """
-
-    assert_command_available("dotnet")
-    frontend_root = config.repo_root / config.frontend_root
-    project_path = config.repo_root / config.frontend_web_project
-    if not project_path.exists():
-        raise DevCliError(f"Frontend web project not found: {project_path}")
-    ensure_local_url_port_available(url=frontend_url, description="frontend web UI")
-
-    return start_background_command_with_log(
-        cmd=get_frontend_web_launch_command(project_path, hot_reload=hot_reload),
-        cwd=frontend_root,
-        log_name="frontend-web.log",
-        config=config,
-        env=build_frontend_web_environment(frontend_url=frontend_url, hot_reload=hot_reload),
-    )
-
-
 def run_tests(config: DevConfig, *, run_integration: bool, restore: bool = True) -> None:
     """Run maintained backend verification and optionally integration coverage.
 
     Args:
-        config: CLI configuration containing migration backend paths.
+        config: CLI configuration containing backend workspace paths.
         run_integration: Whether to run backend integration coverage after typecheck.
         restore: Whether to install root npm workspace dependencies first.
 
@@ -1391,7 +1556,7 @@ def run_tests(config: DevConfig, *, run_integration: bool, restore: bool = True)
         None.
 
     Raises:
-        DevCliError: If required migration workspace commands fail.
+        DevCliError: If required workspace commands fail.
     """
     assert_command_available("npm")
     ensure_migration_workspace_scaffolding(config)
@@ -1415,46 +1580,58 @@ def run_tests(config: DevConfig, *, run_integration: bool, restore: bool = True)
 
 
 def restore_frontend(config: DevConfig) -> None:
-    """Restore the frontend solution.
+    """Ensure maintained frontend workspace dependencies are installed.
 
     Args:
-        config: CLI configuration containing frontend solution paths.
+        config: CLI configuration containing maintained frontend paths.
 
     Returns:
         None.
-
-    Raises:
-        DevCliError: If ``dotnet`` is unavailable or restore fails.
     """
 
-    assert_command_available("dotnet")
-    frontend_root = config.repo_root / config.frontend_root
-    solution_path = config.repo_root / config.frontend_solution
-    write_step("Restoring frontend solution")
-    run_command(["dotnet", "restore", str(solution_path)], cwd=frontend_root)
+    assert_command_available("npm")
+    ensure_migration_workspace_scaffolding(config)
+    install_migration_workspace_dependencies(config)
 
 
 def run_frontend_tests(config: DevConfig, *, restore: bool = True) -> None:
-    """Run frontend tests.
+    """Run maintained frontend tests.
 
     Args:
-        config: CLI configuration containing frontend test project/solution paths.
-        restore: Whether to restore packages before running tests.
+        config: CLI configuration containing maintained frontend paths.
+        restore: Whether to install root npm workspace dependencies before running tests.
 
     Returns:
         None.
-
-    Raises:
-        DevCliError: If ``dotnet`` is unavailable or test execution fails.
     """
 
-    assert_command_available("dotnet")
-    frontend_root = config.repo_root / config.frontend_root
-    solution_path = config.repo_root / config.frontend_solution
-    restore_args = [] if restore else ["--no-restore"]
+    assert_command_available("npm")
+    ensure_migration_workspace_scaffolding(config)
+    if restore:
+        install_migration_workspace_dependencies(config)
 
     write_step("Running frontend tests")
-    run_command(["dotnet", "test", str(solution_path), *restore_args], cwd=frontend_root)
+    run_command(build_workspace_npm_command(script_name="test", workspace_name=config.migration_spa_workspace_name), cwd=config.repo_root)
+
+
+def run_migration_typecheck(config: DevConfig, *, restore: bool = True) -> None:
+    """Run the maintained workspace-wide TypeScript typecheck.
+
+    Args:
+        config: CLI configuration containing the root workspace path.
+        restore: Whether to install root npm workspace dependencies before running typecheck.
+
+    Returns:
+        None.
+    """
+
+    assert_command_available("npm")
+    ensure_migration_workspace_scaffolding(config)
+    if restore:
+        install_migration_workspace_dependencies(config)
+
+    write_step("Running maintained workspace typecheck")
+    run_command(["npm", "run", "typecheck:migration"], cwd=config.repo_root)
 
 
 def build_subprocess_env(*, extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -1471,6 +1648,27 @@ def build_subprocess_env(*, extra: dict[str, str] | None = None) -> dict[str, st
     if extra:
         env.update({key: value for key, value in extra.items() if value is not None})
     return env
+
+
+def build_migration_frontend_environment(config: DevConfig, *, runtime_env: dict[str, str]) -> dict[str, str]:
+    """Build the Vite runtime environment for the maintained frontend workspace.
+
+    Args:
+        config: CLI configuration containing maintained local URLs.
+        runtime_env: Local Supabase runtime values resolved from the CLI.
+
+    Returns:
+        Environment mapping with the Vite runtime values injected.
+    """
+
+    return build_subprocess_env(
+        extra={
+            "VITE_API_BASE_URL": config.migration_workers_base_url,
+            "VITE_SUPABASE_URL": runtime_env["SUPABASE_URL"],
+            "VITE_SUPABASE_ANON_KEY": runtime_env["SUPABASE_ANON_KEY"],
+            "VITE_TURNSTILE_SITE_KEY": os.environ.get("VITE_TURNSTILE_SITE_KEY", ""),
+        }
+    )
 
 
 def build_workspace_npm_command(*, script_name: str, workspace_name: str) -> list[str]:
@@ -1512,32 +1710,32 @@ def build_workers_wrangler_command(*, action: str) -> list[str]:
 
 
 def get_root_workspace_manifest_path(config: DevConfig) -> Path:
-    """Return the root migration workspace package manifest path."""
+    """Return the root workspace package manifest path."""
 
     return config.repo_root / config.migration_root_package_json
 
 
 def ensure_migration_workspace_scaffolding(config: DevConfig) -> None:
-    """Ensure the Wave 1 migration workspace files exist before running commands.
+    """Ensure the maintained workspace files exist before running commands.
 
     Args:
-        config: CLI configuration containing migration workspace paths.
+        config: CLI configuration containing workspace paths.
 
     Returns:
         None.
 
     Raises:
-        DevCliError: If required migration workspace files are missing.
+        DevCliError: If required workspace files are missing.
     """
 
     required_paths = [
-        ("root migration package manifest", config.repo_root / config.migration_root_package_json),
+        ("root workspace package manifest", config.repo_root / config.migration_root_package_json),
         ("SPA workspace", config.repo_root / config.migration_spa_root),
         ("Workers workspace", config.repo_root / config.migration_workers_root),
         ("shared contract package", config.repo_root / config.migration_contract_root),
         ("Supabase project root", config.repo_root / config.supabase_root),
-        ("local migration env template", config.repo_root / config.migration_local_env_template),
-        ("staging migration env template", config.repo_root / config.migration_staging_env_template),
+        ("local env template", config.repo_root / config.migration_local_env_template),
+        ("staging env template", config.repo_root / config.migration_staging_env_template),
         ("Cloudflare Pages template", config.repo_root / config.cloudflare_pages_template),
         ("Cloudflare Workers template", config.repo_root / config.cloudflare_workers_template),
     ]
@@ -1545,7 +1743,7 @@ def ensure_migration_workspace_scaffolding(config: DevConfig) -> None:
     missing = [f"{label}: {path}" for label, path in required_paths if not path.exists()]
     if missing:
         preview = "\n".join(missing)
-        raise DevCliError(f"Migration workspace scaffolding is incomplete:\n{preview}")
+        raise DevCliError(f"Workspace scaffolding is incomplete:\n{preview}")
 
 
 def get_migration_workspace_install_state_path(config: DevConfig) -> Path:
@@ -1634,7 +1832,7 @@ def record_migration_workspace_dependencies(config: DevConfig) -> None:
 
 
 def install_migration_workspace_dependencies(config: DevConfig) -> None:
-    """Install root npm workspace dependencies for the migration scaffolding.
+    """Install root npm workspace dependencies for the maintained stack.
 
     Args:
         config: CLI configuration containing the repository root.
@@ -1646,10 +1844,10 @@ def install_migration_workspace_dependencies(config: DevConfig) -> None:
     assert_command_available("npm")
     ensure_migration_workspace_scaffolding(config)
     if has_current_migration_workspace_dependencies(config):
-        print("Migration workspace npm dependencies are already current.")
+        print("Workspace npm dependencies are already current.")
         return
 
-    write_step("Installing migration workspace npm dependencies")
+    write_step("Installing workspace npm dependencies")
     run_command(["npm", "install"], cwd=config.repo_root)
     record_migration_workspace_dependencies(config)
 
@@ -1709,6 +1907,21 @@ def resolve_supabase_command_prefix() -> list[str]:
     raise DevCliError("Supabase CLI was not found. Install `supabase` or ensure `npx` is available.")
 
 
+def build_supabase_profile_start_command(*, prefix: Sequence[str], profile: str) -> list[str]:
+    """Build the Supabase CLI command used to start a specific local runtime profile."""
+
+    if profile == SUPABASE_PROFILE_DATABASE:
+        return [*prefix, "db", "start"]
+
+    if profile not in SUPABASE_PROFILE_EXCLUDES:
+        raise DevCliError(f"Unsupported Supabase runtime profile: {profile}")
+
+    command = [*prefix, "start"]
+    for service in SUPABASE_PROFILE_EXCLUDES[profile]:
+        command.extend(["-x", service])
+    return command
+
+
 def parse_env_assignments(text: str) -> dict[str, str]:
     """Parse ``KEY=value`` lines into a dictionary.
 
@@ -1759,18 +1972,24 @@ def get_supabase_status_env(config: DevConfig) -> dict[str, str]:
             if part and part.strip()
         )
         if "No such container" in output or "failed to inspect container health" in output:
-            raise DevCliError("Local Supabase services are not running. Start them with 'python ./scripts/dev.py supabase start'.")
+            raise DevCliError("Local Supabase services are not running. Start them with 'python ./scripts/dev.py database up'.")
         raise DevCliError("Supabase status command failed." + (f"\n{output}" if output else ""))
 
     parsed = parse_env_assignments(result.stdout or "")
+    normalized = dict(parsed)
+    if not normalized.get("API_URL"):
+        normalized["API_URL"] = LOCAL_SUPABASE_URL
+    if not normalized.get("ANON_KEY") and normalized.get("PUBLISHABLE_KEY"):
+        normalized["ANON_KEY"] = normalized["PUBLISHABLE_KEY"]
+
     required = ("API_URL", "ANON_KEY", "SERVICE_ROLE_KEY")
-    missing = [name for name in required if not parsed.get(name)]
+    missing = [name for name in required if not normalized.get(name)]
     if missing:
         raise DevCliError(
             "Supabase status output did not include the expected runtime keys: "
             + ", ".join(missing)
         )
-    return parsed
+    return normalized
 
 
 def get_local_supabase_runtime(config: DevConfig) -> dict[str, str]:
@@ -1862,7 +2081,7 @@ def probe_http_endpoint(
 def wait_for_local_supabase_http_ready(
     *,
     runtime_env: dict[str, str],
-    timeout_seconds: int = 120,
+    timeout_seconds: int = 180,
 ) -> None:
     """Wait until the core local Supabase REST and storage endpoints are ready.
 
@@ -1880,6 +2099,11 @@ def wait_for_local_supabase_http_ready(
     service_headers = build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SERVICE_ROLE_KEY"])
     base_url = runtime_env["SUPABASE_URL"].rstrip("/")
     checks = (
+        (
+            "Supabase Auth API",
+            f"{base_url}/auth/v1/health",
+            None,
+        ),
         (
             "Supabase REST API",
             f"{base_url}/rest/v1/migration_wave_state?select=key&limit=1",
@@ -1916,6 +2140,125 @@ def wait_for_local_supabase_http_ready(
     )
 
 
+def is_transient_supabase_seed_readiness_failure(error: DevCliError) -> bool:
+    """Return whether a local seed failure looks like a transient Supabase restart issue."""
+
+    message = str(error).lower()
+    return (
+        "timed out waiting for local supabase http services to become ready" in message
+        and (
+            "supabase storage api" in message
+            or "invalid response was received from the upstream server" in message
+            or "connection refused" in message
+        )
+    )
+
+
+def is_local_supabase_not_running_error(error: DevCliError) -> bool:
+    """Return whether a local seed failure indicates the Supabase stack is currently down."""
+
+    return "local supabase services are not running" in str(error).lower()
+
+
+def is_partial_local_supabase_runtime_error(error: DevCliError) -> bool:
+    """Return whether a local Supabase runtime probe found only a partial service profile."""
+
+    return "supabase status output did not include the expected runtime keys" in str(error).lower()
+
+
+def has_local_demo_seed_data(*, runtime_env: dict[str, str]) -> bool:
+    """Return whether the local Supabase stack already contains demo catalog data.
+
+    Args:
+        runtime_env: Resolved local Supabase runtime values.
+
+    Returns:
+        ``True`` when at least one catalog title row exists, else ``False``.
+
+    Raises:
+        DevCliError: If the local REST probe fails unexpectedly.
+    """
+
+    base_url = runtime_env["SUPABASE_URL"].rstrip("/")
+    request = urllib.request.Request(
+        f"{base_url}/rest/v1/titles?select=id&limit=1",
+        headers=build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SERVICE_ROLE_KEY"]),
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8") or "[]")
+    except urllib.error.HTTPError as ex:
+        detail = ex.read().decode("utf-8", errors="replace").strip()
+        message = f"Failed to probe local demo catalog seed state (HTTP {ex.code})."
+        if detail:
+            message = f"{message}\n{detail}"
+        raise DevCliError(message) from ex
+    except (OSError, urllib.error.URLError, TimeoutError) as ex:
+        raise DevCliError(f"Failed to probe local demo catalog seed state.\n{ex}") from ex
+
+    return isinstance(payload, list) and len(payload) > 0
+
+
+def has_local_required_schema(runtime_env: dict[str, str]) -> bool:
+    """Return whether required maintained local tables are present in PostgREST.
+
+    Args:
+        runtime_env: Resolved local Supabase runtime values.
+
+    Returns:
+        ``True`` when the required maintained tables can be queried, else ``False``.
+    """
+
+    required_tables = (
+        "titles",
+        "genres",
+        "age_rating_authorities",
+    )
+    base_url = runtime_env["SUPABASE_URL"].rstrip("/")
+    headers = build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SERVICE_ROLE_KEY"])
+
+    for table_name in required_tables:
+        request = urllib.request.Request(
+            f"{base_url}/rest/v1/{table_name}?select=*&limit=1",
+            headers=headers,
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10):
+                continue
+        except urllib.error.HTTPError:
+            return False
+        except (OSError, urllib.error.URLError, TimeoutError) as ex:
+            raise DevCliError(f"Failed to probe local schema readiness for '{table_name}'.\n{ex}") from ex
+
+    return True
+
+
+def ensure_local_demo_seed_data(config: DevConfig, *, runtime_env: dict[str, str]) -> None:
+    """Ensure the local Supabase stack contains deterministic demo data.
+
+    Args:
+        config: CLI configuration containing repository paths.
+        runtime_env: Resolved local Supabase runtime values.
+
+    Returns:
+        None.
+    """
+
+    wait_for_local_supabase_http_ready(runtime_env=runtime_env)
+    if not has_local_required_schema(runtime_env):
+        write_step("Local runtime schema is behind checked-in migrations; resetting and reseeding")
+        run_supabase_stack_command(config, action="db-reset")
+        return
+
+    if has_local_demo_seed_data(runtime_env=runtime_env):
+        return
+
+    write_step("Local runtime has no seeded catalog data; seeding deterministic demo fixtures")
+    seed_migration_data(config, seed_password=LOCAL_SEED_DEFAULT_PASSWORD)
+
+
 def get_workers_dev_vars_path(config: DevConfig) -> Path:
     """Return the local Wrangler dev vars file path for the Workers workspace."""
 
@@ -1945,6 +2288,79 @@ def write_workers_local_dev_vars(config: DevConfig, *, runtime_env: dict[str, st
     return dev_vars_path
 
 
+def get_supabase_project_id(config: DevConfig) -> str:
+    """Return the configured local Supabase project identifier."""
+
+    config_path = config.repo_root / config.supabase_root / "config.toml"
+    if not config_path.exists():
+        raise DevCliError(f"Supabase config was not found: {config_path}")
+
+    match = re.search(r'^\s*project_id\s*=\s*"([^"]+)"\s*$', config_path.read_text(encoding="utf-8"), re.MULTILINE)
+    if not match:
+        raise DevCliError(f"Supabase config did not define project_id: {config_path}")
+    return match.group(1)
+
+
+def list_supabase_project_containers(config: DevConfig) -> list[tuple[str, str]]:
+    """Return Docker container names and statuses for the local Supabase project."""
+
+    project_id = get_supabase_project_id(config)
+    result = run_command(
+        ["docker", "ps", "-a", "--format", "{{.Names}}\t{{.Status}}"],
+        cwd=config.repo_root,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        output = "\n".join(
+            part.strip()
+            for part in ((result.stdout or ""), (result.stderr or ""))
+            if part and part.strip()
+        )
+        raise DevCliError("Failed to inspect Docker containers for local Supabase state." + (f"\n{output}" if output else ""))
+
+    containers: list[tuple[str, str]] = []
+    for line in (result.stdout or "").splitlines():
+        if "\t" not in line:
+            continue
+        name, status = line.split("\t", 1)
+        normalized_name = name.strip()
+        normalized_status = status.strip().lower()
+        if not normalized_name.startswith("supabase_") or not normalized_name.endswith(project_id):
+            continue
+        containers.append((normalized_name, normalized_status))
+
+    return containers
+
+
+def remove_stale_supabase_project_containers(config: DevConfig) -> None:
+    """Remove exited/created/dead Docker containers for the local Supabase project."""
+
+    removable_names = [
+        name
+        for name, status in list_supabase_project_containers(config)
+        if status.startswith(("exited", "created", "dead"))
+    ]
+
+    if not removable_names:
+        return
+
+    write_step("Removing stale local Supabase containers")
+    run_command(["docker", "rm", "-f", *removable_names], cwd=config.repo_root)
+
+
+def force_remove_supabase_project_containers(config: DevConfig) -> bool:
+    """Force-remove all Docker containers for the local Supabase project."""
+
+    removable_names = [name for name, _status in list_supabase_project_containers(config)]
+    if not removable_names:
+        return False
+
+    write_step("Force-removing local Supabase containers")
+    run_command(["docker", "rm", "-f", *removable_names], cwd=config.repo_root)
+    return True
+
+
 def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
     """Run a Supabase local workflow command from the repository root.
 
@@ -1961,13 +2377,120 @@ def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
     prefix = resolve_supabase_command_prefix()
 
     if action == "start":
+        ensure_docker_daemon_available()
         write_step("Starting local Supabase services")
-        run_command([*prefix, "start"], cwd=supabase_root)
+        start_command = build_supabase_profile_start_command(
+            prefix=prefix,
+            profile=SUPABASE_PROFILE_WEB,
+        )
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            result = run_command(
+                start_command,
+                cwd=supabase_root,
+                check=False,
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                combined_output = "\n".join(
+                    part.strip()
+                    for part in ((result.stdout or ""), (result.stderr or ""))
+                    if part and part.strip()
+                )
+                try:
+                    runtime_env = get_local_supabase_runtime(config)
+                    wait_for_local_supabase_http_ready(runtime_env=runtime_env)
+                except DevCliError as ex:
+                    if attempt < attempts and (
+                        is_partial_local_supabase_runtime_error(ex)
+                        or is_local_supabase_not_running_error(ex)
+                        or is_transient_supabase_seed_readiness_failure(ex)
+                    ):
+                        print("Local Supabase services were only partially available; restarting the full local profile.")
+                        run_supabase_stack_command(config, action="stop")
+                        time.sleep(2)
+                        continue
+                    raise
+                if combined_output:
+                    print_console_text(combined_output)
+                return
+
+            output = "\n".join(
+                part.strip()
+                for part in ((result.stdout or ""), (result.stderr or ""))
+                if part and part.strip()
+            )
+            if (
+                "supabase start is already running." in output.lower()
+                or "container is not ready: starting" in output.lower()
+            ):
+                runtime_env = get_local_supabase_runtime(config)
+                wait_for_local_supabase_http_ready(runtime_env=runtime_env)
+                if output:
+                    print_console_text(output)
+                return
+            if "The container name " in output and "is already in use" in output and attempt < attempts:
+                remove_stale_supabase_project_containers(config)
+                print("Removed stale local Supabase containers. Retrying Supabase start.")
+                continue
+            if (
+                ("a prune operation is already running" in output.lower() or "no such container:" in output.lower())
+                and attempt < attempts
+            ):
+                print("Docker is still reconciling local Supabase containers; retrying Supabase start.")
+                time.sleep(2)
+                continue
+
+            raise DevCliError("Supabase start failed." + (f"\n{output}" if output else ""))
         return
 
     if action == "stop":
+        try:
+            ensure_docker_daemon_available()
+        except DevCliError:
+            print("Docker daemon is not reachable; treating local Supabase services as already stopped.")
+            return
+
         write_step("Stopping local Supabase services")
-        run_command([*prefix, "stop"], cwd=supabase_root)
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            try:
+                result = run_command(
+                    [*prefix, "stop"],
+                    cwd=supabase_root,
+                    check=False,
+                    capture_output=True,
+                    timeout_seconds=SUPABASE_STOP_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                print(
+                    "Supabase CLI stop timed out after "
+                    f"{SUPABASE_STOP_TIMEOUT_SECONDS} seconds; forcing local container cleanup."
+                )
+                if force_remove_supabase_project_containers(config):
+                    print("Forced local Supabase container cleanup completed.")
+                    return
+                print("No local Supabase containers were found. Treating services as stopped.")
+                return
+
+            if result.returncode == 0:
+                return
+
+            output = "\n".join(
+                part.strip()
+                for part in ((result.stdout or ""), (result.stderr or ""))
+                if part and part.strip()
+            )
+            if "No such container" in output or "Cannot connect to the Docker daemon" in output:
+                print("Local Supabase services are already stopped.")
+                return
+
+            if "a prune operation is already running" in output and attempt < attempts:
+                print("Docker is still finishing a previous prune operation; retrying Supabase stop.")
+                time.sleep(2)
+                continue
+
+            raise DevCliError("Supabase stop failed." + (f"\n{output}" if output else ""))
         return
 
     if action == "status":
@@ -1999,113 +2522,83 @@ def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
         return
 
     if action == "db-reset":
+        ensure_docker_daemon_available()
         write_step("Resetting local Supabase database and reseeding")
-        result = run_command(
-            [*prefix, "db", "reset", "--local"],
-            cwd=supabase_root,
-            check=False,
-            capture_output=True,
-        )
-        if result.returncode != 0:
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            result = run_command(
+                [*prefix, "db", "reset", "--local"],
+                cwd=supabase_root,
+                check=False,
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                try:
+                    seed_migration_data(config, seed_password=LOCAL_SEED_DEFAULT_PASSWORD)
+                    return
+                except DevCliError as ex:
+                    if attempt < attempts and is_transient_supabase_seed_readiness_failure(ex):
+                        print("Local Supabase services were still settling after reset; restarting services and retrying.")
+                        run_supabase_stack_command(config, action="stop")
+                        run_supabase_stack_command(config, action="start")
+                        continue
+                    raise
+
             output = "\n".join(
                 part.strip()
                 for part in ((result.stdout or ""), (result.stderr or ""))
                 if part and part.strip()
             )
+            normalized_output = output.lower()
+            if (
+                "failed to remove container" in normalized_output
+                and "already in progress" in normalized_output
+                and attempt < attempts
+            ):
+                print("Docker is still finishing a previous container removal; retrying Supabase db reset.")
+                time.sleep(2)
+                run_supabase_stack_command(config, action="start")
+                continue
+
+            if (
+                "schema_migrations_pkey" in normalized_output
+                and "duplicate key value violates unique constraint" in normalized_output
+                and attempt < attempts
+            ):
+                print("Local Supabase migration state was inconsistent after reset; restarting services and retrying.")
+                run_supabase_stack_command(config, action="stop")
+                run_supabase_stack_command(config, action="start")
+                continue
+
             if "Error status 502" in output:
                 get_supabase_status_env(config)
                 print("Supabase db reset completed with a transient 502 during service restart; continuing.")
             else:
                 raise DevCliError("Supabase db reset failed." + (f"\n{output}" if output else ""))
-        seed_migration_data(config, seed_password=LOCAL_SEED_DEFAULT_PASSWORD)
-        return
+
+            try:
+                seed_migration_data(config, seed_password=LOCAL_SEED_DEFAULT_PASSWORD)
+                return
+            except DevCliError as ex:
+                if attempt < attempts and (
+                    is_transient_supabase_seed_readiness_failure(ex)
+                    or is_local_supabase_not_running_error(ex)
+                ):
+                    print("Local Supabase services were still settling after reset; restarting services and retrying.")
+                    run_supabase_stack_command(config, action="stop")
+                    run_supabase_stack_command(config, action="start")
+                    continue
+                raise
+        raise DevCliError("Supabase db reset failed after multiple recovery attempts.")
 
     raise DevCliError(f"Unsupported Supabase action: {action}")
 
 
-def run_migration_spa_command(
-    config: DevConfig,
-    *,
-    action: str,
-    install_dependencies: bool,
-) -> None:
-    """Run a migration React SPA workspace command.
-
-    Args:
-        config: CLI configuration containing migration workspace paths.
-        action: `install`, `build`, or `run`.
-        install_dependencies: Whether to install root npm dependencies first.
-
-    Returns:
-        None.
-    """
-
-    assert_command_available("npm")
-    ensure_migration_workspace_scaffolding(config)
-    if install_dependencies or action == "install":
-        install_migration_workspace_dependencies(config)
-        if action == "install":
-            return
-
-    if action == "build":
-        write_step("Building migration React SPA")
-        run_command(build_workspace_npm_command(script_name="build", workspace_name=config.migration_spa_workspace_name), cwd=config.repo_root)
-        return
-
-    if action == "run":
-        write_step(f"Starting migration React SPA at {config.migration_spa_base_url} (Ctrl+C to stop)")
-        run_command(build_workspace_npm_command(script_name="dev", workspace_name=config.migration_spa_workspace_name), cwd=config.repo_root)
-        return
-
-    raise DevCliError(f"Unsupported SPA action: {action}")
-
-
-def run_migration_workers_command(
-    config: DevConfig,
-    *,
-    action: str,
-    install_dependencies: bool,
-) -> None:
-    """Run a migration Workers API workspace command.
-
-    Args:
-        config: CLI configuration containing migration workspace paths.
-        action: `install`, `build`, or `run`.
-        install_dependencies: Whether to install root npm dependencies first.
-
-    Returns:
-        None.
-    """
-
-    assert_command_available("npm")
-    ensure_migration_workspace_scaffolding(config)
-    if install_dependencies or action == "install":
-        install_migration_workspace_dependencies(config)
-        if action == "install":
-            return
-
-    if action == "build":
-        write_step("Building migration Workers API shell")
-        run_command(build_workers_wrangler_command(action="build"), cwd=config.repo_root / config.migration_workers_root)
-        return
-
-    if action == "run":
-        runtime_env = get_local_supabase_runtime(config)
-        wait_for_local_supabase_http_ready(runtime_env=runtime_env)
-        dev_vars_path = write_workers_local_dev_vars(config, runtime_env=runtime_env)
-        print(f"Workers dev bindings file: {dev_vars_path}")
-        write_step(f"Starting migration Workers API at {config.migration_workers_base_url} (Ctrl+C to stop)")
-        run_command(build_workers_wrangler_command(action="dev"), cwd=config.repo_root / config.migration_workers_root)
-        return
-
-    raise DevCliError(f"Unsupported Workers action: {action}")
-
-
 def seed_migration_data(config: DevConfig, *, seed_password: str) -> None:
-    """Seed deterministic Supabase auth, data, and storage fixtures for Wave 2.
+    """Seed deterministic Supabase auth, data, and storage fixtures for the maintained stack.
 
     Args:
-        config: CLI configuration containing migration workspace paths.
+        config: CLI configuration containing workspace paths.
         seed_password: Password assigned to seeded local Supabase auth users.
 
     Returns:
@@ -2115,14 +2608,21 @@ def seed_migration_data(config: DevConfig, *, seed_password: str) -> None:
     assert_command_available("npm")
     ensure_migration_workspace_scaffolding(config)
     install_migration_workspace_dependencies(config)
-    runtime_env = get_local_supabase_runtime(config)
+    try:
+        runtime_env = get_local_supabase_runtime(config)
+    except DevCliError as ex:
+        if is_partial_local_supabase_runtime_error(ex) or is_local_supabase_not_running_error(ex):
+            print("Local Supabase services were not fully available for seeding; restarting the full local profile.")
+            run_supabase_stack_command(config, action="stop")
+            run_supabase_stack_command(config, action="start")
+            runtime_env = get_local_supabase_runtime(config)
+        else:
+            raise
+    wait_for_local_supabase_http_ready(runtime_env=runtime_env)
     asset_root = (
         config.repo_root
         / "frontend"
-        / "src"
-        / "Board.ThirdPartyLibrary.Frontend.Web"
-        / "wwwroot"
-        / "test-images"
+        / "public"
         / "seed-catalog"
     ).resolve()
     if not asset_root.exists():
@@ -2191,15 +2691,15 @@ def start_migration_workers_process(config: DevConfig, *, runtime_env: dict[str,
     """Start the local Workers API in the background.
 
     Args:
-        config: CLI configuration containing migration workspace paths.
+        config: CLI configuration containing workspace paths.
         runtime_env: Resolved local Supabase runtime environment values.
 
     Returns:
         Tuple of process handle and log path.
     """
 
-    clear_local_listener_port(url=config.migration_workers_base_url, description="migration Workers API")
-    ensure_local_url_port_available(url=config.migration_workers_base_url, description="migration Workers API")
+    clear_local_listener_port(url=config.migration_workers_base_url, description="Workers API")
+    ensure_local_url_port_available(url=config.migration_workers_base_url, description="Workers API")
     dev_vars_path = write_workers_local_dev_vars(config, runtime_env=runtime_env)
     print(f"Workers dev bindings file: {dev_vars_path}")
     command = build_workers_wrangler_command(action="dev")
@@ -2212,7 +2712,7 @@ def start_migration_workers_process(config: DevConfig, *, runtime_env: dict[str,
     wait_for_background_process_http_ready(
         process=process,
         url=f"{config.migration_workers_base_url.rstrip('/')}/health/ready",
-        description="migration Workers API",
+        description="Workers API",
         log_path=log_path,
         timeout_seconds=120,
     )
@@ -2226,7 +2726,7 @@ def run_workers_smoke(
     moderator_token: str,
     developer_token: str,
 ) -> None:
-    """Run the Wave 2 Workers flow smoke suite.
+    """Run the maintained Workers flow smoke suite.
 
     Args:
         config: CLI configuration containing repository paths.
@@ -2246,7 +2746,7 @@ def run_workers_smoke(
             "NODE_TLS_REJECT_UNAUTHORIZED": "0" if is_local_http_url(base_url) and is_https_url(base_url) else None,
         }
     )
-    write_step("Running Wave 2 Workers flow smoke suite")
+    write_step("Running maintained Workers flow smoke suite")
     run_command(["npm", "run", "test:workers-smoke"], cwd=config.repo_root, env=env)
 
 
@@ -2259,7 +2759,7 @@ def run_workers_flow_smoke_command(
     developer_email: str,
     seed_password: str,
 ) -> None:
-    """Run the Wave 2 end-to-end Workers smoke suite.
+    """Run the maintained end-to-end Workers smoke suite.
 
     Args:
         config: CLI configuration containing repository paths.
@@ -2284,7 +2784,7 @@ def run_workers_flow_smoke_command(
             run_supabase_stack_command(config, action="db-reset")
             runtime_env = get_local_supabase_runtime(config)
             resolved_base_url = config.migration_workers_base_url
-            write_step("Starting migration Workers API in the background for Wave 2 smoke")
+            write_step("Starting Workers API in the background for Workers smoke")
             workers_process, workers_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
             print(f"Workers API log: {workers_log_path}")
         else:
@@ -2311,7 +2811,7 @@ def run_workers_flow_smoke_command(
         )
     finally:
         if workers_process is not None:
-            write_step("Stopping background migration Workers API")
+            write_step("Stopping background Workers API")
             stop_background_process(workers_process)
 
 
@@ -2332,13 +2832,13 @@ def run_contract_smoke(
     Args:
         config: CLI configuration containing workspace paths.
         base_url: Target API base URL.
-        start_workers: Whether to start the migration Workers stack automatically.
+        start_workers: Whether to start the Workers stack automatically.
         token: Optional bearer token for authenticated smoke checks.
         moderator_token: Optional moderator bearer token for role-specific smoke checks.
         developer_token: Optional developer bearer token for role-specific smoke checks.
-        seed_user_email: Optional seeded user email used to fetch a migration auth token.
-        moderator_email: Optional seeded moderator email used to fetch a migration auth token.
-        seed_user_password: Optional seeded user password used to fetch a migration auth token.
+        seed_user_email: Optional seeded user email used to fetch an auth token.
+        moderator_email: Optional seeded moderator email used to fetch an auth token.
+        seed_user_password: Optional seeded user password used to fetch auth tokens.
 
     Returns:
         None.
@@ -2362,7 +2862,7 @@ def run_contract_smoke(
         run_supabase_stack_command(config, action="db-reset")
         runtime_env = get_local_supabase_runtime(config)
         resolved_base_url = config.migration_workers_base_url
-        write_step("Starting migration Workers API in the background for contract smoke")
+        write_step("Starting Workers API in the background for contract smoke")
         workers_process, workers_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
         print(f"Workers API log: {workers_log_path}")
     else:
@@ -2411,7 +2911,7 @@ def run_contract_smoke(
         run_command(["npm", "run", "test:contract-smoke"], cwd=config.repo_root, env=env)
     finally:
         if workers_process is not None:
-            write_step("Stopping background migration Workers API")
+            write_step("Stopping background Workers API")
             stop_background_process(workers_process)
 
 
@@ -2445,7 +2945,7 @@ def run_parity_suite(
     env = build_subprocess_env(
         extra={
             "PARITY_BASE_URL": config.frontend_base_url,
-            "PARITY_ADMIN_USERNAME": "alex.rivera",
+            "PARITY_ADMIN_EMAIL": LOCAL_SEED_MODERATOR_EMAIL,
             "PARITY_ADMIN_PASSWORD": LOCAL_SEED_DEFAULT_PASSWORD,
             "NODE_TLS_REJECT_UNAUTHORIZED": "0" if is_https_url(config.frontend_base_url) else None,
         }
@@ -2462,10 +2962,10 @@ def deploy_migration_staging(
     workers_only: bool,
     dry_run: bool,
 ) -> None:
-    """Run the staging deployment wrappers for the migration workspaces.
+    """Run the staging deployment wrappers for the maintained workspaces.
 
     Args:
-        config: CLI configuration containing migration paths.
+        config: CLI configuration containing stack paths.
         pages_only: Whether to deploy only Cloudflare Pages.
         workers_only: Whether to deploy only Cloudflare Workers.
         dry_run: Whether to perform build-only validation instead of deployment.
@@ -2482,7 +2982,7 @@ def deploy_migration_staging(
     install_migration_workspace_dependencies(config)
 
     if not workers_only:
-        write_step("Building migration SPA for Cloudflare Pages")
+        write_step("Building SPA for Cloudflare Pages")
         run_command(build_workspace_npm_command(script_name="build", workspace_name=config.migration_spa_workspace_name), cwd=config.repo_root)
         if not dry_run:
             write_step("Deploying Cloudflare Pages staging bundle")
@@ -2609,12 +3109,19 @@ def run_api_spec_lint(config: DevConfig) -> None:
     )
     if result.returncode != 0:
         combined_output = "\n".join(
-            part.strip() for part in (result.stdout or "", result.stderr or "") if part and part.strip()
+            part.strip()
+            for part in ((result.stdout or ""), (result.stderr or ""))
+            if part and part.strip()
         )
-        raise DevCliError(
-            "Redocly OpenAPI lint failed."
-            + (f"\n{combined_output}" if combined_output else "")
-        )
+        normalized_output = combined_output.lower()
+        if (
+            "your api description is valid" in normalized_output
+            and "assertion failed: !(handle->flags & uv_handle_closing)" in normalized_output
+        ):
+            print_console_text(combined_output)
+            print("OpenAPI spec lint passed. Ignoring known Redocly Windows shutdown assertion after successful validation.")
+            return
+        raise DevCliError("Redocly OpenAPI lint failed." + (f"\n{combined_output}" if combined_output else ""))
     print("OpenAPI spec lint passed.")
 
 
@@ -2684,7 +3191,7 @@ def run_api_contract_tests(
         run_supabase_stack_command(config, action="db-reset")
         runtime_env = get_local_supabase_runtime(config)
         resolved_base_url = config.migration_workers_base_url
-        write_step("Starting migration Workers API in the background for contract tests")
+        write_step("Starting Workers API in the background for contract tests")
         workers_process, workers_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
         print(f"Workers API log: {workers_log_path}")
     else:
@@ -2753,7 +3260,7 @@ def run_api_contract_tests(
         )
     finally:
         if workers_process is not None:
-            write_step("Stopping background migration Workers API")
+            write_step("Stopping background Workers API")
             stop_background_process(workers_process)
 
 
@@ -2863,14 +3370,14 @@ def run_doctor(config: DevConfig) -> None:
     optional_issues: list[str] = []
 
     write_step("Environment checks")
-    for cmd in ("git", "docker", "dotnet", "python"):
+    for cmd in ("git", "docker", "python", "node", "npm"):
         if shutil.which(cmd):
             print(f"Found: {cmd}")
         else:
             print(f"Missing command: {cmd}")
             issues.append(f"Required command missing from PATH: {cmd}")
 
-    for cmd in ("node", "npm", "postman"):
+    for cmd in ("postman",):
         if shutil.which(cmd):
             print(f"Found (API/frontend workflow): {cmd}")
         else:
@@ -2880,20 +3387,20 @@ def run_doctor(config: DevConfig) -> None:
             )
 
     if shutil.which("supabase") or shutil.which("npx"):
-        print("Found (migration workflow): supabase")
+        print("Found (stack workflow): supabase")
     else:
-        print("Missing optional migration workflow command: supabase")
+        print("Missing optional stack workflow command: supabase")
         optional_issues.append(
-            "Optional migration workflow command missing from PATH: supabase (or npx fallback)"
+            "Optional stack workflow command missing from PATH: supabase (or npx fallback)"
         )
 
     local_wrangler_path = config.repo_root / "node_modules" / ".bin" / ("wrangler.cmd" if os.name == "nt" else "wrangler")
     if shutil.which("wrangler") or local_wrangler_path.exists():
-        print("Found (migration workflow): wrangler")
+        print("Found (stack workflow): wrangler")
     else:
-        print("Missing optional migration workflow command: wrangler")
+        print("Missing optional stack workflow command: wrangler")
         optional_issues.append(
-            "Optional migration workflow command missing from PATH: wrangler (run `python ./scripts/dev.py bootstrap` to install workspace tooling)"
+            "Optional stack workflow command missing from PATH: wrangler (run `python ./scripts/dev.py bootstrap` to install workspace tooling)"
         )
 
     backend_path = config.repo_root / "backend"
@@ -2907,12 +3414,6 @@ def run_doctor(config: DevConfig) -> None:
         write_step("Submodule status")
         run_command(["git", "submodule", "status"], cwd=config.repo_root, check=False, capture_output=False)
 
-    if shutil.which("dotnet"):
-        write_step(".NET SDK version")
-        result = run_command(["dotnet", "--version"], check=False, capture_output=False)
-        if result.returncode != 0:
-            issues.append("dotnet is installed but `dotnet --version` failed")
-
     if shutil.which("docker"):
         write_step("Docker version")
         result = run_command(["docker", "--version"], check=False, capture_output=False)
@@ -2924,6 +3425,8 @@ def run_doctor(config: DevConfig) -> None:
 
     maintained_paths = [
         ("Migration root package", config.repo_root / config.migration_root_package_json),
+        ("Frontend workspace", config.repo_root / config.migration_spa_root),
+        ("Frontend package manifest", config.repo_root / config.frontend_package_json),
         ("Workers workspace", config.repo_root / config.migration_workers_root),
         ("Workers Wrangler config", config.repo_root / config.migration_workers_root / "wrangler.jsonc"),
         ("Supabase project root", config.repo_root / config.supabase_root),
@@ -2946,15 +3449,15 @@ def run_doctor(config: DevConfig) -> None:
         print()
         print("Suggested next steps:")
         print("  python ./scripts/dev.py bootstrap")
-        print("  python ./scripts/dev.py web")
-        print("  python ./scripts/dev.py frontend")
-        print("  python ./scripts/dev.py up --dependencies-only")
-        print("  python ./scripts/dev.py up --skip-restore")
+        print("  python ./scripts/dev.py database up")
+        print("  python ./scripts/dev.py auth up")
+        print("  python ./scripts/dev.py api")
+        print("  python ./scripts/dev.py web --hot-reload")
         print("  python ./scripts/dev.py all-tests")
+        print("  python ./scripts/dev.py verify --start-workers")
         print("  python ./scripts/dev.py api-test --start-workers --skip-lint")
-        print("  python ./scripts/dev.py spa install")
-        print("  python ./scripts/dev.py workers build")
-        print("  python ./scripts/dev.py supabase status")
+        print("  python ./scripts/dev.py database status")
+        print("  python ./scripts/dev.py web status")
     else:
         print("PASS (no issues detected)")
         if optional_issues:
@@ -2965,16 +3468,16 @@ def run_doctor(config: DevConfig) -> None:
         print()
         print("Suggested next steps:")
         print("  python ./scripts/dev.py bootstrap")
-        print("  python ./scripts/dev.py web")
-        print("  python ./scripts/dev.py frontend")
-        print("  python ./scripts/dev.py up --dependencies-only")
-        print("  python ./scripts/dev.py up --skip-restore")
+        print("  python ./scripts/dev.py database up")
+        print("  python ./scripts/dev.py auth up")
+        print("  python ./scripts/dev.py api")
+        print("  python ./scripts/dev.py web --hot-reload")
         print("  python ./scripts/dev.py all-tests")
+        print("  python ./scripts/dev.py verify --start-workers")
         print("  python ./scripts/dev.py api-test --start-workers --skip-lint")
         print("  python ./scripts/dev.py api-lint")
-        print("  python ./scripts/dev.py spa run")
-        print("  python ./scripts/dev.py workers run")
-        print("  python ./scripts/dev.py supabase start")
+        print("  python ./scripts/dev.py database status")
+        print("  python ./scripts/dev.py web status")
 
 
 def run_verify(
@@ -2998,14 +3501,16 @@ def run_verify(
         base_url: Base URL used for contract execution.
         contract_execution_mode: Contract execution mode (`live` or `mock`).
         report_path: JUnit report output path for Postman CLI.
-        start_workers: Whether to auto-start the Workers migration stack for contract runs.
+        start_workers: Whether to auto-start the Workers stack for contract runs.
 
     Returns:
         None.
     """
 
     restore_backend(config)
+    run_migration_typecheck(config, restore=False)
     run_tests(config, run_integration=run_integration, restore=False)
+    run_frontend_tests(config, restore=False)
     run_root_python_tests(config)
     run_api_spec_lint(config)
 
@@ -3048,7 +3553,7 @@ def run_all_tests(
         base_url: Base URL used for API contract execution.
         contract_execution_mode: Contract execution mode (`live` or `mock`).
         report_path: JUnit report output path for Postman CLI contract runs.
-        start_workers: Whether to auto-start the Workers migration stack for contract runs.
+        start_workers: Whether to auto-start the Workers stack for contract runs.
 
     Returns:
         None.
@@ -3058,6 +3563,7 @@ def run_all_tests(
         ensure_submodules(config)
 
     restore_backend(config)
+    run_migration_typecheck(config, restore=False)
     run_tests(config, run_integration=True, restore=False)
     run_root_python_tests(config)
 
@@ -3112,73 +3618,92 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    up = subparsers.add_parser(
-        "up",
+    database = subparsers.add_parser(
+        "database",
         parents=[shared],
-        help="Start/reuse local Supabase services and run the maintained backend API",
+        help="Manage the local database-only runtime profile",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    up.add_argument(
-        "--bootstrap",
-        "-Bootstrap",
-        action="store_true",
-        help="Run submodule initialization checks before startup",
+    database.add_argument(
+        "action",
+        choices=("up", "down", "status"),
+        nargs="?",
+        default="up",
+        help="Database runtime action",
     )
-    up.add_argument(
-        "--dependencies-only",
-        "-DependenciesOnly",
+    database.add_argument(
+        "--include-dependencies",
         action="store_true",
-        help="Start local dependencies only (do not run API)",
-    )
-    up.add_argument(
-        "--skip-restore",
-        "-SkipRestore",
-        action="store_true",
-        help="Skip npm workspace installation before backend startup",
+        help="Retained for command symmetry; the database profile has no lower-level local dependencies",
     )
 
-    frontend = subparsers.add_parser(
-        "frontend",
+    auth = subparsers.add_parser(
+        "auth",
         parents=[shared],
-        help="Run the maintained SPA frontend from the repository root",
+        help="Manage the local database + auth runtime profile",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    frontend.add_argument(
+    auth.add_argument(
+        "action",
+        choices=("up", "down", "status"),
+        nargs="?",
+        default="up",
+        help="Auth runtime action",
+    )
+    auth.add_argument(
+        "--include-dependencies",
+        action="store_true",
+        help="Include lower-level dependency handling/status output for the database runtime",
+    )
+
+    api = subparsers.add_parser(
+        "api",
+        parents=[shared],
+        help="Manage the local database + auth + backend runtime profile",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    api.add_argument(
+        "action",
+        choices=("up", "down", "status"),
+        nargs="?",
+        default="up",
+        help="API runtime action",
+    )
+    api.add_argument(
+        "--include-dependencies",
+        action="store_true",
+        help="Include auth and database dependency handling/status output",
+    )
+    api.add_argument(
         "--bootstrap",
         "-Bootstrap",
         action="store_true",
         help="Run submodule initialization checks before startup",
     )
-    frontend.add_argument(
-        "--skip-npm-install",
-        "-SkipNpmInstall",
+    api.add_argument(
+        "--skip-install",
+        "-SkipInstall",
         action="store_true",
-        help="Skip npm dependency installation before launch",
-    )
-    frontend.add_argument(
-        "--skip-css-build",
-        "-SkipCssBuild",
-        action="store_true",
-        help="Retained for compatibility; the maintained SPA launch does not use this flag",
-    )
-    frontend.add_argument(
-        "--skip-restore",
-        "-SkipRestore",
-        action="store_true",
-        help="Retained for compatibility; the maintained SPA launch does not use this flag",
-    )
-    frontend.add_argument(
-        "--hot-reload",
-        "-HotReload",
-        action="store_true",
-        help="Retained for compatibility; Vite dev mode already provides the maintained SPA reload workflow",
+        help="Skip npm workspace installation before backend startup",
     )
 
     web = subparsers.add_parser(
         "web",
         parents=[shared],
-        help="Run local Supabase, the maintained backend API, and the maintained SPA together",
+        help="Manage the full local database + auth + backend + frontend runtime profile",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    web.add_argument(
+        "action",
+        choices=("up", "down", "status"),
+        nargs="?",
+        default="up",
+        help="Web runtime action",
+    )
+    web.add_argument(
+        "--include-dependencies",
+        action="store_true",
+        help="Include API, auth, and database dependency handling/status output",
     )
     web.add_argument(
         "--bootstrap",
@@ -3187,34 +3712,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run submodule initialization checks before startup",
     )
     web.add_argument(
-        "--skip-backend-restore",
-        "-SkipBackendRestore",
+        "--skip-install",
+        "-SkipInstall",
         action="store_true",
-        help="Skip npm workspace installation before backend startup",
-    )
-    web.add_argument(
-        "--skip-npm-install",
-        "-SkipNpmInstall",
-        action="store_true",
-        help="Skip frontend npm dependency installation before startup",
-    )
-    web.add_argument(
-        "--skip-css-build",
-        "-SkipCssBuild",
-        action="store_true",
-        help="Retained for compatibility; the maintained SPA launch does not use this flag",
-    )
-    web.add_argument(
-        "--skip-frontend-restore",
-        "-SkipFrontendRestore",
-        action="store_true",
-        help="Retained for compatibility; the maintained SPA launch does not use this flag",
+        help="Skip npm workspace installation before startup",
     )
     web.add_argument(
         "--hot-reload",
         "-HotReload",
         action="store_true",
-        help="Retained for compatibility; Vite dev mode already provides the maintained SPA reload workflow",
+        help="Run Vite and Wrangler in their hot-reload dev modes while the stack is up",
     )
     web.add_argument(
         "--no-browser",
@@ -3222,52 +3729,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not automatically open the frontend URL in the default browser",
     )
-    web.add_argument(
-        "--backend-url",
-        "-BackendUrl",
-        default="http://127.0.0.1:8787",
-        help="Backend URL to bind and probe",
-    )
-    web.add_argument(
-        "--frontend-url",
-        "-FrontendUrl",
-        default="http://127.0.0.1:4173",
-        help="Frontend URL to bind, probe, and open",
-    )
-
-    web_status = subparsers.add_parser(
-        "web-status",
-        parents=[shared],
-        help="Show status for the locally launched root web stack",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-
-    web_stop = subparsers.add_parser(
-        "web-stop",
-        parents=[shared],
-        help="Stop the locally launched root web stack",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    web_stop.add_argument(
-        "--down-dependencies",
-        "-DownDependencies",
-        action="store_true",
-        help="Also stop local Supabase services after stopping app processes",
-    )
-
-    subparsers.add_parser(
-        "down",
-        parents=[shared],
-        help="Stop local Supabase services",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    subparsers.add_parser(
-        "status",
-        parents=[shared],
-        help="Show local Supabase service status",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-
     test = subparsers.add_parser(
         "test",
         parents=[shared],
@@ -3510,56 +3971,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Password assigned to seeded local Supabase users",
     )
 
-    spa = subparsers.add_parser(
-        "spa",
-        parents=[shared],
-        help="Run migration React SPA workspace workflows",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    spa.add_argument(
-        "action",
-        choices=("install", "build", "run"),
-        nargs="?",
-        default="run",
-        help="Migration SPA action to execute",
-    )
-    spa.add_argument(
-        "--skip-install",
-        action="store_true",
-        help="Do not install root npm workspace dependencies before build/run",
-    )
-
-    workers = subparsers.add_parser(
-        "workers",
-        parents=[shared],
-        help="Run migration Workers API workspace workflows",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    workers.add_argument(
-        "action",
-        choices=("install", "build", "run"),
-        nargs="?",
-        default="run",
-        help="Workers API action to execute",
-    )
-    workers.add_argument(
-        "--skip-install",
-        action="store_true",
-        help="Do not install root npm workspace dependencies before build/run",
-    )
-
-    supabase = subparsers.add_parser(
-        "supabase",
-        parents=[shared],
-        help="Run local Supabase CLI workflows for the migration stack",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    supabase.add_argument(
-        "action",
-        choices=("start", "stop", "status", "db-reset"),
-        help="Supabase local workflow action",
-    )
-
     contract_smoke = subparsers.add_parser(
         "contract-smoke",
         parents=[shared],
@@ -3575,7 +3986,7 @@ def build_parser() -> argparse.ArgumentParser:
     contract_smoke.add_argument(
         "--start-workers",
         action="store_true",
-        help="Start the local Supabase + Workers migration stack automatically for the smoke run",
+        help="Start the local Supabase + Workers stack automatically for the smoke run",
     )
     contract_smoke.add_argument(
         "--token",
@@ -3595,23 +4006,23 @@ def build_parser() -> argparse.ArgumentParser:
     contract_smoke.add_argument(
         "--seed-user-email",
         default=LOCAL_SEED_DEVELOPER_EMAIL,
-        help="Seeded Supabase developer email used to fetch a migration auth token automatically",
+        help="Seeded Supabase developer email used to fetch an auth token automatically",
     )
     contract_smoke.add_argument(
         "--moderator-email",
         default=LOCAL_SEED_MODERATOR_EMAIL,
-        help="Seeded Supabase moderator email used to fetch a migration auth token automatically",
+        help="Seeded Supabase moderator email used to fetch an auth token automatically",
     )
     contract_smoke.add_argument(
         "--seed-user-password",
         default=LOCAL_SEED_DEFAULT_PASSWORD,
-        help="Seeded Supabase auth password used to fetch migration auth tokens automatically",
+        help="Seeded Supabase auth password used to fetch auth tokens automatically",
     )
 
     workers_smoke = subparsers.add_parser(
         "workers-smoke",
         parents=[shared],
-        help="Run end-to-end Wave 2 Workers auth, data, and upload smoke coverage",
+        help="Run end-to-end Workers auth, data, and upload smoke coverage",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     workers_smoke.add_argument(
@@ -3657,7 +4068,7 @@ def build_parser() -> argparse.ArgumentParser:
     deploy_staging = subparsers.add_parser(
         "deploy-staging",
         parents=[shared],
-        help="Run migration staging deployment wrappers for Pages and Workers",
+        help="Run staging deployment wrappers for Pages and Workers",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     deploy_staging.add_argument(
@@ -3693,8 +4104,6 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
     return DevConfig(
         repo_root=repo_root,
         frontend_root="frontend",
-        frontend_web_project="frontend/src/Board.ThirdPartyLibrary.Frontend.Web/Board.ThirdPartyLibrary.Frontend.Web.csproj",
-        frontend_solution="frontend/Board.ThirdPartyLibrary.Frontend.slnx",
         frontend_package_json="frontend/package.json",
         backend_base_url="http://127.0.0.1:8787",
         frontend_base_url="http://127.0.0.1:4173",
@@ -3706,7 +4115,7 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
         api_mock_admin_environment="api/postman/environments/board-enthusiasts_mock-admin.postman_environment.json",
         api_mock_provision_script="api/scripts/postman-provision-mock.mjs",
         migration_root_package_json="package.json",
-        migration_spa_root="apps/spa",
+        migration_spa_root="frontend",
         migration_spa_workspace_name="@board-enthusiasts/spa",
         migration_workers_root="backend/apps/workers-api",
         migration_workers_workspace_name="@board-enthusiasts/workers-api",
@@ -3741,47 +4150,44 @@ def main(argv: Sequence[str] | None = None) -> int:
             ensure_submodules(config)
             restore_backend(config)
             print("Bootstrap complete.")
-        elif args.command == "up":
-            if args.bootstrap:
-                print("Running bootstrap checks before startup (convenience mode).")
-                ensure_submodules(config)
-            start_dependencies(config)
-            if args.dependencies_only:
-                print("Dependencies are up.")
-                print("Run the API with: python ./scripts/dev.py up --skip-restore")
-                return 0
-            run_backend_api(config, do_restore=not args.skip_restore)
-        elif args.command == "frontend":
-            run_frontend_web_ui(
-                config,
-                bootstrap=args.bootstrap,
-                do_npm_install=not args.skip_npm_install,
-                do_css_build=not args.skip_css_build,
-                do_restore=not args.skip_restore,
-                hot_reload=args.hot_reload,
-            )
+        elif args.command == "database":
+            if args.action == "up":
+                restart_runtime_profile(config, profile=SUPABASE_PROFILE_DATABASE)
+            elif args.action == "down":
+                handle_database_down(config, include_dependencies=args.include_dependencies)
+            else:
+                show_database_command_status(config, include_dependencies=args.include_dependencies)
+        elif args.command == "auth":
+            if args.action == "up":
+                restart_runtime_profile(config, profile=SUPABASE_PROFILE_AUTH)
+            elif args.action == "down":
+                handle_auth_down(config, include_dependencies=args.include_dependencies)
+            else:
+                show_auth_command_status(config, include_dependencies=args.include_dependencies)
+        elif args.command == "api":
+            if args.action == "up":
+                run_local_api_stack(
+                    config,
+                    bootstrap=args.bootstrap,
+                    install_dependencies=not args.skip_install,
+                )
+            elif args.action == "down":
+                handle_api_down(config, include_dependencies=args.include_dependencies)
+            else:
+                show_api_command_status(config, include_dependencies=args.include_dependencies)
         elif args.command == "web":
-            run_full_local_web_stack(
-                config,
-                bootstrap=args.bootstrap,
-                do_backend_restore=not args.skip_backend_restore,
-                do_frontend_npm_install=not args.skip_npm_install,
-                do_frontend_css_build=not args.skip_css_build,
-                do_frontend_restore=not args.skip_frontend_restore,
-                hot_reload=args.hot_reload,
-                open_browser_on_ready=not args.no_browser,
-                backend_url=args.backend_url,
-                frontend_url=args.frontend_url,
-            )
-        elif args.command == "web-status":
-            show_web_stack_status(config)
-        elif args.command == "web-stop":
-            stop_web_stack(config, stop_dependencies_too=args.down_dependencies)
-        elif args.command == "down":
-            stop_dependencies(config)
-            print("Dependencies stopped.")
-        elif args.command == "status":
-            show_status(config)
+            if args.action == "up":
+                run_full_local_web_stack(
+                    config,
+                    bootstrap=args.bootstrap,
+                    install_dependencies=not args.skip_install,
+                    hot_reload=args.hot_reload,
+                    open_browser_on_ready=not args.no_browser,
+                )
+            elif args.action == "down":
+                handle_web_down(config, include_dependencies=args.include_dependencies)
+            else:
+                show_web_command_status(config, include_dependencies=args.include_dependencies)
         elif args.command == "test":
             run_tests(config, run_integration=not args.skip_integration)
         elif args.command == "all-tests":
@@ -3841,24 +4247,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         elif args.command == "seed-data":
             run_supabase_stack_command(config, action="start")
-            seed_migration_data(
-                config,
-                seed_password=args.seed_password,
-            )
-        elif args.command == "spa":
-            run_migration_spa_command(
-                config,
-                action=args.action,
-                install_dependencies=not args.skip_install,
-            )
-        elif args.command == "workers":
-            run_migration_workers_command(
-                config,
-                action=args.action,
-                install_dependencies=not args.skip_install,
-            )
-        elif args.command == "supabase":
-            run_supabase_stack_command(config, action=args.action)
+            run_supabase_stack_command(config, action="db-reset")
         elif args.command == "contract-smoke":
             run_contract_smoke(
                 config,
