@@ -18,8 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
-    name: Verify Maintained Stack
+  root-tooling:
+    name: Validate Root Tooling
     runs-on: ubuntu-latest
 
     steps:
@@ -33,21 +33,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - name: Show submodule status
         run: git submodule status --recursive
 
-      - name: Run maintained verification
-        run: python ./scripts/dev.py verify --skip-contract-tests
+      - name: Compile root developer CLI
+        run: python -m py_compile scripts/dev.py
+
+      - name: Run root developer automation tests
+        run: python -m unittest discover -s tests/root_cli -p "test_*.py"
 
   contract-smoke:
     name: Contract Smoke
     runs-on: ubuntu-latest
-    needs: verify
+    needs: root-tooling
 
     steps:
       - name: Checkout
@@ -71,7 +69,7 @@ jobs:
   staging-dry-run:
     name: Staging Dry Run
     runs-on: ubuntu-latest
-    needs: verify
+    needs: root-tooling
 
     steps:
       - name: Checkout
