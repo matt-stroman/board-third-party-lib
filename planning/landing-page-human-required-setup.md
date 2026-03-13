@@ -11,6 +11,7 @@
 - [Ordered Manual Setup Steps](#ordered-manual-setup-steps)
 - [Post-Setup Validation Checklist](#post-setup-validation-checklist)
 - [Known Risks And Recovery Notes](#known-risks-and-recovery-notes)
+- [Brevo Attribute Reference](#brevo-attribute-reference)
 - [Reference Links](#reference-links)
 
 ## Purpose
@@ -288,6 +289,48 @@ Success check:
 
 - you have working SMTP credentials and verified BE sender identities
 
+### 8b. Create The Brevo Waitlist And Custom Contact Attributes
+
+Goal:
+
+- create the dedicated Brevo waitlist and contact attributes used by the BE landing-page signup sync
+
+**Waitlist**
+
+The backend syncs every new landing-page signup to a single Brevo list identified by the `BREVO_SIGNUPS_LIST_ID` environment variable.
+
+Steps:
+
+1. In Brevo, open **Contacts -> Lists**.
+2. Create a new list named `BE Waitlist`.
+3. Copy the numeric list ID shown in the Brevo UI.
+4. Store it as `BREVO_SIGNUPS_LIST_ID` in the relevant environment file or deployment secret store.
+
+**Custom contact attributes**
+
+The signup sync writes three Brevo attributes. `FIRSTNAME` is typically built in. `SOURCE`, `BE_LIFECYCLE_STATUS`, and `BE_ROLE_INTEREST` must exist before live signups begin or Brevo will ignore those values.
+
+| Attribute name | Type | Values | Notes |
+|---|---|---|---|
+| `FIRSTNAME` | Text | any string or blank | Usually built in. Verify it exists. |
+| `SOURCE` | Text | `landing_page`, `discord`, etc. | Signup channel. |
+| `BE_LIFECYCLE_STATUS` | Text | `waitlisted`, `invited`, `converted` | New signups always start as `waitlisted`. |
+| `BE_ROLE_INTEREST` | Text | `none`, `player`, `developer`, `developer,player` | Sorted comma-separated role-interest selection. |
+
+Steps to create custom attributes in Brevo:
+
+1. In Brevo, open **Contacts -> Settings -> Contact attributes**.
+2. Select **Add a new attribute**.
+3. Enter the attribute name exactly as shown above.
+4. Choose type **Text**.
+5. Save the attribute before moving to the next one.
+
+Success check:
+
+- the `BE Waitlist` list exists and its numeric ID is recorded
+- `SOURCE`, `BE_LIFECYCLE_STATUS`, and `BE_ROLE_INTEREST` appear in Brevo as Text attributes
+- `FIRSTNAME` exists as a Text attribute
+
 ### 9. Configure Gmail To Send As BE Aliases
 
 Goal:
@@ -439,6 +482,8 @@ Before handing off to implementation:
 - Turnstile keys exist
 - provider secrets are stored securely
 - repository secrets are configured
+- Brevo waitlist created and its numeric ID is stored as `BREVO_SIGNUPS_LIST_ID`
+- Brevo custom attributes `SOURCE`, `BE_LIFECYCLE_STATUS`, and `BE_ROLE_INTEREST` exist as Text type
 
 ## Known Risks And Recovery Notes
 
@@ -448,6 +493,18 @@ Before handing off to implementation:
 - Gmail alias verification depends on forwarded email already working.
 - Brevo free-plan limits are sufficient for early launch, but broadcast volume is capped. Plan for a future upgrade or provider swap if the audience grows quickly.
 - If Gmail shows `on behalf of` in some recipients, re-check SPF, DKIM, DMARC, and sender alignment.
+- If Brevo custom attributes are missing when the first signups arrive, lifecycle and role-interest values will be dropped silently.
+
+## Brevo Attribute Reference
+
+This section duplicates the required Brevo signup-sync attributes from [step 8b](#8b-create-the-brevo-waitlist-and-custom-contact-attributes) so operators and future developers can validate the setup quickly.
+
+| Attribute name | Type | Values | Notes |
+|---|---|---|---|
+| `FIRSTNAME` | Text | any string or blank | Built-in in most Brevo workspaces. |
+| `SOURCE` | Text | `landing_page`, `discord`, etc. | Signup channel. |
+| `BE_LIFECYCLE_STATUS` | Text | `waitlisted`, `invited`, `converted` | New contacts enter as `waitlisted`. |
+| `BE_ROLE_INTEREST` | Text | `none`, `player`, `developer`, `developer,player` | Sorted comma-separated roles from the landing form. |
 
 ## Reference Links
 
@@ -460,4 +517,5 @@ Before handing off to implementation:
 - Brevo pricing and plan overview: [https://help.brevo.com/hc/en-us/articles/208589409-About-Brevo-s-pricing-plans](https://help.brevo.com/hc/en-us/articles/208589409-About-Brevo-s-pricing-plans)
 - Brevo free-plan limits: [https://help.brevo.com/hc/en-us/articles/208580669-FAQs-What-are-the-limits-of-the-Free-plan](https://help.brevo.com/hc/en-us/articles/208580669-FAQs-What-are-the-limits-of-the-Free-plan)
 - Brevo SMTP setup: [https://help.brevo.com/hc/en-us/articles/7924908994450-Send-transactional-emails-using-Brevo-SMTP](https://help.brevo.com/hc/en-us/articles/7924908994450-Send-transactional-emails-using-Brevo-SMTP)
+- Brevo contact attribute management: [https://help.brevo.com/hc/en-us/articles/209499585-Manage-contact-attributes](https://help.brevo.com/hc/en-us/articles/209499585-Manage-contact-attributes)
 - Gmail send mail as another address: [https://support.google.com/mail/answer/22370?hl=en](https://support.google.com/mail/answer/22370?hl=en)

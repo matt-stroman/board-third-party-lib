@@ -18,6 +18,14 @@ export type PlatformRole =
   | "super_admin";
 
 export type MarketingContactStatus = "subscribed" | "unsubscribed" | "bounced" | "suppressed" | "converted";
+/**
+ * Lifecycle stage of a landing-page marketing contact.
+ */
+export type MarketingContactLifecycleStatus = "waitlisted" | "invited" | "converted";
+/**
+ * Signup intent selected by a landing-page contact.
+ */
+export type MarketingContactRoleInterest = "player" | "developer";
 
 export type StudioMembershipRole = "owner" | "admin" | "editor";
 export type TitleContentKind = "game" | "app";
@@ -76,6 +84,10 @@ export interface MarketingSignupRequest {
   source: string;
   consentTextVersion: string;
   turnstileToken?: string | null;
+  /**
+   * Optional role-interest selections captured from the landing-page waitlist form.
+   */
+  roleInterests?: MarketingContactRoleInterest[] | null;
   utmSource?: string | null;
   utmMedium?: string | null;
   utmCampaign?: string | null;
@@ -87,6 +99,14 @@ export interface MarketingSignup {
   email: string;
   firstName: string | null;
   status: MarketingContactStatus;
+  /**
+   * Lifecycle state tracked for the waitlist contact.
+   */
+  lifecycleStatus: MarketingContactLifecycleStatus;
+  /**
+   * Normalized role-interest selections stored for the waitlist contact.
+   */
+  roleInterests: MarketingContactRoleInterest[];
   source: string;
   consentedAt: string;
   updatedAt: string;
