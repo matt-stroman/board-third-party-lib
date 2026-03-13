@@ -180,7 +180,7 @@ Recommended hosted environment variables and secrets:
 
 - `VITE_API_BASE_URL`
 - `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
 - `VITE_TURNSTILE_SITE_KEY`
 - `VITE_LANDING_MODE`
 
@@ -188,7 +188,7 @@ Recommended hosted environment variables and secrets:
 
 - `APP_ENV`
 - `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
+- `SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_MEDIA_BUCKET`
 - `BREVO_API_KEY` or equivalent secret form
 - `TURNSTILE_SECRET_KEY`
@@ -196,7 +196,7 @@ Recommended hosted environment variables and secrets:
 
 ### Workers Secret Material
 
-- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_SECRET_KEY`
 - `BREVO_API_KEY`
 - `TURNSTILE_SECRET_KEY`
 - SMTP credentials only if a server-side mail path is added

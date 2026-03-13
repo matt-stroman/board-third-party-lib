@@ -46,6 +46,23 @@ python ./scripts/dev.py <command> [options]
 
 ## Common Workflows
 
+### Inspect or bootstrap the root-managed environment files
+
+```bash
+python ./scripts/dev.py env local --copy-example
+python ./scripts/dev.py env local --open
+python ./scripts/dev.py env staging --copy-example
+python ./scripts/dev.py env staging --open
+```
+
+The maintained root CLI owns the shared environment-file layout under [`config/`](../config):
+
+- [`config/.env.local.example`](../config/.env.local.example) -> copy to `config/.env.local` for local CLI/runtime overrides
+- [`config/.env.staging.example`](../config/.env.staging.example) -> copy to `config/.env.staging` for staging deployment inputs
+- [`config/.env.example`](../config/.env.example) -> copy to `config/.env` for future production deployment inputs
+
+The live `.env` files are intentionally ignored and must not be committed.
+
 ### First-time setup + run
 
 ```bash
@@ -249,6 +266,19 @@ python ./scripts/dev.py deploy-staging --pages-only
 python ./scripts/dev.py deploy-staging --workers-only
 ```
 
+`deploy-staging` automatically loads `config/.env.staging` when that file exists. The staging file is the canonical operator-owned input source for staging deploy values such as:
+
+- `BOARD_ENTHUSIASTS_WORKERS_BASE_URL`
+- `SUPABASE_URL`
+- `SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SECRET_KEY`
+- `VITE_TURNSTILE_SITE_KEY`
+- `TURNSTILE_SECRET_KEY`
+- `BREVO_API_KEY`
+- `BREVO_SIGNUPS_LIST_ID`
+
+When `deploy-staging` runs a real Workers deployment, it also syncs the Cloudflare Worker secrets from that same root staging file before deploying the Worker bundle.
+
 ### Check local tool and environment status
 
 ```bash
@@ -372,6 +402,7 @@ Workflow-specific overrides remain available where they still map to the maintai
 - `parity-test`
 - `capture-parity-baseline`
 - `deploy-staging --dry-run`
+- `env <local|staging|production> [--copy-example] [--open]`
 
 For live API contract execution, the default environment template is:
 
@@ -387,5 +418,6 @@ The root CLI can populate the maintained authenticated contract checks automatic
 - The supported developer entry point for this repository is `python ./scripts/dev.py ...`; API-local helper scripts under `api/scripts/` are implementation details for CI and the root CLI.
 - Tool executables are resolved from each developer's `PATH`; the CLI does not assume fixed install directories for `node`, `npx`, `postman`, `supabase`, `wrangler`, `docker`, or other required tools.
 - Migration workspace dependency installs are cached by lockfile fingerprint so routine commands do not reinstall the entire npm workspace unnecessarily.
+- The root-managed `.env` files are operator/developer inputs for the root CLI. Hosted runtime secrets still live in provider secret/config stores such as Cloudflare Workers secrets and hosted Supabase provider settings.
 
 

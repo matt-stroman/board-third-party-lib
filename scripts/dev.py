@@ -69,8 +69,12 @@ class DevConfig:
         migration_workers_workspace_name: npm workspace name for the Workers API shell.
         migration_contract_root: Relative path to the shared TypeScript contract package.
         supabase_root: Relative path to the Supabase project folder.
-        migration_local_env_template: Relative path to the local env example.
-        migration_staging_env_template: Relative path to the staging env example.
+        local_env_example: Relative path to the local env example.
+        staging_env_example: Relative path to the staging env example.
+        production_env_example: Relative path to the production env example.
+        local_env_file: Relative path to the local env file.
+        staging_env_file: Relative path to the staging env file.
+        production_env_file: Relative path to the production env file.
         cloudflare_pages_template: Relative path to the Cloudflare Pages config template.
         cloudflare_workers_template: Relative path to the Cloudflare Workers config template.
         migration_spa_base_url: Default local React SPA URL.
@@ -96,8 +100,12 @@ class DevConfig:
     migration_workers_workspace_name: str
     migration_contract_root: str
     supabase_root: str
-    migration_local_env_template: str
-    migration_staging_env_template: str
+    local_env_example: str
+    staging_env_example: str
+    production_env_example: str
+    local_env_file: str
+    staging_env_file: str
+    production_env_file: str
     cloudflare_pages_template: str
     cloudflare_workers_template: str
     migration_spa_base_url: str
@@ -162,6 +170,7 @@ LOCAL_SUPABASE_DB_PORT = 55432
 LOCAL_SUPABASE_URL = "http://127.0.0.1:55421"
 LOCAL_SUPABASE_AUTH_URL = "http://127.0.0.1:55421/auth/v1/health"
 SUPABASE_STOP_TIMEOUT_SECONDS = 30
+SUPPORTED_ENVIRONMENT_TARGETS = ("local", "staging", "production")
 
 
 def get_stack_state_path(config: DevConfig, *, stack_name: str) -> Path:
@@ -224,6 +233,95 @@ def quote_cmd(parts: Sequence[str]) -> str:
     return " ".join(shlex.quote(p) for p in parts)
 
 
+def get_environment_file_path(config: DevConfig, *, target: str) -> Path:
+    """Resolve the root-managed environment file path for a named environment."""
+
+    if target == "local":
+        return config.repo_root / config.local_env_file
+    if target == "staging":
+        return config.repo_root / config.staging_env_file
+    if target == "production":
+        return config.repo_root / config.production_env_file
+    raise DevCliError(f"Unsupported environment target: {target}")
+
+
+def get_environment_example_path(config: DevConfig, *, target: str) -> Path:
+    """Resolve the checked-in example environment file path for a named environment."""
+
+    if target == "local":
+        return config.repo_root / config.local_env_example
+    if target == "staging":
+        return config.repo_root / config.staging_env_example
+    if target == "production":
+        return config.repo_root / config.production_env_example
+    raise DevCliError(f"Unsupported environment target: {target}")
+
+
+def apply_environment_file(path: Path, *, preserve_existing: bool = True) -> dict[str, str]:
+    """Load a root-managed ``.env`` file into the current process environment."""
+
+    if not path.exists():
+        return {}
+
+    parsed = parse_env_assignments(path.read_text(encoding="utf-8"))
+    original_keys = set(os.environ)
+    for key, value in parsed.items():
+        if preserve_existing and key in original_keys:
+            continue
+        os.environ[key] = value
+    return parsed
+
+
+def auto_load_command_environment(config: DevConfig, *, command_name: str) -> Path | None:
+    """Load the root-managed environment file relevant to the current CLI command."""
+
+    if command_name == "deploy-staging":
+        env_path = get_environment_file_path(config, target="staging")
+        apply_environment_file(env_path)
+        return env_path if env_path.exists() else None
+
+    if command_name == "env":
+        return None
+
+    env_path = get_environment_file_path(config, target="local")
+    apply_environment_file(env_path)
+    return env_path if env_path.exists() else None
+
+
+def require_environment_values(*names: str, context: str) -> dict[str, str]:
+    """Resolve required environment variables or raise a user-friendly error."""
+
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if not value:
+            missing.append(name)
+            continue
+        resolved[name] = value
+
+    if missing:
+        raise DevCliError(
+            f"{context} requires the following environment values:\n- " + "\n- ".join(missing)
+        )
+
+    return resolved
+
+
+def open_environment_file(path: Path) -> None:
+    """Open an environment file in the platform default application."""
+
+    if os.name == "nt":
+        os.startfile(path)  # type: ignore[attr-defined]
+        return
+
+    if sys.platform == "darwin":
+        run_command(["open", str(path)], check=False)
+        return
+
+    run_command(["xdg-open", str(path)], check=False)
+
+
 def run_command(
     cmd: Sequence[str],
     *,
@@ -236,6 +334,7 @@ def run_command(
     stderr=None,
     env: dict[str, str] | None = None,
     timeout_seconds: float | None = None,
+    input_data: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a subprocess command with consistent error handling.
 
@@ -250,6 +349,7 @@ def run_command(
         stderr: Optional stderr destination override.
         env: Optional environment variables for the subprocess.
         timeout_seconds: Optional timeout applied to the subprocess execution.
+        input_data: Optional text-mode stdin payload passed directly to the subprocess.
 
     Returns:
         The completed subprocess result.
@@ -278,6 +378,7 @@ def run_command(
         stderr=stderr,
         env=env,
         timeout=timeout_seconds,
+        input=input_data,
     )
     if check and result.returncode != 0:
         raise DevCliError(f"Command failed ({result.returncode}): {quote_cmd(resolved_cmd)}")
@@ -1675,7 +1776,7 @@ def build_migration_frontend_environment(
         extra={
             "VITE_API_BASE_URL": config.migration_workers_base_url,
             "VITE_SUPABASE_URL": runtime_env["SUPABASE_URL"],
-            "VITE_SUPABASE_ANON_KEY": runtime_env["SUPABASE_ANON_KEY"],
+            "VITE_SUPABASE_PUBLISHABLE_KEY": runtime_env["SUPABASE_PUBLISHABLE_KEY"],
             "VITE_TURNSTILE_SITE_KEY": os.environ.get("VITE_TURNSTILE_SITE_KEY", ""),
             "VITE_LANDING_MODE": "true" if landing_mode else os.environ.get("VITE_LANDING_MODE", ""),
         }
@@ -1745,8 +1846,9 @@ def ensure_migration_workspace_scaffolding(config: DevConfig) -> None:
         ("Workers workspace", config.repo_root / config.migration_workers_root),
         ("shared contract package", config.repo_root / config.migration_contract_root),
         ("Supabase project root", config.repo_root / config.supabase_root),
-        ("local env template", config.repo_root / config.migration_local_env_template),
-        ("staging env template", config.repo_root / config.migration_staging_env_template),
+        ("local env example", config.repo_root / config.local_env_example),
+        ("staging env example", config.repo_root / config.staging_env_example),
+        ("production env example", config.repo_root / config.production_env_example),
         ("Cloudflare Pages template", config.repo_root / config.cloudflare_pages_template),
         ("Cloudflare Workers template", config.repo_root / config.cloudflare_workers_template),
     ]
@@ -2010,14 +2112,14 @@ def get_local_supabase_runtime(config: DevConfig) -> dict[str, str]:
         config: CLI configuration containing the Supabase project path.
 
     Returns:
-        Mapping containing the API URL plus anon and service keys.
+        Mapping containing the API URL plus publishable and secret keys.
     """
 
     status_env = get_supabase_status_env(config)
     return {
         "SUPABASE_URL": status_env["API_URL"],
-        "SUPABASE_ANON_KEY": status_env["ANON_KEY"],
-        "SUPABASE_SERVICE_ROLE_KEY": status_env["SERVICE_ROLE_KEY"],
+        "SUPABASE_PUBLISHABLE_KEY": status_env.get("PUBLISHABLE_KEY", status_env["ANON_KEY"]),
+        "SUPABASE_SECRET_KEY": status_env["SERVICE_ROLE_KEY"],
         "SUPABASE_MEDIA_BUCKET": "catalog-media",
     }
 
@@ -2026,7 +2128,7 @@ def build_supabase_bearer_headers(*, api_key: str) -> dict[str, str]:
     """Build the standard Supabase API headers for a bearer-authenticated request.
 
     Args:
-        api_key: Supabase anon or service-role API key.
+        api_key: Supabase publishable or secret API key.
 
     Returns:
         Header mapping suitable for admin/storage/rest API probes.
@@ -2107,7 +2209,7 @@ def wait_for_local_supabase_http_ready(
         DevCliError: If the local Supabase HTTP surface does not become ready.
     """
 
-    service_headers = build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SERVICE_ROLE_KEY"])
+    service_headers = build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SECRET_KEY"])
     base_url = runtime_env["SUPABASE_URL"].rstrip("/")
     checks = (
         (
@@ -2193,7 +2295,7 @@ def has_local_demo_seed_data(*, runtime_env: dict[str, str]) -> bool:
     base_url = runtime_env["SUPABASE_URL"].rstrip("/")
     request = urllib.request.Request(
         f"{base_url}/rest/v1/titles?select=id&limit=1",
-        headers=build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SERVICE_ROLE_KEY"]),
+        headers=build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SECRET_KEY"]),
         method="GET",
     )
     try:
@@ -2228,7 +2330,7 @@ def has_local_required_schema(runtime_env: dict[str, str]) -> bool:
         "marketing_contacts",
     )
     base_url = runtime_env["SUPABASE_URL"].rstrip("/")
-    headers = build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SERVICE_ROLE_KEY"])
+    headers = build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SECRET_KEY"])
 
     for table_name in required_tables:
         request = urllib.request.Request(
@@ -2292,8 +2394,8 @@ def write_workers_local_dev_vars(config: DevConfig, *, runtime_env: dict[str, st
     lines = [
         "APP_ENV=local",
         f"SUPABASE_URL={runtime_env['SUPABASE_URL']}",
-        f"SUPABASE_ANON_KEY={runtime_env['SUPABASE_ANON_KEY']}",
-        f"SUPABASE_SERVICE_ROLE_KEY={runtime_env['SUPABASE_SERVICE_ROLE_KEY']}",
+        f"SUPABASE_PUBLISHABLE_KEY={runtime_env['SUPABASE_PUBLISHABLE_KEY']}",
+        f"SUPABASE_SECRET_KEY={runtime_env['SUPABASE_SECRET_KEY']}",
         f"SUPABASE_MEDIA_BUCKET={runtime_env['SUPABASE_MEDIA_BUCKET']}",
         "SUPPORT_REPORT_RECIPIENT=support@boardenthusiasts.com",
         "SUPPORT_REPORT_SENDER_EMAIL=noreply@boardenthusiasts.com",
@@ -2653,8 +2755,8 @@ def seed_migration_data(config: DevConfig, *, seed_password: str) -> None:
             "--",
             "--supabase-url",
             runtime_env["SUPABASE_URL"],
-            "--service-role-key",
-            runtime_env["SUPABASE_SERVICE_ROLE_KEY"],
+            "--secret-key",
+            runtime_env["SUPABASE_SECRET_KEY"],
             "--password",
             seed_password,
             "--asset-root",
@@ -2666,12 +2768,12 @@ def seed_migration_data(config: DevConfig, *, seed_password: str) -> None:
     )
 
 
-def fetch_supabase_access_token(*, supabase_url: str, anon_key: str, email: str, password: str) -> str:
+def fetch_supabase_access_token(*, supabase_url: str, publishable_key: str, email: str, password: str) -> str:
     """Exchange email/password credentials for a Supabase access token.
 
     Args:
         supabase_url: Supabase API base URL.
-        anon_key: Supabase anon key.
+        publishable_key: Supabase publishable key.
         email: Seeded user email.
         password: Seeded user password.
 
@@ -2683,7 +2785,7 @@ def fetch_supabase_access_token(*, supabase_url: str, anon_key: str, email: str,
         f"{supabase_url.rstrip('/')}/auth/v1/token?grant_type=password",
         data=json.dumps({"email": email, "password": password}).encode("utf-8"),
         headers={
-            "apikey": anon_key,
+            "apikey": publishable_key,
             "content-type": "application/json",
         },
         method="POST",
@@ -2809,13 +2911,13 @@ def run_workers_flow_smoke_command(
 
         moderator_token = fetch_supabase_access_token(
             supabase_url=runtime_env["SUPABASE_URL"],
-            anon_key=runtime_env["SUPABASE_ANON_KEY"],
+            publishable_key=runtime_env["SUPABASE_PUBLISHABLE_KEY"],
             email=moderator_email,
             password=seed_password,
         )
         developer_token = fetch_supabase_access_token(
             supabase_url=runtime_env["SUPABASE_URL"],
-            anon_key=runtime_env["SUPABASE_ANON_KEY"],
+            publishable_key=runtime_env["SUPABASE_PUBLISHABLE_KEY"],
             email=developer_email,
             password=seed_password,
         )
@@ -2895,7 +2997,7 @@ def run_contract_smoke(
         if developer_email and not resolved_developer_token:
             resolved_developer_token = fetch_supabase_access_token(
                 supabase_url=runtime_env["SUPABASE_URL"],
-                anon_key=runtime_env["SUPABASE_ANON_KEY"],
+                publishable_key=runtime_env["SUPABASE_PUBLISHABLE_KEY"],
                 email=developer_email,
                 password=seed_password,
             )
@@ -2903,7 +3005,7 @@ def run_contract_smoke(
         if resolved_moderator_email and not resolved_moderator_token:
             resolved_moderator_token = fetch_supabase_access_token(
                 supabase_url=runtime_env["SUPABASE_URL"],
-                anon_key=runtime_env["SUPABASE_ANON_KEY"],
+                publishable_key=runtime_env["SUPABASE_PUBLISHABLE_KEY"],
                 email=resolved_moderator_email,
                 password=seed_password,
             )
@@ -2997,9 +3099,35 @@ def deploy_migration_staging(
     ensure_migration_workspace_scaffolding(config)
     install_migration_workspace_dependencies(config)
 
+    require_environment_values(
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN",
+        context="Cloudflare staging deployment",
+    )
+
     if not workers_only:
+        staging_frontend_env = require_environment_values(
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL",
+            "SUPABASE_URL",
+            "SUPABASE_PUBLISHABLE_KEY",
+            "VITE_TURNSTILE_SITE_KEY",
+            "VITE_LANDING_MODE",
+            context="Cloudflare Pages staging deployment",
+        )
         write_step("Building SPA for Cloudflare Pages")
-        run_command(build_workspace_npm_command(script_name="build", workspace_name=config.migration_spa_workspace_name), cwd=config.repo_root)
+        run_command(
+            build_workspace_npm_command(script_name="build", workspace_name=config.migration_spa_workspace_name),
+            cwd=config.repo_root,
+            env=build_subprocess_env(
+                extra={
+                    "VITE_API_BASE_URL": staging_frontend_env["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"],
+                    "VITE_SUPABASE_URL": staging_frontend_env["SUPABASE_URL"],
+                    "VITE_SUPABASE_PUBLISHABLE_KEY": staging_frontend_env["SUPABASE_PUBLISHABLE_KEY"],
+                    "VITE_TURNSTILE_SITE_KEY": staging_frontend_env["VITE_TURNSTILE_SITE_KEY"],
+                    "VITE_LANDING_MODE": staging_frontend_env["VITE_LANDING_MODE"],
+                }
+            ),
+        )
         if not dry_run:
             write_step("Deploying Cloudflare Pages staging bundle")
             run_command(
@@ -3018,6 +3146,29 @@ def deploy_migration_staging(
             )
 
     if not pages_only:
+        worker_env_values = require_environment_values(
+            "SUPABASE_URL",
+            "SUPABASE_PUBLISHABLE_KEY",
+            "SUPABASE_SECRET_KEY",
+            "SUPABASE_MEDIA_BUCKET",
+            "ALLOWED_WEB_ORIGINS",
+            "BREVO_API_KEY",
+            "BREVO_SIGNUPS_LIST_ID",
+            "TURNSTILE_SECRET_KEY",
+            "SUPPORT_REPORT_RECIPIENT",
+            "SUPPORT_REPORT_SENDER_EMAIL",
+            "SUPPORT_REPORT_SENDER_NAME",
+            context="Cloudflare Workers staging deployment",
+        )
+        if not dry_run:
+            for secret_name in ("SUPABASE_SECRET_KEY", "TURNSTILE_SECRET_KEY", "BREVO_API_KEY"):
+                write_step(f"Syncing Cloudflare Worker secret {secret_name}")
+                run_command(
+                    ["npx", "wrangler", "secret", "put", secret_name, "--config", str(config.repo_root / config.cloudflare_workers_template)],
+                    cwd=config.repo_root,
+                    input_data=worker_env_values[secret_name],
+                )
+
         write_step("Deploying Cloudflare Workers staging bundle")
         worker_command = [
             "npx",
@@ -3028,6 +3179,38 @@ def deploy_migration_staging(
             str(config.repo_root / config.cloudflare_workers_template),
         ]
         run_command(worker_command, cwd=config.repo_root)
+
+
+def run_environment_file_command(
+    config: DevConfig,
+    *,
+    target: str,
+    copy_example: bool,
+    open_file: bool,
+) -> None:
+    """Inspect or bootstrap a root-managed environment file."""
+
+    env_path = get_environment_file_path(config, target=target)
+    example_path = get_environment_example_path(config, target=target)
+
+    if copy_example and not env_path.exists():
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(example_path, env_path)
+        print(f"Created environment file from example: {env_path}")
+    elif copy_example and env_path.exists():
+        print(f"Environment file already exists: {env_path}")
+
+    print(f"Environment file: {env_path}")
+    print(f"Example template: {example_path}")
+    print(f"Exists: {'yes' if env_path.exists() else 'no'}")
+
+    if open_file:
+        if not env_path.exists():
+            raise DevCliError(
+                f"Environment file does not exist yet: {env_path}\n"
+                f"Create it from the example first or rerun with 'python ./scripts/dev.py env {target} --copy-example'."
+            )
+        open_environment_file(env_path)
 
 
 def get_api_root(config: DevConfig) -> Path:
@@ -3227,7 +3410,7 @@ def run_api_contract_tests(
         if resolved_developer_email and not resolved_developer_token:
             resolved_developer_token = fetch_supabase_access_token(
                 supabase_url=runtime_env["SUPABASE_URL"],
-                anon_key=runtime_env["SUPABASE_ANON_KEY"],
+                publishable_key=runtime_env["SUPABASE_PUBLISHABLE_KEY"],
                 email=resolved_developer_email,
                 password=resolved_seed_password,
             )
@@ -3235,7 +3418,7 @@ def run_api_contract_tests(
         if resolved_moderator_email and not resolved_moderator_token:
             resolved_moderator_token = fetch_supabase_access_token(
                 supabase_url=runtime_env["SUPABASE_URL"],
-                anon_key=runtime_env["SUPABASE_ANON_KEY"],
+                publishable_key=runtime_env["SUPABASE_PUBLISHABLE_KEY"],
                 email=resolved_moderator_email,
                 password=resolved_seed_password,
             )
@@ -3850,6 +4033,28 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
+    env_command = subparsers.add_parser(
+        "env",
+        parents=[shared],
+        help="Inspect or bootstrap the root-managed environment files",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    env_command.add_argument(
+        "target",
+        choices=SUPPORTED_ENVIRONMENT_TARGETS,
+        help="Environment file target to inspect",
+    )
+    env_command.add_argument(
+        "--copy-example",
+        action="store_true",
+        help="Create the target environment file from its checked-in example when it does not exist",
+    )
+    env_command.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the target environment file in the platform default application",
+    )
+
     api_login = subparsers.add_parser(
         "api-login",
         parents=[shared],
@@ -4142,8 +4347,12 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
         migration_workers_workspace_name="@board-enthusiasts/workers-api",
         migration_contract_root="packages/migration-contract",
         supabase_root="backend/supabase",
-        migration_local_env_template="config/migration.local.env.example",
-        migration_staging_env_template="config/migration.staging.env.example",
+        local_env_example="config/.env.local.example",
+        staging_env_example="config/.env.staging.example",
+        production_env_example="config/.env.example",
+        local_env_file="config/.env.local",
+        staging_env_file="config/.env.staging",
+        production_env_file="config/.env",
         cloudflare_pages_template="cloudflare/pages/wrangler.template.jsonc",
         cloudflare_workers_template="backend/cloudflare/workers/wrangler.template.jsonc",
         migration_spa_base_url="http://127.0.0.1:4173",
@@ -4165,6 +4374,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     repo_root = get_repo_root(Path(__file__))
     config = config_from_args(args, repo_root)
+    auto_load_command_environment(config, command_name=args.command)
 
     try:
         if args.command == "bootstrap":
@@ -4235,6 +4445,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         elif args.command == "doctor":
             run_doctor(config)
+        elif args.command == "env":
+            run_environment_file_command(
+                config,
+                target=args.target,
+                copy_example=args.copy_example,
+                open_file=args.open,
+            )
         elif args.command == "api-login":
             login_postman_cli(config, postman_api_key=args.postman_api_key)
         elif args.command == "api-lint":
