@@ -63,6 +63,42 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Configure isolated local validation ports
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import os
+
+          run_id = int(os.environ.get("GITHUB_RUN_ID", "0"))
+          base_port = 56000 + (run_id % 200) * 20
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_API_PORT={base_port}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_DB_PORT={base_port + 1}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_SHADOW_PORT={base_port + 2}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_STUDIO_PORT={base_port + 3}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_MAILPIT_PORT={base_port + 4}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_WORKERS_PORT={base_port + 5}")
+          PY
+
+      - name: Apply isolated Supabase config
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          config_path = Path("backend/supabase/config.toml")
+          text = config_path.read_text(encoding="utf-8")
+          replacements = [
+              ("port = 55421", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_API_PORT']}"),
+              ("port = 55432", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_DB_PORT']}"),
+              ("shadow_port = 55420", f"shadow_port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_SHADOW_PORT']}"),
+              ("port = 55423", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_STUDIO_PORT']}"),
+              ("port = 55424", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_MAILPIT_PORT']}"),
+          ]
+          updated = text
+          for original, replacement in replacements:
+              updated = updated.replace(original, replacement, 1)
+          config_path.write_text(updated, encoding="utf-8")
+          PY
+
       - name: Run contract smoke tests
         run: python ./scripts/dev.py contract-smoke --start-workers
 

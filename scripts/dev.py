@@ -39,7 +39,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -169,8 +169,20 @@ LOCAL_SUPABASE_DB_HOST = "127.0.0.1"
 LOCAL_SUPABASE_DB_PORT = 55432
 LOCAL_SUPABASE_URL = "http://127.0.0.1:55421"
 LOCAL_SUPABASE_AUTH_URL = "http://127.0.0.1:55421/auth/v1/health"
+LOCAL_SUPABASE_STUDIO_PORT = 55423
+LOCAL_MAILPIT_PORT = 55424
+LOCAL_WORKERS_PORT = 8787
+LOCAL_FRONTEND_PORT = 4173
 SUPABASE_STOP_TIMEOUT_SECONDS = 30
 SUPPORTED_ENVIRONMENT_TARGETS = ("local", "staging", "production")
+
+LOCAL_SUPABASE_API_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_SUPABASE_API_PORT"
+LOCAL_SUPABASE_DB_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_SUPABASE_DB_PORT"
+LOCAL_SUPABASE_SHADOW_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_SUPABASE_SHADOW_PORT"
+LOCAL_SUPABASE_STUDIO_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_SUPABASE_STUDIO_PORT"
+LOCAL_MAILPIT_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_MAILPIT_PORT"
+LOCAL_WORKERS_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_WORKERS_PORT"
+LOCAL_FRONTEND_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_FRONTEND_PORT"
 
 
 def get_stack_state_path(config: DevConfig, *, stack_name: str) -> Path:
@@ -185,6 +197,82 @@ def get_stack_state_path(config: DevConfig, *, stack_name: str) -> Path:
     """
 
     return config.repo_root / ".dev-cli-logs" / f"{stack_name}-state.json"
+
+
+def get_int_environment_override(name: str, *, default: int) -> int:
+    """Return an integer environment override or the provided default."""
+
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+
+    try:
+        value = int(raw)
+    except ValueError as ex:
+        raise DevCliError(f"Environment override {name} must be an integer port value.") from ex
+    if value <= 0:
+        raise DevCliError(f"Environment override {name} must be greater than zero.")
+    return value
+
+
+def get_local_supabase_api_port() -> int:
+    """Return the effective local Supabase API port."""
+
+    return get_int_environment_override(LOCAL_SUPABASE_API_PORT_ENV, default=55421)
+
+
+def get_local_supabase_db_port() -> int:
+    """Return the effective local Supabase database port."""
+
+    return get_int_environment_override(LOCAL_SUPABASE_DB_PORT_ENV, default=LOCAL_SUPABASE_DB_PORT)
+
+
+def get_local_supabase_auth_url() -> str:
+    """Return the effective local Supabase auth health URL."""
+
+    return f"{get_local_supabase_url().rstrip('/')}/auth/v1/health"
+
+
+def get_local_supabase_url() -> str:
+    """Return the effective local Supabase API base URL."""
+
+    return f"http://127.0.0.1:{get_local_supabase_api_port()}"
+
+
+def get_local_mailpit_port() -> int:
+    """Return the effective local Mailpit port."""
+
+    return get_int_environment_override(LOCAL_MAILPIT_PORT_ENV, default=LOCAL_MAILPIT_PORT)
+
+
+def get_local_mailpit_url() -> str:
+    """Return the effective local Mailpit base URL."""
+
+    return f"http://127.0.0.1:{get_local_mailpit_port()}"
+
+
+def get_local_workers_port() -> int:
+    """Return the effective local Workers API port."""
+
+    return get_int_environment_override(LOCAL_WORKERS_PORT_ENV, default=LOCAL_WORKERS_PORT)
+
+
+def get_local_frontend_port() -> int:
+    """Return the effective local SPA port."""
+
+    return get_int_environment_override(LOCAL_FRONTEND_PORT_ENV, default=LOCAL_FRONTEND_PORT)
+
+
+def get_local_workers_base_url() -> str:
+    """Return the effective local Workers API base URL."""
+
+    return f"http://127.0.0.1:{get_local_workers_port()}"
+
+
+def get_local_frontend_base_url() -> str:
+    """Return the effective local frontend base URL."""
+
+    return f"http://127.0.0.1:{get_local_frontend_port()}"
 
 
 def get_runtime_profile_state_path(config: DevConfig) -> Path:
@@ -1320,7 +1408,7 @@ def print_backend_service_status(config: DevConfig) -> None:
 def print_auth_service_status() -> None:
     """Print status for the local auth service only."""
 
-    reachable, detail = probe_http_url(LOCAL_SUPABASE_AUTH_URL)
+    reachable, detail = probe_http_url(get_local_supabase_auth_url())
     detail_suffix = f" ({detail})" if detail else ""
     print(f"auth: {'running' if reachable else 'not running'}{detail_suffix}")
 
@@ -1328,11 +1416,12 @@ def print_auth_service_status() -> None:
 def print_database_service_status() -> None:
     """Print status for the local PostgreSQL service only."""
 
-    running = can_connect_to_tcp_port(host=LOCAL_SUPABASE_DB_HOST, port=LOCAL_SUPABASE_DB_PORT)
+    resolved_db_port = get_local_supabase_db_port()
+    running = can_connect_to_tcp_port(host=LOCAL_SUPABASE_DB_HOST, port=resolved_db_port)
     print(f"database: {'running' if running else 'not running'}")
     if running:
         print(f"  host: {LOCAL_SUPABASE_DB_HOST}")
-        print(f"  port: {LOCAL_SUPABASE_DB_PORT}")
+        print(f"  port: {resolved_db_port}")
 
 
 def stop_frontend_service(config: DevConfig) -> bool:
@@ -1812,7 +1901,17 @@ def build_workers_wrangler_command(*, action: str) -> list[str]:
 
     base_command = ["npm", "exec", "--", "wrangler"]
     if action == "dev":
-        return [*base_command, "dev", "--config", "wrangler.jsonc", "src/worker.ts", "--ip", "127.0.0.1", "--port", "8787"]
+        return [
+            *base_command,
+            "dev",
+            "--config",
+            "wrangler.jsonc",
+            "src/worker.ts",
+            "--ip",
+            "127.0.0.1",
+            "--port",
+            str(get_local_workers_port()),
+        ]
     if action == "build":
         return [*base_command, "deploy", "--config", "wrangler.jsonc", "src/worker.ts", "--dry-run"]
     if action == "deploy":
@@ -2091,7 +2190,7 @@ def get_supabase_status_env(config: DevConfig) -> dict[str, str]:
     parsed = parse_env_assignments(result.stdout or "")
     normalized = dict(parsed)
     if not normalized.get("API_URL"):
-        normalized["API_URL"] = LOCAL_SUPABASE_URL
+        normalized["API_URL"] = get_local_supabase_url()
     if not normalized.get("ANON_KEY") and normalized.get("PUBLISHABLE_KEY"):
         normalized["ANON_KEY"] = normalized["PUBLISHABLE_KEY"]
 
@@ -2400,7 +2499,7 @@ def write_workers_local_dev_vars(config: DevConfig, *, runtime_env: dict[str, st
         "SUPPORT_REPORT_RECIPIENT=support@boardenthusiasts.com",
         "SUPPORT_REPORT_SENDER_EMAIL=noreply@boardenthusiasts.com",
         "SUPPORT_REPORT_SENDER_NAME=Board Enthusiasts",
-        "MAILPIT_BASE_URL=http://127.0.0.1:55424",
+        f"MAILPIT_BASE_URL={get_local_mailpit_url()}",
     ]
     dev_vars_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return dev_vars_path
@@ -4360,6 +4459,20 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
     )
 
 
+def apply_runtime_base_url_overrides(config: DevConfig) -> DevConfig:
+    """Apply local runtime URL overrides after environment loading."""
+
+    local_workers_base_url = get_local_workers_base_url()
+    local_frontend_base_url = get_local_frontend_base_url()
+    return replace(
+        config,
+        backend_base_url=local_workers_base_url,
+        frontend_base_url=local_frontend_base_url,
+        migration_workers_base_url=local_workers_base_url,
+        migration_spa_base_url=local_frontend_base_url,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI program entry point.
 
@@ -4375,6 +4488,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     repo_root = get_repo_root(Path(__file__))
     config = config_from_args(args, repo_root)
     auto_load_command_environment(config, command_name=args.command)
+    config = apply_runtime_base_url_overrides(config)
 
     try:
         if args.command == "bootstrap":

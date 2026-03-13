@@ -59,6 +59,25 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             self.assertEqual("config/.env.staging", config.staging_env_file)
             self.assertEqual("config/.env", config.production_env_file)
 
+    def test_apply_runtime_base_url_overrides_respects_local_port_env(self) -> None:
+        args = self.create_args()
+        config = dev.config_from_args(args, pathlib.Path.cwd())
+
+        with mock.patch.dict(
+            dev.os.environ,
+            {
+                "BOARD_ENTHUSIASTS_LOCAL_WORKERS_PORT": "58877",
+                "BOARD_ENTHUSIASTS_LOCAL_FRONTEND_PORT": "54173",
+            },
+            clear=False,
+        ):
+            overridden = dev.apply_runtime_base_url_overrides(config)
+
+        self.assertEqual("http://127.0.0.1:58877", overridden.backend_base_url)
+        self.assertEqual("http://127.0.0.1:58877", overridden.migration_workers_base_url)
+        self.assertEqual("http://127.0.0.1:54173", overridden.frontend_base_url)
+        self.assertEqual("http://127.0.0.1:54173", overridden.migration_spa_base_url)
+
     def test_build_migration_workspace_command_uses_workspace_name(self) -> None:
         command = dev.build_workspace_npm_command(
             script_name="dev",
@@ -264,6 +283,21 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertEqual(dev.LOCAL_SUPABASE_URL, status_env["API_URL"])
         self.assertEqual("anon", status_env["ANON_KEY"])
         self.assertEqual("service", status_env["SERVICE_ROLE_KEY"])
+
+    def test_get_local_supabase_urls_and_mailpit_respect_port_overrides(self) -> None:
+        with mock.patch.dict(
+            dev.os.environ,
+            {
+                "BOARD_ENTHUSIASTS_LOCAL_SUPABASE_API_PORT": "56421",
+                "BOARD_ENTHUSIASTS_LOCAL_SUPABASE_DB_PORT": "56432",
+                "BOARD_ENTHUSIASTS_LOCAL_MAILPIT_PORT": "56424",
+            },
+            clear=False,
+        ):
+            self.assertEqual("http://127.0.0.1:56421", dev.get_local_supabase_url())
+            self.assertEqual("http://127.0.0.1:56421/auth/v1/health", dev.get_local_supabase_auth_url())
+            self.assertEqual(56432, dev.get_local_supabase_db_port())
+            self.assertEqual("http://127.0.0.1:56424", dev.get_local_mailpit_url())
 
     def test_get_supabase_project_id_reads_config_value(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
