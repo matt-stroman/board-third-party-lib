@@ -88,4 +88,21 @@ jobs:
           node-version: "22"
 
       - name: Validate staging deployment flow
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ci-dry-run-account
+          CLOUDFLARE_API_TOKEN: ci-dry-run-token
+          BOARD_ENTHUSIASTS_WORKERS_BASE_URL: https://api.staging.example.com
+          SUPABASE_URL: https://example-project.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: ci-dry-run-publishable-key
+          SUPABASE_SECRET_KEY: ci-dry-run-secret-key
+          SUPABASE_MEDIA_BUCKET: catalog-media
+          VITE_TURNSTILE_SITE_KEY: ci-dry-run-turnstile-site-key
+          TURNSTILE_SECRET_KEY: ci-dry-run-turnstile-secret-key
+          BREVO_API_KEY: ci-dry-run-brevo-api-key
+          BREVO_SIGNUPS_LIST_ID: 1
+          ALLOWED_WEB_ORIGINS: https://boardenthusiasts.com,https://staging.boardenthusiasts.com
+          SUPPORT_REPORT_RECIPIENT: support@boardenthusiasts.com
+          SUPPORT_REPORT_SENDER_EMAIL: noreply@boardenthusiasts.com
+          SUPPORT_REPORT_SENDER_NAME: Board Enthusiasts
+          VITE_LANDING_MODE: "true"
         run: python ./scripts/dev.py deploy-staging --dry-run

@@ -52,6 +52,12 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             self.assertEqual("frontend", config.migration_spa_root)
             self.assertEqual("backend/apps/workers-api", config.migration_workers_root)
             self.assertEqual("backend/supabase", config.supabase_root)
+            self.assertEqual("config/.env.local.example", config.local_env_example)
+            self.assertEqual("config/.env.staging.example", config.staging_env_example)
+            self.assertEqual("config/.env.example", config.production_env_example)
+            self.assertEqual("config/.env.local", config.local_env_file)
+            self.assertEqual("config/.env.staging", config.staging_env_file)
+            self.assertEqual("config/.env", config.production_env_file)
 
     def test_build_migration_workspace_command_uses_workspace_name(self) -> None:
         command = dev.build_workspace_npm_command(
@@ -64,6 +70,18 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             command,
         )
 
+    def test_apply_environment_file_preserves_existing_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = pathlib.Path(temp_dir) / ".env.local"
+            env_path.write_text("FIRST=from-file\nSECOND=from-file\n", encoding="utf-8")
+
+            with mock.patch.dict(dev.os.environ, {"SECOND": "from-shell"}, clear=False):
+                parsed = dev.apply_environment_file(env_path)
+                self.assertEqual("from-file", dev.os.environ["FIRST"])
+                self.assertEqual("from-shell", dev.os.environ["SECOND"])
+
+            self.assertEqual({"FIRST": "from-file", "SECOND": "from-file"}, parsed)
+
     def test_build_migration_frontend_environment_can_force_landing_mode(self) -> None:
         args = self.create_args()
         config = dev.config_from_args(args, pathlib.Path.cwd())
@@ -73,21 +91,21 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 config,
                 runtime_env={
                     "SUPABASE_URL": "http://127.0.0.1:55421",
-                    "SUPABASE_ANON_KEY": "anon-key",
+                    "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
                 },
                 landing_mode=True,
             )
 
         self.assertEqual("http://127.0.0.1:8787", environment["VITE_API_BASE_URL"])
         self.assertEqual("http://127.0.0.1:55421", environment["VITE_SUPABASE_URL"])
-        self.assertEqual("anon-key", environment["VITE_SUPABASE_ANON_KEY"])
+        self.assertEqual("publishable-key", environment["VITE_SUPABASE_PUBLISHABLE_KEY"])
         self.assertEqual("site-key", environment["VITE_TURNSTILE_SITE_KEY"])
         self.assertEqual("true", environment["VITE_LANDING_MODE"])
 
     def test_has_local_required_schema_includes_marketing_contacts(self) -> None:
         runtime_env = {
             "SUPABASE_URL": "http://127.0.0.1:55421",
-            "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+            "SUPABASE_SECRET_KEY": "secret-key",
         }
         requested_urls: list[str] = []
 
@@ -259,10 +277,10 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             self.assertEqual("board-enthusiasts-local", dev.get_supabase_project_id(config))
 
     def test_build_supabase_bearer_headers_uses_apikey_and_bearer(self) -> None:
-        headers = dev.build_supabase_bearer_headers(api_key="service-role-key")
+        headers = dev.build_supabase_bearer_headers(api_key="secret-key")
 
-        self.assertEqual("service-role-key", headers["apikey"])
-        self.assertEqual("Bearer service-role-key", headers["authorization"])
+        self.assertEqual("secret-key", headers["apikey"])
+        self.assertEqual("Bearer secret-key", headers["authorization"])
         self.assertEqual("application/json", headers["accept"])
 
     def test_ensure_runtime_profile_reuses_matching_runtime_when_supabase_is_healthy(self) -> None:
@@ -273,7 +291,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
             runtime_env = {
                 "SUPABASE_URL": "http://127.0.0.1:55421",
-                "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                "SUPABASE_SECRET_KEY": "secret-key",
             }
 
             with (
@@ -299,7 +317,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
             runtime_env = {
                 "SUPABASE_URL": "http://127.0.0.1:55421",
-                "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                "SUPABASE_SECRET_KEY": "secret-key",
             }
 
             with (
@@ -475,7 +493,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     "get_local_supabase_runtime",
                     return_value={
                         "SUPABASE_URL": "http://127.0.0.1:55421",
-                        "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                        "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
                 mock.patch.object(dev, "wait_for_local_supabase_http_ready"),
@@ -510,7 +528,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     "get_local_supabase_runtime",
                     return_value={
                         "SUPABASE_URL": "http://127.0.0.1:55421",
-                        "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                        "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
                 mock.patch.object(dev, "wait_for_local_supabase_http_ready") as wait_for_ready,
@@ -545,7 +563,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     "get_local_supabase_runtime",
                     return_value={
                         "SUPABASE_URL": "http://127.0.0.1:55421",
-                        "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                        "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
                 mock.patch.object(dev, "wait_for_local_supabase_http_ready"),
@@ -597,7 +615,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     "get_local_supabase_runtime",
                     return_value={
                         "SUPABASE_URL": "http://127.0.0.1:55421",
-                        "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                        "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
                 mock.patch.object(dev, "wait_for_local_supabase_http_ready"),
@@ -649,7 +667,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     "get_local_supabase_runtime",
                     return_value={
                         "SUPABASE_URL": "http://127.0.0.1:55421",
-                        "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                        "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
                 mock.patch.object(dev, "wait_for_local_supabase_http_ready"),
@@ -711,7 +729,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     "get_local_supabase_runtime",
                     return_value={
                         "SUPABASE_URL": "http://127.0.0.1:55421",
-                        "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                        "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
                 mock.patch.object(dev, "wait_for_local_supabase_http_ready"),
@@ -773,7 +791,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     "get_local_supabase_runtime",
                     return_value={
                         "SUPABASE_URL": "http://127.0.0.1:55421",
-                        "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+                        "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
                 mock.patch.object(dev, "wait_for_local_supabase_http_ready"),
@@ -951,7 +969,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     "get_local_supabase_runtime",
                     return_value={
                         "SUPABASE_URL": "http://127.0.0.1:55421",
-                        "SUPABASE_ANON_KEY": "anon-key",
+                        "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
                     },
                 ),
                 mock.patch.object(

@@ -50,6 +50,7 @@ Useful notes:
 - the maintained seed roster includes 24 local users, including player-heavy coverage plus developer, moderator, admin, and super-admin accounts.
 - `api down` and `web down` stop only the named service by default; add `--include-dependencies` to stop lower-level services as well.
 - `api status` and `web status` report only the named service by default; add `--include-dependencies` to include dependencies.
+- Root-managed environment files live under [`config/`](../config). Use [`python ./scripts/dev.py env ...`](../scripts/dev.py) to inspect or bootstrap `config/.env.local`, `config/.env.staging`, and `config/.env`.
 
 ## Maintained Surface
 
@@ -66,6 +67,7 @@ The maintained application surface includes:
 - The maintained sign-in, registration, confirmation, and password-recovery forms submit credentials directly from the browser to Supabase Auth through [`@supabase/supabase-js`](../frontend/src/auth.tsx).
 - User passwords are not sent to the maintained Workers API routes, are not stored in the application database, and are not re-emitted by the frontend API helpers.
 - The SPA runtime now rejects non-HTTPS hosted values for `VITE_SUPABASE_URL` and `VITE_API_BASE_URL`; only local loopback `http://localhost`, `http://127.0.0.1`, and `http://[::1]` endpoints are allowed for local development.
+- The maintained frontend expects `VITE_SUPABASE_PUBLISHABLE_KEY` for the browser-facing Supabase client key, while the maintained Workers backend expects `SUPABASE_SECRET_KEY` for privileged server-side access.
 - This stack intentionally does not add client-side password hashing on top of Supabase Auth. Without a challenge-based protocol, that would only replace the password with another replayable secret. Transport confidentiality is provided by HTTPS in hosted environments.
 
 ## Validation

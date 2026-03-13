@@ -30,3 +30,13 @@ backend/apps/workers-api/.wrangler/
 supabase/.temp/
 backend/supabase/.branches/
 backend/supabase/.temp/
+
+# Local environment files
+.env
+.env.*
+config/.env
+config/.env.*
+!.env.example
+!config/.env.example
+!config/.env.local.example
+!config/.env.staging.example

@@ -75,6 +75,10 @@ git submodule status
 Primary root script entry point:
 
 - [`scripts/dev.py`](scripts/dev.py)
+- root-managed environment files:
+  - [`config/.env.local.example`](config/.env.local.example)
+  - [`config/.env.staging.example`](config/.env.staging.example)
+  - [`config/.env.example`](config/.env.example)
 
 See the dedicated CLI doc for full command coverage and options:
 
@@ -104,4 +108,14 @@ python ./scripts/dev.py contract-smoke --start-workers
 python ./scripts/dev.py workers-smoke --start-stack
 python ./scripts/dev.py parity-test
 python ./scripts/dev.py deploy-staging --dry-run
+python ./scripts/dev.py env staging --copy-example
+python ./scripts/dev.py env staging --open
 ```
+
+The supported root-managed environment files live under [`config/`](config):
+
+- `config/.env.local`: local developer overrides used by the root CLI for local runtime workflows
+- `config/.env.staging`: staging deployment/operator values used by `deploy-staging`
+- `config/.env`: reserved for future production deployment/operator values
+
+Do not commit those live `.env` files. Only the checked-in `*.example` templates should be tracked.

@@ -4,8 +4,8 @@ export interface MigrationEnvironmentLayout {
   apiBaseUrl: string;
   supabaseProjectRef: string;
   supabaseUrl: string;
-  supabaseAnonKeyVariable: string;
-  supabaseServiceRoleKeyVariable: string;
+  supabasePublishableKeyVariable: string;
+  supabaseSecretKeyVariable: string;
   supabaseMediaBucket: string;
 }
 
@@ -1484,8 +1484,8 @@ export const localMigrationEnvironment: MigrationEnvironmentLayout = {
   apiBaseUrl: "http://127.0.0.1:8787",
   supabaseProjectRef: "local-dev",
   supabaseUrl: "http://127.0.0.1:55421",
-  supabaseAnonKeyVariable: "SUPABASE_ANON_KEY",
-  supabaseServiceRoleKeyVariable: "SUPABASE_SERVICE_ROLE_KEY",
+  supabasePublishableKeyVariable: "SUPABASE_PUBLISHABLE_KEY",
+  supabaseSecretKeyVariable: "SUPABASE_SECRET_KEY",
   supabaseMediaBucket: migrationMediaBucket
 };
 
@@ -1495,7 +1495,7 @@ export const stagingMigrationEnvironment: MigrationEnvironmentLayout = {
   apiBaseUrl: "https://api.staging.boardenthusiasts.com",
   supabaseProjectRef: "staging-project-ref",
   supabaseUrl: "https://<project-ref>.supabase.co",
-  supabaseAnonKeyVariable: "SUPABASE_ANON_KEY",
-  supabaseServiceRoleKeyVariable: "SUPABASE_SERVICE_ROLE_KEY",
+  supabasePublishableKeyVariable: "SUPABASE_PUBLISHABLE_KEY",
+  supabaseSecretKeyVariable: "SUPABASE_SECRET_KEY",
   supabaseMediaBucket: migrationMediaBucket
 };

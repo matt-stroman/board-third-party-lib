@@ -187,14 +187,14 @@ Steps:
 9. Record the following values:
    - project reference
    - project URL
-   - anon key
-   - service role key
+   - publishable key
+   - secret key
 10. Open the auth configuration area and confirm that email/password auth is enabled.
 11. Do not start changing email templates manually if the repo is expected to own them later.
 
 Success check:
 
-- you have the project URL, anon key, and service role key recorded securely
+- you have the project URL, publishable key, and secret key recorded securely
 
 ### 5. Create The Brevo Account
 
@@ -355,8 +355,8 @@ Steps:
 2. Record the project reference.
 3. Store the following securely:
    - project reference
-   - anon key
-   - service role key
+   - publishable key
+   - secret key
    - any CI access token required by the chosen deployment automation
 
 Success check:
@@ -396,8 +396,8 @@ Steps:
 4. At minimum, expect secrets for:
    - Cloudflare API token
    - Supabase project reference
-   - Supabase anon key
-   - Supabase service role key
+   - Supabase publishable key
+   - Supabase secret key
    - Turnstile secret key
    - Brevo API key
    - Brevo SMTP credentials if deployment tooling needs them
