@@ -92,3 +92,9 @@ Never commit directly to the `main` branch. Always work via GitHub feature branc
 5. Create PR for merge into `main` only when the Wave is feature complete and fully tested.
 6. Do not block locally waiting for remote checks.
 7. Branches from branches are okay if moving to a dependent Wave before another is merged to `main`, but prefer to keep this branch dependency structure thin. Prefer to finish getting things merged to `main` first, if possible.
+
+## CI Validation Layers
+
+- Frontend and backend submodules now expose two GitHub Actions jobs: a standalone blocking job (repo-local `npm ci`, tests, and typecheck) and a root-workspace integration job that overlays the PR branch onto a cloned root workspace.
+- Integration jobs honor a `root-ref:<ref>` PR label, optional `root_ref` workflow dispatch input, or `ROOT_VALIDATION_REF` repository/workflow variable to target a specific root ref; otherwise they fall back to the existing branch heuristics.
+- Standalone jobs vendor the shared migration contract from `.ci/packages/migration-contract` so they do not need a root checkout; update the vendor copy alongside contract changes.
