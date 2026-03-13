@@ -158,9 +158,9 @@ SUPABASE_PROFILE_DESCRIPTIONS: dict[str, str] = {
 }
 
 LOCAL_SUPABASE_DB_HOST = "127.0.0.1"
-LOCAL_SUPABASE_DB_PORT = 54322
-LOCAL_SUPABASE_URL = "http://127.0.0.1:54321"
-LOCAL_SUPABASE_AUTH_URL = "http://127.0.0.1:54321/auth/v1/health"
+LOCAL_SUPABASE_DB_PORT = 55432
+LOCAL_SUPABASE_URL = "http://127.0.0.1:55421"
+LOCAL_SUPABASE_AUTH_URL = "http://127.0.0.1:55421/auth/v1/health"
 SUPABASE_STOP_TIMEOUT_SECONDS = 30
 
 
@@ -1252,6 +1252,7 @@ def run_full_local_web_stack(
     bootstrap: bool,
     install_dependencies: bool,
     hot_reload: bool,
+    landing_mode: bool,
     open_browser_on_ready: bool,
 ) -> None:
     """Run the maintained local web stack together.
@@ -1261,6 +1262,7 @@ def run_full_local_web_stack(
         bootstrap: Whether to initialize submodules before running.
         install_dependencies: Whether to install/update shared npm workspace dependencies before launch.
         hot_reload: Whether to run the frontend/backend through their watch-based local dev servers.
+        landing_mode: Whether to start the SPA in landing-page-only mode.
         open_browser_on_ready: Whether to open the system browser when the frontend is reachable.
     Returns:
         None.
@@ -1282,6 +1284,8 @@ def run_full_local_web_stack(
 
     if hot_reload:
         print("Hot reload enabled via Vite and Wrangler dev mode.")
+    if landing_mode:
+        print("Landing mode enabled for the local SPA runtime.")
 
     ensure_runtime_profile(config, profile=SUPABASE_PROFILE_WEB)
 
@@ -1306,7 +1310,7 @@ def run_full_local_web_stack(
             cwd=config.repo_root,
             log_name="migration-spa.log",
             config=config,
-            env=build_migration_frontend_environment(config, runtime_env=runtime_env),
+            env=build_migration_frontend_environment(config, runtime_env=runtime_env, landing_mode=landing_mode),
         )
         print(f"Frontend log: {frontend_log_path}")
         wait_for_background_process_http_ready(
@@ -1650,12 +1654,18 @@ def build_subprocess_env(*, extra: dict[str, str] | None = None) -> dict[str, st
     return env
 
 
-def build_migration_frontend_environment(config: DevConfig, *, runtime_env: dict[str, str]) -> dict[str, str]:
+def build_migration_frontend_environment(
+    config: DevConfig,
+    *,
+    runtime_env: dict[str, str],
+    landing_mode: bool = False,
+) -> dict[str, str]:
     """Build the Vite runtime environment for the maintained frontend workspace.
 
     Args:
         config: CLI configuration containing maintained local URLs.
         runtime_env: Local Supabase runtime values resolved from the CLI.
+        landing_mode: Whether to force the SPA into landing-page-only mode.
 
     Returns:
         Environment mapping with the Vite runtime values injected.
@@ -1667,6 +1677,7 @@ def build_migration_frontend_environment(config: DevConfig, *, runtime_env: dict
             "VITE_SUPABASE_URL": runtime_env["SUPABASE_URL"],
             "VITE_SUPABASE_ANON_KEY": runtime_env["SUPABASE_ANON_KEY"],
             "VITE_TURNSTILE_SITE_KEY": os.environ.get("VITE_TURNSTILE_SITE_KEY", ""),
+            "VITE_LANDING_MODE": "true" if landing_mode else os.environ.get("VITE_LANDING_MODE", ""),
         }
     )
 
@@ -2214,6 +2225,7 @@ def has_local_required_schema(runtime_env: dict[str, str]) -> bool:
         "titles",
         "genres",
         "age_rating_authorities",
+        "marketing_contacts",
     )
     base_url = runtime_env["SUPABASE_URL"].rstrip("/")
     headers = build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SERVICE_ROLE_KEY"])
@@ -2283,6 +2295,10 @@ def write_workers_local_dev_vars(config: DevConfig, *, runtime_env: dict[str, st
         f"SUPABASE_ANON_KEY={runtime_env['SUPABASE_ANON_KEY']}",
         f"SUPABASE_SERVICE_ROLE_KEY={runtime_env['SUPABASE_SERVICE_ROLE_KEY']}",
         f"SUPABASE_MEDIA_BUCKET={runtime_env['SUPABASE_MEDIA_BUCKET']}",
+        "SUPPORT_REPORT_RECIPIENT=support@boardenthusiasts.com",
+        "SUPPORT_REPORT_SENDER_EMAIL=noreply@boardenthusiasts.com",
+        "SUPPORT_REPORT_SENDER_NAME=Board Enthusiasts",
+        "MAILPIT_BASE_URL=http://127.0.0.1:55424",
     ]
     dev_vars_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return dev_vars_path
@@ -3724,6 +3740,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run Vite and Wrangler in their hot-reload dev modes while the stack is up",
     )
     web.add_argument(
+        "--landing-mode",
+        action="store_true",
+        help="Start the SPA in landing-page-only mode for the production landing wave",
+    )
+    web.add_argument(
         "--no-browser",
         "-NoBrowser",
         action="store_true",
@@ -4182,6 +4203,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     bootstrap=args.bootstrap,
                     install_dependencies=not args.skip_install,
                     hot_reload=args.hot_reload,
+                    landing_mode=args.landing_mode,
                     open_browser_on_ready=not args.no_browser,
                 )
             elif args.action == "down":

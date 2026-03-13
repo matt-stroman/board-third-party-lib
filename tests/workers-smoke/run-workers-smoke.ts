@@ -50,6 +50,41 @@ async function run(): Promise<void> {
   };
   results.push({ ok: catalog.titles.length >= 2, label: "catalog list", detail: "public titles returned" });
 
+  const marketingEmail = `workers-smoke-${Date.now()}@example.invalid`;
+  const marketingSignup = (await assertJson(
+    "/marketing/signups",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost:5173"
+      },
+      body: JSON.stringify({
+        email: marketingEmail,
+        firstName: "Workers",
+        source: "landing_page",
+        consentTextVersion: "landing-page-v1",
+        turnstileToken: null
+      })
+    },
+    201,
+    "marketing signup"
+  )) as {
+    accepted: boolean;
+    duplicate: boolean;
+    signup: { email: string; source: string; status: string };
+  };
+  results.push({
+    ok:
+      marketingSignup.accepted &&
+      !marketingSignup.duplicate &&
+      marketingSignup.signup.email === marketingEmail &&
+      marketingSignup.signup.source === "landing_page" &&
+      marketingSignup.signup.status === "subscribed",
+    label: "marketing signup",
+    detail: "landing-page waitlist submission accepted from an approved local web origin"
+  });
+
   const title = (await assertJson("/catalog/blue-harbor-games/lantern-drift", {}, 200, "catalog detail")) as {
     title: { mediaAssets: Array<{ sourceUrl: string }> };
   };

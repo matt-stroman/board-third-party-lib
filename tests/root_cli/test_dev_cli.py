@@ -38,7 +38,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         return argparse.Namespace()
 
     def test_is_local_supabase_url_reports_expected_values(self) -> None:
-        self.assertTrue(dev.is_local_http_url("http://127.0.0.1:54321"))
+        self.assertTrue(dev.is_local_http_url("http://127.0.0.1:55421"))
         self.assertTrue(dev.is_local_http_url("https://localhost:7277"))
         self.assertFalse(dev.is_local_http_url("https://staging.boardenthusiasts.com"))
 
@@ -62,6 +62,57 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertEqual(
             ["npm", "run", "dev", "--workspace", "@board-enthusiasts/spa"],
             command,
+        )
+
+    def test_build_migration_frontend_environment_can_force_landing_mode(self) -> None:
+        args = self.create_args()
+        config = dev.config_from_args(args, pathlib.Path.cwd())
+
+        with mock.patch.dict(dev.os.environ, {"VITE_TURNSTILE_SITE_KEY": "site-key"}, clear=False):
+            environment = dev.build_migration_frontend_environment(
+                config,
+                runtime_env={
+                    "SUPABASE_URL": "http://127.0.0.1:55421",
+                    "SUPABASE_ANON_KEY": "anon-key",
+                },
+                landing_mode=True,
+            )
+
+        self.assertEqual("http://127.0.0.1:8787", environment["VITE_API_BASE_URL"])
+        self.assertEqual("http://127.0.0.1:55421", environment["VITE_SUPABASE_URL"])
+        self.assertEqual("anon-key", environment["VITE_SUPABASE_ANON_KEY"])
+        self.assertEqual("site-key", environment["VITE_TURNSTILE_SITE_KEY"])
+        self.assertEqual("true", environment["VITE_LANDING_MODE"])
+
+    def test_has_local_required_schema_includes_marketing_contacts(self) -> None:
+        runtime_env = {
+            "SUPABASE_URL": "http://127.0.0.1:55421",
+            "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+        }
+        requested_urls: list[str] = []
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        def fake_urlopen(request, timeout=10):
+            requested_urls.append(request.full_url)
+            return _Response()
+
+        with mock.patch.object(dev.urllib.request, "urlopen", side_effect=fake_urlopen):
+            self.assertTrue(dev.has_local_required_schema(runtime_env))
+
+        self.assertEqual(
+            [
+                "http://127.0.0.1:55421/rest/v1/titles?select=*&limit=1",
+                "http://127.0.0.1:55421/rest/v1/genres?select=*&limit=1",
+                "http://127.0.0.1:55421/rest/v1/age_rating_authorities?select=*&limit=1",
+                "http://127.0.0.1:55421/rest/v1/marketing_contacts?select=*&limit=1",
+            ],
+            requested_urls,
         )
 
     def test_build_supabase_profile_start_command_matches_supported_profiles(self) -> None:
@@ -163,10 +214,10 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
     def test_parse_env_assignments_unquotes_supabase_status_values(self) -> None:
         parsed = dev.parse_env_assignments(
-            'API_URL="http://127.0.0.1:54321"\nANON_KEY="anon"\nSERVICE_ROLE_KEY="service"\n'
+            'API_URL="http://127.0.0.1:55421"\nANON_KEY="anon"\nSERVICE_ROLE_KEY="service"\n'
         )
 
-        self.assertEqual("http://127.0.0.1:54321", parsed["API_URL"])
+        self.assertEqual("http://127.0.0.1:55421", parsed["API_URL"])
         self.assertEqual("anon", parsed["ANON_KEY"])
         self.assertEqual("service", parsed["SERVICE_ROLE_KEY"])
 
@@ -221,7 +272,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             config = dev.config_from_args(args, repo_root)
 
             runtime_env = {
-                "SUPABASE_URL": "http://127.0.0.1:54321",
+                "SUPABASE_URL": "http://127.0.0.1:55421",
                 "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
             }
 
@@ -247,7 +298,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             config = dev.config_from_args(args, repo_root)
 
             runtime_env = {
-                "SUPABASE_URL": "http://127.0.0.1:54321",
+                "SUPABASE_URL": "http://127.0.0.1:55421",
                 "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
             }
 
@@ -423,7 +474,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:54321",
+                        "SUPABASE_URL": "http://127.0.0.1:55421",
                         "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
                     },
                 ),
@@ -458,7 +509,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:54321",
+                        "SUPABASE_URL": "http://127.0.0.1:55421",
                         "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
                     },
                 ),
@@ -493,7 +544,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:54321",
+                        "SUPABASE_URL": "http://127.0.0.1:55421",
                         "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
                     },
                 ),
@@ -545,7 +596,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:54321",
+                        "SUPABASE_URL": "http://127.0.0.1:55421",
                         "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
                     },
                 ),
@@ -597,7 +648,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:54321",
+                        "SUPABASE_URL": "http://127.0.0.1:55421",
                         "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
                     },
                 ),
@@ -659,7 +710,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:54321",
+                        "SUPABASE_URL": "http://127.0.0.1:55421",
                         "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
                     },
                 ),
@@ -721,7 +772,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:54321",
+                        "SUPABASE_URL": "http://127.0.0.1:55421",
                         "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
                     },
                 ),
@@ -780,6 +831,16 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertEqual("up", database_args.action)
         self.assertEqual("up", web_args.action)
         self.assertTrue(web_args.hot_reload)
+        self.assertFalse(web_args.landing_mode)
+
+    def test_web_parser_accepts_landing_mode_flag(self) -> None:
+        parser = dev.build_parser()
+
+        web_args = parser.parse_args(["web", "--landing-mode", "--no-browser"])
+
+        self.assertEqual("up", web_args.action)
+        self.assertTrue(web_args.landing_mode)
+        self.assertTrue(web_args.no_browser)
 
     def test_status_and_down_parsers_accept_include_dependencies(self) -> None:
         parser = dev.build_parser()
@@ -807,6 +868,20 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         save_runtime_profile_state.assert_called_once_with(
             mock.ANY,
             profile=dev.SUPABASE_PROFILE_API,
+        )
+
+    def test_main_web_up_passes_landing_mode_to_full_stack_runner(self) -> None:
+        with mock.patch.object(dev, "run_full_local_web_stack") as run_full_local_web_stack:
+            exit_code = dev.main(["web", "--landing-mode", "--no-browser"])
+
+        self.assertEqual(0, exit_code)
+        run_full_local_web_stack.assert_called_once_with(
+            mock.ANY,
+            bootstrap=False,
+            install_dependencies=True,
+            hot_reload=False,
+            landing_mode=True,
+            open_browser_on_ready=False,
         )
 
     def test_main_web_down_with_dependencies_stops_full_stack(self) -> None:
@@ -875,7 +950,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:54321",
+                        "SUPABASE_URL": "http://127.0.0.1:55421",
                         "SUPABASE_ANON_KEY": "anon-key",
                     },
                 ),

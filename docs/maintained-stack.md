@@ -15,6 +15,12 @@ python ./scripts/dev.py bootstrap
 python ./scripts/dev.py web --hot-reload
 ```
 
+To run the landing-page-only production mode locally:
+
+```bash
+python ./scripts/dev.py web --hot-reload --landing-mode
+```
+
 That starts:
 
 - local Supabase services
@@ -38,6 +44,7 @@ Useful notes:
 
 - `database`, `auth`, `api`, and `web` are the supported local runtime profiles.
 - `web --hot-reload` keeps the SPA and Workers API in watch-mode development.
+- `web --landing-mode` switches the SPA into the landing-page-only production wave while keeping the same local backend stack running.
 - `api` and `web` automatically seed deterministic demo data when the local Supabase stack has no catalog rows yet.
 - `seed-data` refreshes the full checked-in local demo catalog fixture set, including the broader browse/studio sample surface.
 - the maintained seed roster includes 24 local users, including player-heavy coverage plus developer, moderator, admin, and super-admin accounts.

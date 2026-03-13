@@ -93,7 +93,14 @@ Useful `web` flags:
 - `--no-browser`
 - `--skip-install`
 - `--hot-reload`
+- `--landing-mode`
 - `--include-dependencies` for `web down` and `web status`
+
+For the landing-page-only production wave, you can run the local SPA in the same mode with:
+
+```bash
+python ./scripts/dev.py web --hot-reload --landing-mode
+```
 
 ### Seed local sample data for the maintained stack
 
@@ -150,10 +157,11 @@ Profile notes:
 - `api` and `web` automatically seed deterministic demo data when the local Supabase stack has no catalog rows yet.
 - `api` and `web` also detect when the running local Supabase schema is missing required checked-in tables from newer migrations; in that case they automatically run the local reset/reseed flow before startup continues.
 - `web --hot-reload` keeps Vite and Wrangler in their watch-based local development mode.
+- `web --landing-mode` starts the SPA in the production landing-page-only mode while keeping the same local Workers and Supabase stack behind it.
 - `api down` stops the backend service only by default; add `--include-dependencies` to also stop auth and database services.
 - `web down` stops the frontend service only by default; add `--include-dependencies` to also stop API, auth, and database services.
 - `status` reports only the named service by default; add `--include-dependencies` to include dependency status output.
-- Local auth-facing profiles keep the Supabase email catcher available for signup and recovery flows. When `auth`, `api`, or `web` is running, open [http://127.0.0.1:54324](http://127.0.0.1:54324) to inspect local confirmation and recovery emails.
+- Local auth-facing profiles keep the Supabase email catcher available for signup and recovery flows. When `auth`, `api`, or `web` is running, open [http://127.0.0.1:55424](http://127.0.0.1:55424) to inspect local confirmation and recovery emails.
 - The maintained local Supabase config sets the sender to `Board Enthusiasts <noreply@boardenthusiasts.com>` in [`backend/supabase/config.toml`](../backend/supabase/config.toml). The checked-in branded HTML templates live under [`backend/supabase/templates/`](../backend/supabase/templates/). If a hosted Supabase project is used for staging or production, mirror both that sender identity and those template bodies in the hosted Auth email settings.
 - Hosted Supabase Auth redirect allowlists must include the maintained SPA callback routes, not just the site origin. At minimum mirror the local pattern for `/auth/signin` and `/auth/signin?mode=recovery` on each hosted frontend origin.
 - The maintained web UI now supports both the email link and the Supabase `{code}` value for signup confirmation and password recovery, and the checked-in templates surface both paths in the branded message body.

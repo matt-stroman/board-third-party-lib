@@ -6,6 +6,7 @@
   "vars": {
     "VITE_API_BASE_URL": "https://api.staging.boardenthusiasts.com",
     "VITE_SUPABASE_URL": "https://<project-ref>.supabase.co",
-    "VITE_TURNSTILE_SITE_KEY": "<cloudflare-turnstile-site-key>"
+    "VITE_TURNSTILE_SITE_KEY": "<cloudflare-turnstile-site-key>",
+    "VITE_LANDING_MODE": "false"
   }
 }

@@ -17,6 +17,8 @@ export type PlatformRole =
   | "admin"
   | "super_admin";
 
+export type MarketingContactStatus = "subscribed" | "unsubscribed" | "bounced" | "suppressed" | "converted";
+
 export type StudioMembershipRole = "owner" | "admin" | "editor";
 export type TitleContentKind = "game" | "app";
 export type TitleLifecycleStatus = "draft" | "testing" | "published" | "archived";
@@ -66,6 +68,34 @@ export interface UserNameAvailability {
 
 export interface UserNameAvailabilityResponse {
   userNameAvailability: UserNameAvailability;
+}
+
+export interface MarketingSignupRequest {
+  email: string;
+  firstName?: string | null;
+  source: string;
+  consentTextVersion: string;
+  turnstileToken?: string | null;
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
+  utmTerm?: string | null;
+  utmContent?: string | null;
+}
+
+export interface MarketingSignup {
+  email: string;
+  firstName: string | null;
+  status: MarketingContactStatus;
+  source: string;
+  consentedAt: string;
+  updatedAt: string;
+}
+
+export interface MarketingSignupResponse {
+  accepted: boolean;
+  duplicate: boolean;
+  signup: MarketingSignup;
 }
 
 export interface DeveloperEnrollment {
@@ -1453,7 +1483,7 @@ export const localMigrationEnvironment: MigrationEnvironmentLayout = {
   frontendBaseUrl: "http://127.0.0.1:4173",
   apiBaseUrl: "http://127.0.0.1:8787",
   supabaseProjectRef: "local-dev",
-  supabaseUrl: "http://127.0.0.1:54321",
+  supabaseUrl: "http://127.0.0.1:55421",
   supabaseAnonKeyVariable: "SUPABASE_ANON_KEY",
   supabaseServiceRoleKeyVariable: "SUPABASE_SERVICE_ROLE_KEY",
   supabaseMediaBucket: migrationMediaBucket
