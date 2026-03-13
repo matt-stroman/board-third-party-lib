@@ -189,7 +189,10 @@ Recommended hosted environment variables and secrets:
 - `APP_ENV`
 - `SUPABASE_URL`
 - `SUPABASE_PUBLISHABLE_KEY`
-- `SUPABASE_MEDIA_BUCKET`
+- `SUPABASE_AVATARS_BUCKET`
+- `SUPABASE_CARD_IMAGES_BUCKET`
+- `SUPABASE_HERO_IMAGES_BUCKET`
+- `SUPABASE_LOGO_IMAGES_BUCKET`
 - `BREVO_API_KEY` or equivalent secret form
 - `TURNSTILE_SECRET_KEY`
 - any landing-page marketing integration config

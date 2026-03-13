@@ -131,7 +131,10 @@ jobs:
           SUPABASE_URL: https://example-project.supabase.co
           SUPABASE_PUBLISHABLE_KEY: ci-dry-run-publishable-key
           SUPABASE_SECRET_KEY: ci-dry-run-secret-key
-          SUPABASE_MEDIA_BUCKET: catalog-media
+          SUPABASE_AVATARS_BUCKET: avatars
+          SUPABASE_CARD_IMAGES_BUCKET: card-images
+          SUPABASE_HERO_IMAGES_BUCKET: hero-images
+          SUPABASE_LOGO_IMAGES_BUCKET: logo-images
           VITE_TURNSTILE_SITE_KEY: ci-dry-run-turnstile-site-key
           TURNSTILE_SECRET_KEY: ci-dry-run-turnstile-secret-key
           BREVO_API_KEY: ci-dry-run-brevo-api-key

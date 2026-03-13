@@ -660,6 +660,39 @@ export interface MigrationSeedTitleFixture {
 }
 
 export const migrationMediaBucket = "catalog-media";
+export const migrationMediaBuckets = {
+  avatars: "avatars",
+  cardImages: "card-images",
+  heroImages: "hero-images",
+  logoImages: "logo-images",
+} as const;
+
+export type MigrationMediaBucketKey = keyof typeof migrationMediaBuckets;
+export type MigrationMediaBucketName = (typeof migrationMediaBuckets)[MigrationMediaBucketKey];
+
+export const migrationMediaUploadPolicies = {
+  avatars: {
+    bucket: migrationMediaBuckets.avatars,
+    maxUploadBytes: 256 * 1024,
+    acceptedMimeTypes: ["image/webp", "image/jpeg", "image/png"],
+  },
+  cardImages: {
+    bucket: migrationMediaBuckets.cardImages,
+    maxUploadBytes: 1536 * 1024,
+    acceptedMimeTypes: ["image/webp", "image/jpeg", "image/png"],
+  },
+  heroImages: {
+    bucket: migrationMediaBuckets.heroImages,
+    maxUploadBytes: 3 * 1024 * 1024,
+    acceptedMimeTypes: ["image/webp", "image/jpeg", "image/png", "image/svg+xml"],
+  },
+  logoImages: {
+    bucket: migrationMediaBuckets.logoImages,
+    maxUploadBytes: 256 * 1024,
+    acceptedMimeTypes: ["image/webp", "image/png", "image/svg+xml"],
+  },
+} as const;
+
 const migrationSeedStudioDescriptionMaxLength = 1600;
 const migrationSeedTitleShortDescriptionMaxLength = 220;
 const migrationSeedTitleDescriptionMaxLength = 1600;
