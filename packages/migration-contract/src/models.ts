@@ -308,6 +308,7 @@ export interface StudioSummary {
   slug: string;
   displayName: string;
   description: string | null;
+  avatarUrl: string | null;
   logoUrl: string | null;
   bannerUrl: string | null;
   links: StudioLink[];
@@ -620,6 +621,7 @@ export interface MigrationSeedStudioFixture {
   description: string;
   ownerUserName: string;
   links: Array<{ label: string; url: string }>;
+  avatarAssetPath: string;
   logoAssetPath: string;
   bannerAssetPath: string;
 }
@@ -988,6 +990,7 @@ function buildSeedStudioFixture(
       { label: "Discord", url: `https://discord.gg/${slug.replace(/-/g, "")}` },
       { label: "YouTube", url: `https://www.youtube.com/@${studioHandle}` }
     ],
+    avatarAssetPath: `studios/${slug}/logo.svg`,
     logoAssetPath: `studios/${slug}/logo.svg`,
     bannerAssetPath: `studios/${slug}/banner.svg`
   };
