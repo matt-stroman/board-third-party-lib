@@ -19,6 +19,21 @@ export type PlatformRole =
 
 export type MarketingContactStatus = "subscribed" | "unsubscribed" | "bounced" | "suppressed" | "converted";
 
+/**
+ * Lifecycle stage of a marketing contact in the Board Enthusiasts platform.
+ * - `waitlisted`: signed up via the landing page; not yet invited to the platform
+ * - `invited`: sent an onboarding invite but not yet converted
+ * - `converted`: accepted an invite and created a full platform account
+ */
+export type MarketingContactLifecycleStatus = "waitlisted" | "invited" | "converted";
+
+/**
+ * Role interest declared by a contact at signup time.
+ * - `player`: interested in discovering and following Board games/apps
+ * - `developer`: interested in creating third-party content for Board
+ */
+export type MarketingContactRoleInterest = "player" | "developer";
+
 export type StudioMembershipRole = "owner" | "admin" | "editor";
 export type TitleContentKind = "game" | "app";
 export type TitleLifecycleStatus = "draft" | "testing" | "published" | "archived";
@@ -73,9 +88,17 @@ export interface UserNameAvailabilityResponse {
 export interface MarketingSignupRequest {
   email: string;
   firstName?: string | null;
+  /**
+   * Identifies the channel through which the contact signed up (e.g. `landing_page`, `discord`).
+   */
   source: string;
   consentTextVersion: string;
   turnstileToken?: string | null;
+  /**
+   * Role interests selected by the contact at signup.
+   * Omit or pass an empty array when neither role is selected.
+   */
+  roleInterests?: MarketingContactRoleInterest[] | null;
   utmSource?: string | null;
   utmMedium?: string | null;
   utmCampaign?: string | null;
@@ -87,7 +110,15 @@ export interface MarketingSignup {
   email: string;
   firstName: string | null;
   status: MarketingContactStatus;
+  /**
+   * Current lifecycle stage of the contact.
+   */
+  lifecycleStatus: MarketingContactLifecycleStatus;
   source: string;
+  /**
+   * Role interests recorded for this contact.
+   */
+  roleInterests: MarketingContactRoleInterest[];
   consentedAt: string;
   updatedAt: string;
 }
