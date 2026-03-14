@@ -117,6 +117,7 @@ class DevCliError(RuntimeError):
 
 
 REDOCLY_CLI_VERSION = "2.20.3"
+DEFAULT_HTTP_USER_AGENT = "Mozilla/5.0 (compatible; BoardEnthusiastsDevCli/1.0; +https://boardenthusiasts.com)"
 
 SUPABASE_PROFILE_DATABASE = "database"
 SUPABASE_PROFILE_AUTH = "auth"
@@ -353,7 +354,7 @@ def write_step(message: str) -> None:
         None.
     """
 
-    print(f"==> {message}")
+    print(f"==> {message}", flush=True)
 
 
 def print_console_text(text: str) -> None:
@@ -3513,7 +3514,7 @@ def request_json(
     """Issue an HTTP request and parse the JSON response."""
 
     request_data = data
-    merged_headers = {"accept": "application/json", **(headers or {})}
+    merged_headers = {"accept": "application/json", "user-agent": DEFAULT_HTTP_USER_AGENT, **(headers or {})}
     if payload is not None:
         request_data = json.dumps(payload).encode("utf-8")
         merged_headers.setdefault("content-type", "application/json")
@@ -4535,7 +4536,10 @@ def run_pages_deploy_smoke(env_values: dict[str, str]) -> None:
     write_step("Running post-deploy Pages smoke")
     deadline = time.time() + 300
     last_error = "Pages custom domain did not become reachable."
-    request = urllib.request.Request(env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"], headers={"accept": "text/html"})
+    request = urllib.request.Request(
+        env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"],
+        headers={"accept": "text/html", "user-agent": DEFAULT_HTTP_USER_AGENT},
+    )
 
     while time.time() < deadline:
         try:
