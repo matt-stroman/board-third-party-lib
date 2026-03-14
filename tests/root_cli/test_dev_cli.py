@@ -568,6 +568,48 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
         self.assertIn("Delete the existing DNS record", str(raised.exception))
 
+    def test_assert_worker_custom_domain_dns_prerequisites_allows_cloudflare_managed_worker_records(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+            "CLOUDFLARE_API_TOKEN": "token",
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+        }
+
+        def request_json_side_effect(*, url: str, headers: dict[str, str] | None = None, **_: object) -> object:
+            self.assertIsNotNone(headers)
+            if "client/v4/zones?" in url:
+                zone_name = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("name", [""])[0]
+                if zone_name == "boardenthusiasts.com":
+                    return {
+                        "result": [
+                            {
+                                "id": "zone-id",
+                                "name": "boardenthusiasts.com",
+                                "account": {"id": "account-id"},
+                            }
+                        ]
+                    }
+                return {"result": []}
+            if "client/v4/zones/zone-id/dns_records" in url:
+                return {
+                    "result": [
+                        {
+                            "id": "dns-id",
+                            "type": "AAAA",
+                            "name": "api.staging.boardenthusiasts.com",
+                            "meta": {"origin_worker_id": "worker-id", "read_only": True},
+                        }
+                    ]
+                }
+            self.fail(f"Unexpected Cloudflare API URL: {url}")
+
+        with mock.patch.object(dev, "probe_http_endpoint", return_value=(False, "tls handshake failed")), mock.patch.object(
+            dev,
+            "request_json",
+            side_effect=request_json_side_effect,
+        ):
+            dev.assert_worker_custom_domain_dns_prerequisites(env_values)
+
     def test_has_local_required_schema_includes_marketing_contacts(self) -> None:
         runtime_env = {
             "SUPABASE_URL": "http://127.0.0.1:55421",

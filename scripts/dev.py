@@ -3719,8 +3719,19 @@ def assert_worker_custom_domain_dns_prerequisites(env_values: dict[str, str]) ->
         raise DevCliError(f"Cloudflare zone lookup for '{hostname}' did not include an id.")
 
     records = get_cloudflare_dns_records(env_values, zone_id=zone_id, hostname=hostname)
+    def is_cloudflare_managed_worker_record(record: dict[str, object]) -> bool:
+        meta = record.get("meta")
+        if not isinstance(meta, dict):
+            return False
+        origin_worker_id = str(meta.get("origin_worker_id", "")).strip()
+        read_only = bool(meta.get("read_only", False))
+        return bool(origin_worker_id) and read_only
+
     conflicting_records = [
-        record for record in records if str(record.get("name", "")).strip().lower() == hostname.lower()
+        record
+        for record in records
+        if str(record.get("name", "")).strip().lower() == hostname.lower()
+        and not is_cloudflare_managed_worker_record(record)
     ]
     if not conflicting_records:
         return
