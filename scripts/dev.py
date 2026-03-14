@@ -4537,6 +4537,19 @@ def run_workers_deploy_smoke(config: DevConfig, *, target: str, env_values: dict
         delete_brevo_contact(env_values, email=smoke_email)
 
 
+def is_expected_pages_shell_html(html: str) -> bool:
+    """Return whether the fetched HTML looks like the expected deployed SPA shell."""
+
+    normalized = html.lower()
+    return (
+        "<title>board enthusiasts</title>" in normalized
+        and '<div id="root"></div>' in normalized
+        and "/assets/index-" in normalized
+        and "nothing is here yet" not in normalized
+        and "error 1014" not in normalized
+    )
+
+
 def run_pages_deploy_smoke(env_values: dict[str, str]) -> None:
     """Verify the hosted SPA is reachable after deploy."""
 
@@ -4557,10 +4570,10 @@ def run_pages_deploy_smoke(env_values: dict[str, str]) -> None:
             time.sleep(5)
             continue
 
-        if "Board Enthusiasts" in html and "Get early access" in html:
+        if is_expected_pages_shell_html(html):
             return
 
-        last_error = "Expected landing-page copy was not present in the rendered HTML."
+        last_error = "Expected SPA shell markers were not present in the rendered HTML."
         time.sleep(5)
 
     raise DevCliError(

@@ -703,6 +703,33 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertEqual({"ok": True}, payload)
         self.assertIsNone(captured_user_agent)
 
+    def test_is_expected_pages_shell_html_accepts_vite_spa_shell(self) -> None:
+        html = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Board Enthusiasts</title>
+    <script type="module" crossorigin src="/assets/index-abc123.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-def456.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+"""
+
+        self.assertTrue(dev.is_expected_pages_shell_html(html))
+
+    def test_is_expected_pages_shell_html_rejects_cloudflare_placeholder(self) -> None:
+        html = """
+<html>
+  <head><title>Nothing is here yet</title></head>
+  <body>Nothing is here yet</body>
+</html>
+"""
+
+        self.assertFalse(dev.is_expected_pages_shell_html(html))
+
     def test_build_supabase_profile_start_command_matches_supported_profiles(self) -> None:
         prefix = ["npx", "supabase"]
 
