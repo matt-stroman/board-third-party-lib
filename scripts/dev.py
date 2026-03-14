@@ -3397,6 +3397,16 @@ def get_deploy_worker_config_path(config: DevConfig, *, target: str, env_values:
         count=1,
         flags=re.DOTALL,
     )
+
+    def replace_env_placeholder(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key not in env_values:
+            raise DevCliError(
+                f"Wrangler deploy template references environment value '{key}', but no deploy value was provided."
+            )
+        return json.dumps(env_values[key])
+
+    rendered = re.sub(r'"env\(([A-Z0-9_]+)\)"', replace_env_placeholder, rendered)
     rendered_path.write_text(rendered, encoding="utf-8")
     return rendered_path
 

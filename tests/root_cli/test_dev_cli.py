@@ -320,7 +320,8 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                         '  "preview_urls": false,',
                         '  "routes": [],',
                         '  "vars": {',
-                        '    "APP_ENV": "staging"',
+                        '    "APP_ENV": "staging",',
+                        '    "SUPABASE_URL": "env(SUPABASE_URL)"',
                         "  }",
                         "}",
                     ]
@@ -332,12 +333,16 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             rendered_path = dev.get_deploy_worker_config_path(
                 config,
                 target="staging",
-                env_values={"BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com"},
+                env_values={
+                    "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+                    "SUPABASE_URL": "https://example.supabase.co",
+                },
             )
             rendered = rendered_path.read_text(encoding="utf-8")
 
         self.assertIn('"main": "../backend/apps/workers-api/src/worker.ts"', rendered)
         self.assertIn('"routes": [{"pattern": "api.staging.boardenthusiasts.com", "custom_domain": true}]', rendered)
+        self.assertIn('"SUPABASE_URL": "https://example.supabase.co"', rendered)
 
     def test_get_deploy_worker_config_path_keeps_empty_routes_for_workers_dev_urls(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -356,7 +361,8 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                         '  "preview_urls": false,',
                         '  "routes": [],',
                         '  "vars": {',
-                        '    "APP_ENV": "staging"',
+                        '    "APP_ENV": "staging",',
+                        '    "SUPABASE_URL": "env(SUPABASE_URL)"',
                         "  }",
                         "}",
                     ]
@@ -368,11 +374,44 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             rendered_path = dev.get_deploy_worker_config_path(
                 config,
                 target="staging",
-                env_values={"BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://board-enthusiasts-api-staging.example.workers.dev"},
+                env_values={
+                    "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://board-enthusiasts-api-staging.example.workers.dev",
+                    "SUPABASE_URL": "https://example.supabase.co",
+                },
             )
             rendered = rendered_path.read_text(encoding="utf-8")
 
         self.assertIn('"routes": []', rendered)
+
+    def test_get_deploy_worker_config_path_requires_values_for_env_placeholders(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            args = self.create_args()
+            config = dev.config_from_args(args, repo_root)
+            template_path = repo_root / config.cloudflare_workers_template
+            template_path.parent.mkdir(parents=True, exist_ok=True)
+            template_path.write_text(
+                "\n".join(
+                    [
+                        "{",
+                        '  "vars": {',
+                        '    "SUPABASE_URL": "env(SUPABASE_URL)"',
+                        "  }",
+                        "}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(dev.DevCliError) as raised:
+                dev.get_deploy_worker_config_path(
+                    config,
+                    target="staging",
+                    env_values={"BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com"},
+                )
+
+        self.assertIn("SUPABASE_URL", str(raised.exception))
 
     def test_build_worker_custom_domain_routes_supports_production_hostnames(self) -> None:
         routes = dev.build_worker_custom_domain_routes(worker_base_url="https://api.boardenthusiasts.com")
