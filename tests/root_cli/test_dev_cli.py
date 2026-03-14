@@ -679,6 +679,30 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             requested_urls,
         )
 
+    def test_request_json_sends_default_user_agent_header(self) -> None:
+        captured_user_agent: str | None = None
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return b'{"ok": true}'
+
+        def fake_urlopen(request, timeout=15, context=None):
+            nonlocal captured_user_agent
+            captured_user_agent = request.headers.get("User-agent")
+            return _Response()
+
+        with mock.patch.object(dev.urllib.request, "urlopen", side_effect=fake_urlopen):
+            payload = dev.request_json(url="https://example.com/api")
+
+        self.assertEqual({"ok": True}, payload)
+        self.assertEqual(dev.DEFAULT_HTTP_USER_AGENT, captured_user_agent)
+
     def test_build_supabase_profile_start_command_matches_supported_profiles(self) -> None:
         prefix = ["npx", "supabase"]
 
