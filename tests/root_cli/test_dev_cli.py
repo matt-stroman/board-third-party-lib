@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from unittest import mock
 
 
@@ -315,6 +316,9 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                         '{',
                         '  "name": "board-enthusiasts-api-staging",',
                         '  "main": "../../apps/workers-api/src/worker.ts",',
+                        '  "workers_dev": true,',
+                        '  "preview_urls": false,',
+                        '  "routes": [],',
                         '  "vars": {',
                         '    "APP_ENV": "staging"',
                         "  }",
@@ -325,10 +329,106 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            rendered_path = dev.get_deploy_worker_config_path(config, target="staging")
+            rendered_path = dev.get_deploy_worker_config_path(
+                config,
+                target="staging",
+                env_values={"BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com"},
+            )
             rendered = rendered_path.read_text(encoding="utf-8")
 
         self.assertIn('"main": "../backend/apps/workers-api/src/worker.ts"', rendered)
+        self.assertIn('"routes": [{"pattern": "api.staging.boardenthusiasts.com", "custom_domain": true}]', rendered)
+
+    def test_get_deploy_worker_config_path_keeps_empty_routes_for_workers_dev_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            args = self.create_args()
+            config = dev.config_from_args(args, repo_root)
+            template_path = repo_root / config.cloudflare_workers_template
+            template_path.parent.mkdir(parents=True, exist_ok=True)
+            template_path.write_text(
+                "\n".join(
+                    [
+                        '{',
+                        '  "name": "board-enthusiasts-api-staging",',
+                        '  "main": "../../apps/workers-api/src/worker.ts",',
+                        '  "workers_dev": true,',
+                        '  "preview_urls": false,',
+                        '  "routes": [],',
+                        '  "vars": {',
+                        '    "APP_ENV": "staging"',
+                        "  }",
+                        "}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            rendered_path = dev.get_deploy_worker_config_path(
+                config,
+                target="staging",
+                env_values={"BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://board-enthusiasts-api-staging.example.workers.dev"},
+            )
+            rendered = rendered_path.read_text(encoding="utf-8")
+
+        self.assertIn('"routes": []', rendered)
+
+    def test_build_worker_custom_domain_routes_supports_production_hostnames(self) -> None:
+        routes = dev.build_worker_custom_domain_routes(worker_base_url="https://api.boardenthusiasts.com")
+
+        self.assertEqual(routes, [{"pattern": "api.boardenthusiasts.com", "custom_domain": True}])
+
+    def test_assert_worker_custom_domain_dns_prerequisites_skips_existing_live_custom_domain(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+            "CLOUDFLARE_API_TOKEN": "token",
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+        }
+
+        with mock.patch.object(dev, "probe_http_endpoint", return_value=(True, None)) as probe_http_endpoint, mock.patch.object(
+            dev, "request_json"
+        ) as request_json:
+            dev.assert_worker_custom_domain_dns_prerequisites(env_values)
+
+        probe_http_endpoint.assert_called_once()
+        request_json.assert_not_called()
+
+    def test_assert_worker_custom_domain_dns_prerequisites_reports_conflicting_dns_records(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+            "CLOUDFLARE_API_TOKEN": "token",
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+        }
+
+        def request_json_side_effect(*, url: str, headers: dict[str, str] | None = None, **_: object) -> object:
+            self.assertIsNotNone(headers)
+            if "client/v4/zones?" in url:
+                zone_name = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("name", [""])[0]
+                if zone_name == "boardenthusiasts.com":
+                    return {
+                        "result": [
+                            {
+                                "id": "zone-id",
+                                "name": "boardenthusiasts.com",
+                                "account": {"id": "account-id"},
+                            }
+                        ]
+                    }
+                return {"result": []}
+            if "client/v4/zones/zone-id/dns_records" in url:
+                return {"result": [{"id": "dns-id", "type": "CNAME", "name": "api.staging.boardenthusiasts.com"}]}
+            self.fail(f"Unexpected Cloudflare API URL: {url}")
+
+        with mock.patch.object(dev, "probe_http_endpoint", return_value=(False, "tls handshake failed")), mock.patch.object(
+            dev,
+            "request_json",
+            side_effect=request_json_side_effect,
+        ):
+            with self.assertRaises(dev.DevCliError) as raised:
+                dev.assert_worker_custom_domain_dns_prerequisites(env_values)
+
+        self.assertIn("Delete the existing DNS record", str(raised.exception))
 
     def test_has_local_required_schema_includes_marketing_contacts(self) -> None:
         runtime_env = {

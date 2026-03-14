@@ -3341,7 +3341,28 @@ def get_deploy_worker_name(*, target: str) -> str:
     return "board-enthusiasts-api-staging" if target == "staging" else "board-enthusiasts-api"
 
 
-def get_deploy_worker_config_path(config: DevConfig, *, target: str) -> Path:
+def get_worker_custom_domain_hostname(*, worker_base_url: str) -> str | None:
+    """Return the Worker custom-domain hostname when the deploy target is not workers.dev."""
+
+    parsed = urllib.parse.urlparse(worker_base_url)
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        raise DevCliError(f"Worker base URL is not a valid URL: {worker_base_url}")
+    if is_local_http_url(worker_base_url) or hostname.endswith(".workers.dev"):
+        return None
+    return hostname
+
+
+def build_worker_custom_domain_routes(*, worker_base_url: str) -> list[dict[str, object]]:
+    """Build Wrangler custom-domain routes for the hosted Worker deployment."""
+
+    hostname = get_worker_custom_domain_hostname(worker_base_url=worker_base_url)
+    if hostname is None:
+        return []
+    return [{"pattern": hostname, "custom_domain": True}]
+
+
+def get_deploy_worker_config_path(config: DevConfig, *, target: str, env_values: dict[str, str]) -> Path:
     """Render a temporary wrangler config file for the target deployment environment."""
 
     template_path = config.repo_root / config.cloudflare_workers_template
@@ -3368,6 +3389,13 @@ def get_deploy_worker_config_path(config: DevConfig, *, target: str) -> Path:
         f'"main": "{worker_entry_relative_path}"',
         rendered,
         count=1,
+    )
+    rendered = re.sub(
+        r'"routes":\s*\[[^\]]*\]',
+        f'"routes": {json.dumps(build_worker_custom_domain_routes(worker_base_url=env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"]))}',
+        rendered,
+        count=1,
+        flags=re.DOTALL,
     )
     rendered_path.write_text(rendered, encoding="utf-8")
     return rendered_path
@@ -3549,6 +3577,110 @@ def get_cloudflare_pages_projects(config: DevConfig, *, env: dict[str, str]) -> 
     if not isinstance(payload, list):
         raise DevCliError("Cloudflare Pages project listing returned an unexpected payload.")
     return [entry for entry in payload if isinstance(entry, dict)]
+
+
+def build_cloudflare_api_headers(env_values: dict[str, str]) -> dict[str, str]:
+    """Build the authenticated headers for direct Cloudflare API calls."""
+
+    return {
+        "Authorization": f"Bearer {env_values['CLOUDFLARE_API_TOKEN']}",
+        "Content-Type": "application/json",
+    }
+
+
+def extract_cloudflare_result_list(payload: object, *, context: str) -> list[dict[str, object]]:
+    """Validate a Cloudflare API payload and return its ``result`` list."""
+
+    if not isinstance(payload, dict):
+        raise DevCliError(f"Cloudflare {context} returned an unexpected payload.")
+    result = payload.get("result")
+    if not isinstance(result, list):
+        raise DevCliError(f"Cloudflare {context} did not include a result list.")
+    return [entry for entry in result if isinstance(entry, dict)]
+
+
+def iter_hostname_zone_candidates(hostname: str) -> list[str]:
+    """Return candidate zone names from most specific to least specific."""
+
+    parts = [part for part in hostname.split(".") if part]
+    return [".".join(parts[index:]) for index in range(len(parts) - 1) if len(parts[index:]) >= 2]
+
+
+def get_cloudflare_zone_for_hostname(env_values: dict[str, str], *, hostname: str) -> dict[str, object]:
+    """Resolve the Cloudflare zone record that owns the provided hostname."""
+
+    headers = build_cloudflare_api_headers(env_values)
+    last_error: DevCliError | None = None
+    for candidate in iter_hostname_zone_candidates(hostname):
+        try:
+            payload = request_json(
+                url=(
+                    "https://api.cloudflare.com/client/v4/zones"
+                    f"?name={urllib.parse.quote(candidate)}"
+                ),
+                headers=headers,
+            )
+        except DevCliError as ex:
+            last_error = ex
+            continue
+
+        zones = extract_cloudflare_result_list(payload, context=f"zone lookup for {candidate}")
+        for zone in zones:
+            zone_name = str(zone.get("name", "")).strip().lower()
+            account = zone.get("account")
+            account_id = str(account.get("id", "")).strip() if isinstance(account, dict) else ""
+            if zone_name == candidate.lower() and account_id == env_values["CLOUDFLARE_ACCOUNT_ID"]:
+                return zone
+
+    if last_error is not None:
+        raise DevCliError(
+            "Cloudflare zone lookup failed while validating the Worker custom domain. "
+            "Ensure the API token includes Zone read access for the configured account.\n"
+            f"Original error: {last_error}"
+        ) from last_error
+
+    raise DevCliError(
+        f"Unable to find a Cloudflare zone in account {env_values['CLOUDFLARE_ACCOUNT_ID']} for hostname '{hostname}'."
+    )
+
+
+def assert_worker_custom_domain_dns_prerequisites(env_values: dict[str, str]) -> None:
+    """Fail early when a Worker custom-domain hostname is blocked by an existing DNS record."""
+
+    worker_base_url = env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"]
+    hostname = get_worker_custom_domain_hostname(worker_base_url=worker_base_url)
+    if hostname is None:
+        return
+
+    reachable, _ = probe_http_endpoint(url=f"{worker_base_url.rstrip('/')}/")
+    if reachable:
+        return
+
+    zone = get_cloudflare_zone_for_hostname(env_values, hostname=hostname)
+    zone_id = str(zone.get("id", "")).strip()
+    if not zone_id:
+        raise DevCliError(f"Cloudflare zone lookup for '{hostname}' did not include an id.")
+
+    payload = request_json(
+        url=(
+            f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records"
+            f"?name={urllib.parse.quote(hostname)}"
+        ),
+        headers=build_cloudflare_api_headers(env_values),
+    )
+    records = extract_cloudflare_result_list(payload, context=f"DNS lookup for {hostname}")
+    conflicting_records = [
+        record for record in records if str(record.get("name", "")).strip().lower() == hostname.lower()
+    ]
+    if not conflicting_records:
+        return
+
+    record_types = sorted({str(record.get("type", "")).strip().upper() or "UNKNOWN" for record in conflicting_records})
+    raise DevCliError(
+        f"Cloudflare DNS already has record(s) for Worker custom domain '{hostname}' ({', '.join(record_types)}).\n"
+        "Delete the existing DNS record in Cloudflare DNS before deploying. "
+        "Worker custom domains manage the hostname automatically and cannot be attached while a standalone DNS record already exists."
+    )
 
 
 def ensure_cloudflare_pages_project(config: DevConfig, *, target: str, env: dict[str, str]) -> None:
@@ -3850,6 +3982,7 @@ def run_deploy_preflight(config: DevConfig, *, target: str, env_values: dict[str
     assert_url_hostname_resolves(env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"], label="SPA base URL")
     assert_url_hostname_resolves(env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"], label="Workers base URL")
     get_cloudflare_pages_projects(config, env=subprocess_env)
+    assert_worker_custom_domain_dns_prerequisites(env_values)
     assert_supabase_publishable_access(env_values)
     assert_supabase_secret_access(env_values)
     assert_turnstile_secret_access(env_values)
@@ -3871,7 +4004,7 @@ def run_deploy_dry_run(config: DevConfig, *, target: str, env_values: dict[str, 
         env=build_deploy_frontend_environment(env_values),
     )
 
-    worker_config_path = get_deploy_worker_config_path(config, target=target)
+    worker_config_path = get_deploy_worker_config_path(config, target=target, env_values=env_values)
     write_step("Dry-running Cloudflare Workers bundle")
     run_command(
         [
@@ -4037,6 +4170,28 @@ def delete_supabase_marketing_contact(env_values: dict[str, str], *, contact_id:
     )
 
 
+def wait_for_workers_deploy_smoke_base_url(*, base_url: str, timeout_seconds: int = 300) -> dict[str, object]:
+    """Poll the deployed Worker base URL until the root endpoint is reachable."""
+
+    deadline = time.time() + timeout_seconds
+    last_error = f"{base_url}/ was not yet reachable."
+    while time.time() < deadline:
+        try:
+            payload = request_json(url=f"{base_url}/")
+        except DevCliError as ex:
+            last_error = str(ex)
+        else:
+            if isinstance(payload, dict) and payload.get("service") == "board-enthusiasts-workers-api":
+                return payload
+            last_error = f"Unexpected root payload from {base_url}/."
+        time.sleep(5)
+
+    raise DevCliError(
+        f"Workers smoke failed: {base_url}/ did not become reachable within {timeout_seconds} seconds.\n"
+        f"Last error: {last_error}"
+    )
+
+
 def run_workers_deploy_smoke(config: DevConfig, *, target: str, env_values: dict[str, str]) -> None:
     """Exercise the hosted Worker directly after deploy and verify external integrations."""
 
@@ -4051,9 +4206,7 @@ def run_workers_deploy_smoke(config: DevConfig, *, target: str, env_values: dict
         "x-board-enthusiasts-deploy-smoke-secret": env_values["DEPLOY_SMOKE_SECRET"],
     }
 
-    root_payload = request_json(url=f"{base_url}/")
-    if not isinstance(root_payload, dict) or root_payload.get("service") != "board-enthusiasts-workers-api":
-        raise DevCliError("Workers smoke failed: unexpected root payload.")
+    wait_for_workers_deploy_smoke_base_url(base_url=base_url)
 
     ready_payload = request_json(url=f"{base_url}/health/ready")
     if not isinstance(ready_payload, dict) or ready_payload.get("status") != "ready":
@@ -4207,7 +4360,7 @@ def deploy_migration_target(
         force=force,
         upgrade=upgrade,
     )
-    worker_config_path = get_deploy_worker_config_path(config, target=target)
+    worker_config_path = get_deploy_worker_config_path(config, target=target, env_values=env_values)
 
     for stage_name in DEPLOY_TRANSACTIONAL_STAGES:
         if stage_name in completed_stages:

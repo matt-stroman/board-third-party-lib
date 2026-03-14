@@ -407,6 +407,8 @@ Typical Environment `vars`:
 - `SUPPORT_REPORT_SENDER_NAME`
 - `VITE_LANDING_MODE`
 
+For Worker deploys that use a custom API hostname from `BOARD_ENTHUSIASTS_WORKERS_BASE_URL`, the root CLI now renders a Worker custom-domain route automatically. Do not create a standalone Cloudflare DNS record for that hostname ahead of time; preflight will fail until the conflicting DNS record is removed because the Worker custom domain needs to own the hostname directly.
+
 Typical Environment `secrets`:
 
 - `SUPABASE_SECRET_KEY`

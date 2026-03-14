@@ -469,6 +469,8 @@ Steps:
    - `python ./scripts/dev.py env staging --sync-github-environment`
    - `python ./scripts/dev.py env production --sync-github-environment`
 10. Re-run that sync any time you change the local env file before a hosted deploy attempt, because deploy preflight now checks the matching GitHub Environment for drift.
+11. Do **not** create manual Cloudflare DNS records for the Worker API hostnames (`api.staging.boardenthusiasts.com`, later `api.boardenthusiasts.com`) when the deploy flow is managing Worker custom domains. The Worker custom domain owns that hostname and Cloudflare will manage the DNS record/certificate attachment.
+12. If you created one earlier while bootstrapping staging, delete that DNS record before the first successful Worker custom-domain deploy. Otherwise deploy preflight now fails early with the same conflict you would see in the Cloudflare UI.
 
 Recommended Environment `vars`:
 
