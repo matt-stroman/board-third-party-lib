@@ -4588,7 +4588,7 @@ def run_workers_deploy_smoke(config: DevConfig, *, target: str, env_values: dict
         support_payload = request_json(
             url=f"{base_url}/support/issues",
             method="POST",
-            headers={key: value for key, value in smoke_headers.items() if key != "x-board-enthusiasts-deploy-smoke-secret"},
+            headers=smoke_headers,
             payload={
                 "category": "email_signup",
                 "firstName": "Deploy Smoke",
