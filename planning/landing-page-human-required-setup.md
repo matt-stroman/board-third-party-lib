@@ -670,6 +670,7 @@ GitHub web UI alternative:
 3. Choose target `staging`.
 4. Use `dry_run_only` first if desired.
 5. Run the workflow once the `staging` GitHub Environment is configured.
+6. The workflow now attaches the Cloudflare Pages publish to the triggering Git branch, so launch it from the intended release branch (`staging`, a staging release branch, `production`, or a production release branch) instead of assuming Pages metadata will always point at `main`.
 
 ## Known Risks And Recovery Notes
 

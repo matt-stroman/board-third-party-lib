@@ -75,6 +75,7 @@ jobs:
       SUPPORT_REPORT_SENDER_NAME: ${{ vars.SUPPORT_REPORT_SENDER_NAME }}
       DEPLOY_SMOKE_SECRET: ${{ secrets.DEPLOY_SMOKE_SECRET }}
       VITE_LANDING_MODE: ${{ vars.VITE_LANDING_MODE }}
+      DEPLOY_SOURCE_BRANCH: ${{ github.ref_name }}
 
     steps:
       - name: Checkout
@@ -162,6 +163,9 @@ jobs:
           fi
           if [[ "${{ inputs.dry_run_only }}" == "true" ]]; then
             args+=(--dry-run-only)
+          fi
+          if [[ -n "${DEPLOY_SOURCE_BRANCH}" ]]; then
+            args+=(--source-branch "${DEPLOY_SOURCE_BRANCH}")
           fi
           python ./scripts/dev.py "${args[@]}"
 

@@ -121,6 +121,8 @@ GitHub web UI deploys are also supported through the manual workflow:
 - optionally set `force`, `upgrade`, `preflight_only`, or `dry_run_only`
 - run the workflow after the matching GitHub Environment (`staging` or `production`) has the required vars and secrets configured
 
+GitHub UI deploys now attach the Cloudflare Pages publish to the triggering Git branch instead of hardcoding `main`. Local CLI deploys do the same from the currently checked-out branch unless you override it with `--source-branch <name>`.
+
 Local deploy preflight now also verifies that the matching GitHub Environment is in sync with the checked-out root `.env` file before publish. If the Environment has drifted, rerun:
 
 - `python ./scripts/dev.py env staging --sync-github-environment`

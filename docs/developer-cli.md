@@ -299,6 +299,7 @@ python ./scripts/dev.py deploy --staging --preflight-only
 python ./scripts/dev.py deploy --staging --dry-run-only
 python ./scripts/dev.py deploy --staging
 python ./scripts/dev.py deploy
+python ./scripts/dev.py deploy --staging --source-branch staging
 ```
 
 `deploy` automatically loads the target environment file before running the hosted deploy flow:
@@ -355,6 +356,7 @@ Use these flags when needed:
 - `--upgrade`: replace a saved stage-state fingerprint with the current source fingerprint
 - `--preflight-only`: stop after provider/config validation
 - `--dry-run-only`: stop after preflight plus dry-run validation
+- `--source-branch <name>`: override the Git branch name attached to the hosted Pages deploy metadata
 
 When `deploy` runs a real Workers deployment, it also syncs the Cloudflare Worker secrets from that same root environment file before deploying the Worker bundle, including `DEPLOY_SMOKE_SECRET` for the post-deploy signup smoke.
 
@@ -377,6 +379,8 @@ The workflow writes the matching root environment file on the runner and then ca
 
 - `python ./scripts/dev.py deploy --staging` for `staging`
 - `python ./scripts/dev.py deploy` for `production`
+
+The manual workflow also passes the triggering Git ref name into the CLI, so Pages deploys are attached to the actual release branch you launched from instead of always being recorded against `main`.
 
 The workflow expects GitHub Environment-scoped configuration named exactly like the root `.env` keys. Recommended setup:
 

@@ -3419,11 +3419,18 @@ def get_git_repository_fingerprint(repo_root: Path) -> dict[str, object]:
     }
 
 
-def build_deploy_fingerprint(config: DevConfig, *, target: str, env_values: dict[str, str]) -> str:
+def build_deploy_fingerprint(
+    config: DevConfig,
+    *,
+    target: str,
+    source_branch: str,
+    env_values: dict[str, str],
+) -> str:
     """Build a deterministic fingerprint for the current deploy intent."""
 
     fingerprint_payload = {
         "target": target,
+        "source_branch": source_branch,
         "root": get_git_repository_fingerprint(config.repo_root),
         "frontend": get_git_repository_fingerprint(config.repo_root / "frontend"),
         "backend": get_git_repository_fingerprint(config.repo_root / "backend"),
@@ -3892,7 +3899,13 @@ def sync_worker_secret(config: DevConfig, *, worker_config_path: Path, secret_na
     )
 
 
-def run_pages_deploy(config: DevConfig, *, target: str, subprocess_env: dict[str, str]) -> None:
+def run_pages_deploy(
+    config: DevConfig,
+    *,
+    target: str,
+    source_branch: str,
+    subprocess_env: dict[str, str],
+) -> None:
     """Deploy the built SPA bundle to Cloudflare Pages."""
 
     run_command(
@@ -3905,7 +3918,7 @@ def run_pages_deploy(config: DevConfig, *, target: str, subprocess_env: dict[str
             "--project-name",
             get_deploy_pages_project_name(target=target),
             "--branch",
-            "main",
+            source_branch,
         ],
         cwd=config.repo_root,
         env=subprocess_env,
@@ -4121,10 +4134,39 @@ def run_pages_deploy_smoke(env_values: dict[str, str]) -> None:
         raise DevCliError("Pages smoke failed: expected landing-page copy was not present in the rendered HTML.")
 
 
+def resolve_deploy_source_branch(
+    config: DevConfig,
+    *,
+    explicit_source_branch: str | None = None,
+) -> str:
+    """Resolve the branch name that should be attached to a hosted Pages deploy."""
+
+    if explicit_source_branch and explicit_source_branch.strip():
+        return explicit_source_branch.strip()
+
+    github_ref_name = os.environ.get("GITHUB_REF_NAME", "").strip()
+    if github_ref_name:
+        return github_ref_name
+
+    current_branch = run_command(
+        ["git", "branch", "--show-current"],
+        cwd=config.repo_root,
+        capture_output=True,
+    ).stdout.strip()
+    if current_branch:
+        return current_branch
+
+    raise DevCliError(
+        "Unable to determine the deploy source branch from Git or GITHUB_REF_NAME. "
+        "Rerun from an attached branch or provide --source-branch explicitly."
+    )
+
+
 def deploy_migration_target(
     config: DevConfig,
     *,
     target: str,
+    source_branch: str | None,
     force: bool,
     upgrade: bool,
     preflight_only: bool,
@@ -4142,6 +4184,7 @@ def deploy_migration_target(
 
     env_values = require_environment_values(*DEPLOY_REQUIRED_ENV_NAMES, context=f"{target.title()} deployment")
     subprocess_env = build_deploy_subprocess_environment(env_values)
+    resolved_source_branch = resolve_deploy_source_branch(config, explicit_source_branch=source_branch)
 
     run_deploy_preflight(config, target=target, env_values=env_values, subprocess_env=subprocess_env)
     if preflight_only:
@@ -4151,7 +4194,12 @@ def deploy_migration_target(
     if dry_run_only:
         return
 
-    fingerprint = build_deploy_fingerprint(config, target=target, env_values=env_values)
+    fingerprint = build_deploy_fingerprint(
+        config,
+        target=target,
+        source_branch=resolved_source_branch,
+        env_values=env_values,
+    )
     completed_stages, _ = normalize_deploy_stage_state(
         config,
         target=target,
@@ -4187,7 +4235,12 @@ def deploy_migration_target(
                 run_workers_deploy(config, worker_config_path=worker_config_path, subprocess_env=subprocess_env)
             elif stage_name == "pages_deploy":
                 write_step(f"Deploying Cloudflare Pages bundle for {target}")
-                run_pages_deploy(config, target=target, subprocess_env=subprocess_env)
+                run_pages_deploy(
+                    config,
+                    target=target,
+                    source_branch=resolved_source_branch,
+                    subprocess_env=subprocess_env,
+                )
             else:
                 raise DevCliError(f"Unknown deploy stage: {stage_name}")
         except DevCliError as ex:
@@ -5605,6 +5658,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run preflight plus the non-publishing dry-run checks for the selected environment",
     )
+    deploy.add_argument(
+        "--source-branch",
+        default=None,
+        help="Explicit Git branch name to attach to hosted deploy metadata; defaults to GITHUB_REF_NAME or the current branch",
+    )
 
     deploy_staging = subparsers.add_parser(
         "deploy-staging",
@@ -5630,6 +5688,11 @@ def build_parser() -> argparse.ArgumentParser:
     deploy_staging.add_argument(
         "--dry-run-only",
         action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    deploy_staging.add_argument(
+        "--source-branch",
+        default=None,
         help=argparse.SUPPRESS,
     )
 
@@ -5865,6 +5928,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             deploy_migration_target(
                 config,
                 target=resolve_deploy_target(staging=args.staging),
+                source_branch=args.source_branch,
                 force=args.force,
                 upgrade=args.upgrade,
                 preflight_only=args.preflight_only,
@@ -5874,6 +5938,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             deploy_migration_target(
                 config,
                 target="staging",
+                source_branch=args.source_branch,
                 force=args.force,
                 upgrade=args.upgrade,
                 preflight_only=args.preflight_only,

@@ -164,6 +164,52 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         ):
             self.assertIsNone(dev.infer_supabase_url_from_environment())
 
+    def test_resolve_deploy_source_branch_prefers_explicit_argument(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        with mock.patch.dict(dev.os.environ, {"GITHUB_REF_NAME": "staging"}, clear=False):
+            self.assertEqual(
+                "release/1.2.3",
+                dev.resolve_deploy_source_branch(config, explicit_source_branch="release/1.2.3"),
+            )
+
+    def test_resolve_deploy_source_branch_uses_github_ref_name_when_present(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        with mock.patch.dict(dev.os.environ, {"GITHUB_REF_NAME": "staging"}, clear=True):
+            self.assertEqual("staging", dev.resolve_deploy_source_branch(config))
+
+    def test_resolve_deploy_source_branch_falls_back_to_git_branch(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        git_branch_result = subprocess.CompletedProcess(
+            args=["git", "branch", "--show-current"],
+            returncode=0,
+            stdout="release/v1.0.0\n",
+            stderr="",
+        )
+        with mock.patch.dict(dev.os.environ, {}, clear=True):
+            with mock.patch.object(dev, "run_command", return_value=git_branch_result) as run_command_mock:
+                self.assertEqual("release/v1.0.0", dev.resolve_deploy_source_branch(config))
+
+        run_command_mock.assert_called_once()
+
+    def test_resolve_deploy_source_branch_requires_explicit_branch_when_detached(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        git_branch_result = subprocess.CompletedProcess(
+            args=["git", "branch", "--show-current"],
+            returncode=0,
+            stdout="\n",
+            stderr="",
+        )
+        with mock.patch.dict(dev.os.environ, {}, clear=True):
+            with mock.patch.object(dev, "run_command", return_value=git_branch_result):
+                with self.assertRaises(dev.DevCliError) as raised:
+                    dev.resolve_deploy_source_branch(config)
+
+        self.assertIn("--source-branch", str(raised.exception))
+
     def test_auto_load_command_environment_normalizes_inferred_supabase_url(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = pathlib.Path(temp_dir)
