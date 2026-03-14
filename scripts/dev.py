@@ -225,6 +225,29 @@ DEPLOY_SECRET_ENV_NAMES = (
     "DEPLOY_SMOKE_SECRET",
 )
 DEPLOY_BREVO_REQUIRED_ATTRIBUTES = ("SOURCE", "BE_LIFECYCLE_STATUS", "BE_ROLE_INTEREST")
+LEGACY_PAGES_DRY_RUN_REQUIRED_ENV_NAMES = (
+    "BOARD_ENTHUSIASTS_WORKERS_BASE_URL",
+    "SUPABASE_URL",
+    "SUPABASE_PUBLISHABLE_KEY",
+    "VITE_TURNSTILE_SITE_KEY",
+    "VITE_LANDING_MODE",
+)
+LEGACY_WORKERS_DRY_RUN_REQUIRED_ENV_NAMES = (
+    "BOARD_ENTHUSIASTS_WORKERS_BASE_URL",
+    "SUPABASE_URL",
+    "SUPABASE_PUBLISHABLE_KEY",
+    "SUPABASE_AVATARS_BUCKET",
+    "SUPABASE_CARD_IMAGES_BUCKET",
+    "SUPABASE_HERO_IMAGES_BUCKET",
+    "SUPABASE_LOGO_IMAGES_BUCKET",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_API_TOKEN",
+    "BREVO_SIGNUPS_LIST_ID",
+    "ALLOWED_WEB_ORIGINS",
+    "SUPPORT_REPORT_RECIPIENT",
+    "SUPPORT_REPORT_SENDER_EMAIL",
+    "SUPPORT_REPORT_SENDER_NAME",
+)
 DEPLOY_TRANSACTIONAL_STAGES = (
     "supabase_schema",
     "supabase_storage",
@@ -4269,6 +4292,58 @@ def run_deploy_dry_run(config: DevConfig, *, target: str, env_values: dict[str, 
     )
 
 
+def run_legacy_staging_dry_run(
+    config: DevConfig,
+    *,
+    pages_only: bool,
+    workers_only: bool,
+) -> None:
+    """Run the legacy staging-only partial dry-run modes kept for submodule CI compatibility."""
+
+    if pages_only == workers_only:
+        raise DevCliError("Legacy staging dry run requires exactly one of --pages-only or --workers-only.")
+
+    if pages_only:
+        env_values = require_environment_values(
+            *LEGACY_PAGES_DRY_RUN_REQUIRED_ENV_NAMES,
+            context="Legacy Pages staging dry run",
+        )
+        write_step("Running legacy Pages staging dry run")
+        write_step("Building SPA for Cloudflare Pages")
+        run_command(
+            build_workspace_npm_command(script_name="build", workspace_name=config.migration_spa_workspace_name),
+            cwd=config.repo_root,
+            env=build_deploy_frontend_environment(env_values),
+        )
+        return
+
+    env_values = require_environment_values(
+        *LEGACY_WORKERS_DRY_RUN_REQUIRED_ENV_NAMES,
+        context="Legacy Workers staging dry run",
+    )
+    subprocess_env = build_subprocess_env(
+        extra={
+            "CLOUDFLARE_API_TOKEN": env_values["CLOUDFLARE_API_TOKEN"],
+            "CLOUDFLARE_ACCOUNT_ID": env_values["CLOUDFLARE_ACCOUNT_ID"],
+        }
+    )
+    worker_config_path = get_deploy_worker_config_path(config, target="staging", env_values=env_values)
+    write_step("Running legacy Workers staging dry run")
+    write_step("Dry-running Cloudflare Workers bundle")
+    run_command(
+        [
+            "npx",
+            "wrangler",
+            "deploy",
+            "--dry-run",
+            "--config",
+            str(worker_config_path),
+        ],
+        cwd=config.repo_root,
+        env=subprocess_env,
+    )
+
+
 def sync_worker_secret(config: DevConfig, *, worker_config_path: Path, secret_name: str, secret_value: str, subprocess_env: dict[str, str]) -> None:
     """Sync a single Cloudflare Worker secret to the target script."""
 
@@ -6140,6 +6215,22 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     deploy_staging.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run_only",
+        help=argparse.SUPPRESS,
+    )
+    deploy_staging.add_argument(
+        "--pages-only",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    deploy_staging.add_argument(
+        "--workers-only",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    deploy_staging.add_argument(
         "--source-branch",
         default=None,
         help=argparse.SUPPRESS,
@@ -6384,6 +6475,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dry_run_only=args.dry_run_only,
             )
         elif args.command == "deploy-staging":
+            if getattr(args, "pages_only", False) or getattr(args, "workers_only", False):
+                if not args.dry_run_only:
+                    raise DevCliError(
+                        "Legacy deploy-staging partial modes are supported only with --dry-run/--dry-run-only."
+                    )
+                run_legacy_staging_dry_run(
+                    config,
+                    pages_only=getattr(args, "pages_only", False),
+                    workers_only=getattr(args, "workers_only", False),
+                )
+                return 0
             deploy_migration_target(
                 config,
                 target="staging",

@@ -1488,12 +1488,96 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
         deploy_args = parser.parse_args(["deploy", "--staging", "--upgrade", "--preflight-only"])
         legacy_args = parser.parse_args(["deploy-staging", "--force", "--dry-run-only"])
+        legacy_pages_args = parser.parse_args(["deploy-staging", "--dry-run", "--pages-only"])
+        legacy_workers_args = parser.parse_args(["deploy-staging", "--dry-run", "--workers-only"])
 
         self.assertTrue(deploy_args.staging)
         self.assertTrue(deploy_args.upgrade)
         self.assertTrue(deploy_args.preflight_only)
         self.assertTrue(legacy_args.force)
         self.assertTrue(legacy_args.dry_run_only)
+        self.assertTrue(legacy_pages_args.dry_run_only)
+        self.assertTrue(legacy_pages_args.pages_only)
+        self.assertTrue(legacy_workers_args.dry_run_only)
+        self.assertTrue(legacy_workers_args.workers_only)
+
+    def test_run_legacy_staging_dry_run_pages_only_builds_spa(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+        env_values = {
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_PUBLISHABLE_KEY": "publishable",
+            "VITE_TURNSTILE_SITE_KEY": "turnstile-site-key",
+            "VITE_LANDING_MODE": "true",
+        }
+
+        with mock.patch.object(
+            dev,
+            "require_environment_values",
+            return_value=env_values,
+        ), mock.patch.object(
+            dev,
+            "build_workspace_npm_command",
+            return_value=["npm", "run", "build", "--workspace", "@board-enthusiasts/spa"],
+        ) as build_workspace_npm_command, mock.patch.object(
+            dev,
+            "build_deploy_frontend_environment",
+            return_value={"VITE_API_BASE_URL": "https://api.staging.boardenthusiasts.com"},
+        ) as build_deploy_frontend_environment, mock.patch.object(dev, "run_command") as run_command:
+            dev.run_legacy_staging_dry_run(config, pages_only=True, workers_only=False)
+
+        build_workspace_npm_command.assert_called_once_with(
+            script_name="build",
+            workspace_name=config.migration_spa_workspace_name,
+        )
+        build_deploy_frontend_environment.assert_called_once_with(env_values)
+        run_command.assert_called_once_with(
+            ["npm", "run", "build", "--workspace", "@board-enthusiasts/spa"],
+            cwd=config.repo_root,
+            env={"VITE_API_BASE_URL": "https://api.staging.boardenthusiasts.com"},
+        )
+
+    def test_run_legacy_staging_dry_run_workers_only_dry_runs_worker(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+        env_values = {
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_PUBLISHABLE_KEY": "publishable",
+            "SUPABASE_AVATARS_BUCKET": "avatars",
+            "SUPABASE_CARD_IMAGES_BUCKET": "card-images",
+            "SUPABASE_HERO_IMAGES_BUCKET": "hero-images",
+            "SUPABASE_LOGO_IMAGES_BUCKET": "logo-images",
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+            "CLOUDFLARE_API_TOKEN": "token",
+            "BREVO_SIGNUPS_LIST_ID": "3",
+            "ALLOWED_WEB_ORIGINS": "https://staging.boardenthusiasts.com",
+            "SUPPORT_REPORT_RECIPIENT": "support@boardenthusiasts.com",
+            "SUPPORT_REPORT_SENDER_EMAIL": "noreply@boardenthusiasts.com",
+            "SUPPORT_REPORT_SENDER_NAME": "Board Enthusiasts",
+        }
+
+        with mock.patch.object(
+            dev,
+            "require_environment_values",
+            return_value=env_values,
+        ), mock.patch.object(
+            dev,
+            "build_subprocess_env",
+            return_value={"CLOUDFLARE_API_TOKEN": "token", "CLOUDFLARE_ACCOUNT_ID": "account-id"},
+        ) as build_subprocess_env, mock.patch.object(
+            dev,
+            "get_deploy_worker_config_path",
+            return_value=pathlib.Path("generated-wrangler.jsonc"),
+        ) as get_deploy_worker_config_path, mock.patch.object(dev, "run_command") as run_command:
+            dev.run_legacy_staging_dry_run(config, pages_only=False, workers_only=True)
+
+        build_subprocess_env.assert_called_once()
+        get_deploy_worker_config_path.assert_called_once_with(config, target="staging", env_values=env_values)
+        run_command.assert_called_once_with(
+            ["npx", "wrangler", "deploy", "--dry-run", "--config", "generated-wrangler.jsonc"],
+            cwd=config.repo_root,
+            env={"CLOUDFLARE_API_TOKEN": "token", "CLOUDFLARE_ACCOUNT_ID": "account-id"},
+        )
 
     def test_env_parser_accepts_github_environment_sync_flags(self) -> None:
         parser = dev.build_parser()
