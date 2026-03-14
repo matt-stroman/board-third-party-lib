@@ -648,6 +648,58 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         ):
             dev.assert_worker_custom_domain_dns_prerequisites(env_values)
 
+    def test_run_workers_deploy_smoke_preserves_smoke_secret_for_support_issue_probe(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
+            "DEPLOY_SMOKE_SECRET": "smoke-secret",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_SECRET_KEY": "secret-key",
+            "BREVO_API_KEY": "brevo-api-key",
+        }
+        contact = {"id": "contact-1", "lifecycle_status": "waitlisted"}
+
+        with mock.patch.object(dev, "wait_for_workers_deploy_smoke_base_url"), mock.patch.object(
+            dev,
+            "request_json",
+            side_effect=[
+                {"status": "ready"},
+                {"accepted": True},
+                {"accepted": True},
+            ],
+        ) as request_json, mock.patch.object(
+            dev,
+            "get_supabase_marketing_contact",
+            side_effect=[contact, contact],
+        ), mock.patch.object(
+            dev,
+            "get_supabase_marketing_contact_role_interests",
+            return_value=["player"],
+        ), mock.patch.object(
+            dev,
+            "get_brevo_contact",
+            return_value={"id": 42},
+        ), mock.patch.object(
+            dev,
+            "delete_supabase_marketing_contact",
+        ), mock.patch.object(
+            dev,
+            "delete_brevo_contact",
+        ), mock.patch.object(
+            dev.time,
+            "time",
+            return_value=1773474581,
+        ):
+            dev.run_workers_deploy_smoke(
+                dev.config_from_args(self.create_args(), pathlib.Path.cwd()),
+                target="staging",
+                env_values=env_values,
+            )
+
+        support_call = request_json.call_args_list[2]
+        self.assertEqual("https://api.staging.boardenthusiasts.com/support/issues", support_call.kwargs["url"])
+        self.assertEqual("smoke-secret", support_call.kwargs["headers"]["x-board-enthusiasts-deploy-smoke-secret"])
+
     def test_has_local_required_schema_includes_marketing_contacts(self) -> None:
         runtime_env = {
             "SUPABASE_URL": "http://127.0.0.1:55421",
