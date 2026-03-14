@@ -471,6 +471,8 @@ Steps:
 10. Re-run that sync any time you change the local env file before a hosted deploy attempt, because deploy preflight now checks the matching GitHub Environment for drift.
 11. Do **not** create manual Cloudflare DNS records for the Worker API hostnames (`api.staging.boardenthusiasts.com`, later `api.boardenthusiasts.com`) when the deploy flow is managing Worker custom domains. The Worker custom domain owns that hostname and Cloudflare will manage the DNS record/certificate attachment.
 12. If you created one earlier while bootstrapping staging, delete that DNS record before the first successful Worker custom-domain deploy. Otherwise deploy preflight now fails early with the same conflict you would see in the Cloudflare UI.
+13. Do **not** configure the SPA web hostnames (`staging.boardenthusiasts.com`, later `boardenthusiasts.com`) as Cloudflare Email Routing subdomains. Those hostnames are reserved for Cloudflare Pages custom domains.
+14. The deploy flow now attaches the Pages custom domain and keeps the proxied CNAME pointed at the current release branch alias automatically. Leave at most one DNS record on the SPA hostname, and make sure it is either absent or a single CNAME that the deploy flow can update.
 
 Recommended Environment `vars`:
 

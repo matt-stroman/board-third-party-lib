@@ -379,6 +379,105 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
         self.assertEqual(routes, [{"pattern": "api.boardenthusiasts.com", "custom_domain": True}])
 
+    def test_build_cloudflare_pages_branch_alias_hostname_normalizes_release_branch(self) -> None:
+        alias = dev.build_cloudflare_pages_branch_alias_hostname(
+            project_name="board-enthusiasts-staging",
+            source_branch="staging/1.0.0-landing-page.0",
+        )
+
+        self.assertEqual(alias, "staging-1-0-0-landing-page-0.board-enthusiasts-staging.pages.dev")
+
+    def test_ensure_cloudflare_pages_custom_domain_attaches_missing_hostname(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+            "CLOUDFLARE_API_TOKEN": "token",
+        }
+
+        with mock.patch.object(dev, "get_cloudflare_pages_project_domains", return_value=[]), mock.patch.object(
+            dev,
+            "request_json",
+            return_value={"success": True},
+        ) as request_json:
+            dev.ensure_cloudflare_pages_custom_domain(env_values, target="staging")
+
+        request_json.assert_called_once_with(
+            url="https://api.cloudflare.com/client/v4/accounts/account-id/pages/projects/board-enthusiasts-staging/domains",
+            method="POST",
+            headers={
+                "Authorization": "Bearer token",
+                "Content-Type": "application/json",
+            },
+            payload={"name": "staging.boardenthusiasts.com"},
+        )
+
+    def test_sync_cloudflare_pages_domain_dns_updates_existing_record_target(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+            "CLOUDFLARE_API_TOKEN": "token",
+        }
+
+        with mock.patch.object(
+            dev,
+            "get_cloudflare_zone_for_hostname",
+            return_value={"id": "zone-id"},
+        ), mock.patch.object(
+            dev,
+            "get_cloudflare_dns_records",
+            return_value=[
+                {
+                    "id": "dns-id",
+                    "type": "CNAME",
+                    "name": "staging.boardenthusiasts.com",
+                    "content": "staging.boardenthusiasts.pages.dev",
+                    "proxied": True,
+                }
+            ],
+        ), mock.patch.object(dev, "request_json", return_value={"success": True}) as request_json:
+            dev.sync_cloudflare_pages_domain_dns(
+                env_values,
+                target="staging",
+                source_branch="staging/1.0.0-landing-page.0",
+            )
+
+        request_json.assert_called_once_with(
+            url="https://api.cloudflare.com/client/v4/zones/zone-id/dns_records/dns-id",
+            method="PUT",
+            headers={
+                "Authorization": "Bearer token",
+                "Content-Type": "application/json",
+            },
+            payload={
+                "type": "CNAME",
+                "name": "staging.boardenthusiasts.com",
+                "content": "staging-1-0-0-landing-page-0.board-enthusiasts-staging.pages.dev",
+                "proxied": True,
+                "ttl": 1,
+            },
+        )
+
+    def test_assert_pages_custom_domain_prerequisites_rejects_non_cname_records(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://boardenthusiasts.com",
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+            "CLOUDFLARE_API_TOKEN": "token",
+        }
+
+        with mock.patch.object(
+            dev,
+            "get_cloudflare_zone_for_hostname",
+            return_value={"id": "zone-id"},
+        ), mock.patch.object(
+            dev,
+            "get_cloudflare_dns_records",
+            return_value=[{"id": "dns-id", "type": "A", "name": "boardenthusiasts.com"}],
+        ):
+            with self.assertRaises(dev.DevCliError) as raised:
+                dev.assert_pages_custom_domain_prerequisites(env_values)
+
+        self.assertIn("proxied CNAME target", str(raised.exception))
+
     def test_assert_worker_custom_domain_dns_prerequisites_skips_existing_live_custom_domain(self) -> None:
         env_values = {
             "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",

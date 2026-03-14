@@ -409,6 +409,8 @@ Typical Environment `vars`:
 
 For Worker deploys that use a custom API hostname from `BOARD_ENTHUSIASTS_WORKERS_BASE_URL`, the root CLI now renders a Worker custom-domain route automatically. Do not create a standalone Cloudflare DNS record for that hostname ahead of time; preflight will fail until the conflicting DNS record is removed because the Worker custom domain needs to own the hostname directly.
 
+For Pages deploys that use a custom SPA hostname from `BOARD_ENTHUSIASTS_SPA_BASE_URL`, the root CLI now attaches the Pages custom domain through Cloudflare and keeps the proxied CNAME pointed at the current branch alias for the target project. Do not configure that hostname as a Cloudflare Email Routing subdomain, and do not keep multiple DNS records on the same hostname. The deploy flow expects zero or one proxied CNAME record for the SPA hostname.
+
 Typical Environment `secrets`:
 
 - `SUPABASE_SECRET_KEY`

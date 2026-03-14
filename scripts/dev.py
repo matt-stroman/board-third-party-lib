@@ -3579,6 +3579,18 @@ def get_cloudflare_pages_projects(config: DevConfig, *, env: dict[str, str]) -> 
     return [entry for entry in payload if isinstance(entry, dict)]
 
 
+def get_pages_custom_domain_hostname(*, spa_base_url: str) -> str | None:
+    """Return the Pages custom-domain hostname when the deploy target is not pages.dev."""
+
+    parsed = urllib.parse.urlparse(spa_base_url)
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        raise DevCliError(f"SPA base URL is not a valid URL: {spa_base_url}")
+    if is_local_http_url(spa_base_url) or hostname.endswith(".pages.dev"):
+        return None
+    return hostname
+
+
 def build_cloudflare_api_headers(env_values: dict[str, str]) -> dict[str, str]:
     """Build the authenticated headers for direct Cloudflare API calls."""
 
@@ -3597,6 +3609,20 @@ def extract_cloudflare_result_list(payload: object, *, context: str) -> list[dic
     if not isinstance(result, list):
         raise DevCliError(f"Cloudflare {context} did not include a result list.")
     return [entry for entry in result if isinstance(entry, dict)]
+
+
+def get_cloudflare_pages_project_domains(env_values: dict[str, str], *, project_name: str) -> list[dict[str, object]]:
+    """Return the configured custom domains for a Cloudflare Pages project."""
+
+    payload = request_json(
+        url=(
+            "https://api.cloudflare.com/client/v4/accounts/"
+            f"{urllib.parse.quote(env_values['CLOUDFLARE_ACCOUNT_ID'])}/pages/projects/"
+            f"{urllib.parse.quote(project_name)}/domains"
+        ),
+        headers=build_cloudflare_api_headers(env_values),
+    )
+    return extract_cloudflare_result_list(payload, context=f"Pages domain lookup for {project_name}")
 
 
 def iter_hostname_zone_candidates(hostname: str) -> list[str]:
@@ -3644,6 +3670,27 @@ def get_cloudflare_zone_for_hostname(env_values: dict[str, str], *, hostname: st
     )
 
 
+def get_cloudflare_dns_records(env_values: dict[str, str], *, zone_id: str, hostname: str) -> list[dict[str, object]]:
+    """Return the Cloudflare DNS records for an exact hostname within a zone."""
+
+    try:
+        payload = request_json(
+            url=(
+                f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records"
+                f"?name={urllib.parse.quote(hostname)}"
+            ),
+            headers=build_cloudflare_api_headers(env_values),
+        )
+    except DevCliError as ex:
+        raise DevCliError(
+            "Cloudflare DNS access failed while validating the custom domain. "
+            "Ensure the API token includes Zone DNS read/edit access for the configured zone.\n"
+            f"Original error: {ex}"
+        ) from ex
+
+    return extract_cloudflare_result_list(payload, context=f"DNS lookup for {hostname}")
+
+
 def assert_worker_custom_domain_dns_prerequisites(env_values: dict[str, str]) -> None:
     """Fail early when a Worker custom-domain hostname is blocked by an existing DNS record."""
 
@@ -3661,14 +3708,7 @@ def assert_worker_custom_domain_dns_prerequisites(env_values: dict[str, str]) ->
     if not zone_id:
         raise DevCliError(f"Cloudflare zone lookup for '{hostname}' did not include an id.")
 
-    payload = request_json(
-        url=(
-            f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records"
-            f"?name={urllib.parse.quote(hostname)}"
-        ),
-        headers=build_cloudflare_api_headers(env_values),
-    )
-    records = extract_cloudflare_result_list(payload, context=f"DNS lookup for {hostname}")
+    records = get_cloudflare_dns_records(env_values, zone_id=zone_id, hostname=hostname)
     conflicting_records = [
         record for record in records if str(record.get("name", "")).strip().lower() == hostname.lower()
     ]
@@ -3680,6 +3720,123 @@ def assert_worker_custom_domain_dns_prerequisites(env_values: dict[str, str]) ->
         f"Cloudflare DNS already has record(s) for Worker custom domain '{hostname}' ({', '.join(record_types)}).\n"
         "Delete the existing DNS record in Cloudflare DNS before deploying. "
         "Worker custom domains manage the hostname automatically and cannot be attached while a standalone DNS record already exists."
+    )
+
+
+def build_cloudflare_pages_branch_alias_hostname(*, project_name: str, source_branch: str) -> str:
+    """Build the Pages preview alias hostname for a source branch."""
+
+    normalized_branch = re.sub(r"[^a-z0-9]", "-", source_branch.strip().lower())
+    normalized_branch = re.sub(r"-{2,}", "-", normalized_branch).strip("-")
+    if not normalized_branch:
+        raise DevCliError(f"Unable to derive a Pages branch alias from source branch '{source_branch}'.")
+    return f"{normalized_branch}.{project_name}.pages.dev"
+
+
+def assert_pages_custom_domain_dns_access(env_values: dict[str, str]) -> None:
+    """Verify the token can inspect and later manage DNS for the Pages custom domain hostname."""
+
+    hostname = get_pages_custom_domain_hostname(spa_base_url=env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"])
+    if hostname is None:
+        return
+
+    zone = get_cloudflare_zone_for_hostname(env_values, hostname=hostname)
+    zone_id = str(zone.get("id", "")).strip()
+    if not zone_id:
+        raise DevCliError(f"Cloudflare zone lookup for '{hostname}' did not include an id.")
+    get_cloudflare_dns_records(env_values, zone_id=zone_id, hostname=hostname)
+
+
+def ensure_cloudflare_pages_custom_domain(env_values: dict[str, str], *, target: str) -> None:
+    """Ensure the SPA custom domain is attached to the target Pages project."""
+
+    hostname = get_pages_custom_domain_hostname(spa_base_url=env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"])
+    if hostname is None:
+        return
+
+    project_name = get_deploy_pages_project_name(target=target)
+    domains = get_cloudflare_pages_project_domains(env_values, project_name=project_name)
+    if any(str(domain.get("name", "")).strip().lower() == hostname for domain in domains):
+        return
+
+    write_step(f"Attaching Cloudflare Pages custom domain {hostname}")
+    request_json(
+        url=(
+            "https://api.cloudflare.com/client/v4/accounts/"
+            f"{urllib.parse.quote(env_values['CLOUDFLARE_ACCOUNT_ID'])}/pages/projects/"
+            f"{urllib.parse.quote(project_name)}/domains"
+        ),
+        method="POST",
+        headers=build_cloudflare_api_headers(env_values),
+        payload={"name": hostname},
+    )
+
+
+def sync_cloudflare_pages_domain_dns(
+    env_values: dict[str, str],
+    *,
+    target: str,
+    source_branch: str,
+) -> None:
+    """Point the Pages custom domain DNS record at the current branch alias target."""
+
+    hostname = get_pages_custom_domain_hostname(spa_base_url=env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"])
+    if hostname is None:
+        return
+
+    project_name = get_deploy_pages_project_name(target=target)
+    alias_target = build_cloudflare_pages_branch_alias_hostname(project_name=project_name, source_branch=source_branch)
+    zone = get_cloudflare_zone_for_hostname(env_values, hostname=hostname)
+    zone_id = str(zone.get("id", "")).strip()
+    if not zone_id:
+        raise DevCliError(f"Cloudflare zone lookup for '{hostname}' did not include an id.")
+
+    records = [
+        record
+        for record in get_cloudflare_dns_records(env_values, zone_id=zone_id, hostname=hostname)
+        if str(record.get("name", "")).strip().lower() == hostname
+    ]
+
+    if len(records) > 1:
+        raise DevCliError(
+            f"Cloudflare DNS has multiple records for '{hostname}'. Clean up the duplicate records before deploying again."
+        )
+
+    if records:
+        record = records[0]
+        record_type = str(record.get("type", "")).strip().upper()
+        if record_type != "CNAME":
+            raise DevCliError(
+                f"Cloudflare DNS record '{hostname}' is type {record_type}, but Pages custom domains require a CNAME target. "
+                "Replace the record with a proxied CNAME before deploying again."
+            )
+        current_target = str(record.get("content", "")).strip().lower()
+        proxied = bool(record.get("proxied", False))
+        if current_target == alias_target and proxied:
+            return
+
+        record_id = str(record.get("id", "")).strip()
+        if not record_id:
+            raise DevCliError(f"Cloudflare DNS record for '{hostname}' did not include an id.")
+
+        write_step(f"Updating Cloudflare DNS for Pages custom domain {hostname} -> {alias_target}")
+        request_json(
+            url=(
+                f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records/"
+                f"{urllib.parse.quote(record_id)}"
+            ),
+            method="PUT",
+            headers=build_cloudflare_api_headers(env_values),
+            payload={"type": "CNAME", "name": hostname, "content": alias_target, "proxied": True, "ttl": 1},
+        )
+        return
+
+    write_step(f"Creating Cloudflare DNS for Pages custom domain {hostname} -> {alias_target}")
+    request_json(
+        url=f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records",
+        method="POST",
+        headers=build_cloudflare_api_headers(env_values),
+        payload={"type": "CNAME", "name": hostname, "content": alias_target, "proxied": True, "ttl": 1},
     )
 
 
@@ -3706,6 +3863,36 @@ def ensure_cloudflare_pages_project(config: DevConfig, *, target: str, env: dict
         cwd=config.repo_root,
         env=env,
     )
+
+
+def assert_pages_custom_domain_prerequisites(env_values: dict[str, str]) -> None:
+    """Verify the Pages custom-domain hostname can be managed for the current zone."""
+
+    hostname = get_pages_custom_domain_hostname(spa_base_url=env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"])
+    if hostname is None:
+        return
+
+    zone = get_cloudflare_zone_for_hostname(env_values, hostname=hostname)
+    zone_id = str(zone.get("id", "")).strip()
+    if not zone_id:
+        raise DevCliError(f"Cloudflare zone lookup for '{hostname}' did not include an id.")
+    records = [
+        record
+        for record in get_cloudflare_dns_records(env_values, zone_id=zone_id, hostname=hostname)
+        if str(record.get("name", "")).strip().lower() == hostname
+    ]
+    if len(records) > 1:
+        raise DevCliError(
+            f"Cloudflare DNS has multiple records for Pages custom domain '{hostname}'. "
+            "Leave at most one record for this hostname before deploying."
+        )
+    if records:
+        record_type = str(records[0].get("type", "")).strip().upper()
+        if record_type != "CNAME":
+            raise DevCliError(
+                f"Cloudflare DNS record '{hostname}' is type {record_type}, but the deploy flow manages Pages custom domains "
+                "through a proxied CNAME target. Replace the existing record before deploying."
+            )
 
 
 def run_supabase_link(config: DevConfig, *, env_values: dict[str, str], subprocess_env: dict[str, str]) -> None:
@@ -3982,6 +4169,7 @@ def run_deploy_preflight(config: DevConfig, *, target: str, env_values: dict[str
     assert_url_hostname_resolves(env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"], label="SPA base URL")
     assert_url_hostname_resolves(env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"], label="Workers base URL")
     get_cloudflare_pages_projects(config, env=subprocess_env)
+    assert_pages_custom_domain_prerequisites(env_values)
     assert_worker_custom_domain_dns_prerequisites(env_values)
     assert_supabase_publishable_access(env_values)
     assert_supabase_secret_access(env_values)
@@ -4056,6 +4244,18 @@ def run_pages_deploy(
         cwd=config.repo_root,
         env=subprocess_env,
     )
+
+
+def finalize_pages_custom_domain(
+    env_values: dict[str, str],
+    *,
+    target: str,
+    source_branch: str,
+) -> None:
+    """Attach the Pages custom domain and point it at the current branch alias."""
+
+    ensure_cloudflare_pages_custom_domain(env_values, target=target)
+    sync_cloudflare_pages_domain_dns(env_values, target=target, source_branch=source_branch)
 
 
 def run_workers_deploy(config: DevConfig, *, worker_config_path: Path, subprocess_env: dict[str, str]) -> None:
@@ -4273,18 +4473,29 @@ def run_pages_deploy_smoke(env_values: dict[str, str]) -> None:
     """Verify the hosted SPA is reachable after deploy."""
 
     write_step("Running post-deploy Pages smoke")
-    request = urllib.request.Request(
-        env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"],
-        headers={"accept": "text/html"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            html = response.read().decode("utf-8", errors="replace")
-    except Exception as ex:  # noqa: BLE001
-        raise DevCliError(f"Pages smoke failed: unable to load {env_values['BOARD_ENTHUSIASTS_SPA_BASE_URL']}.") from ex
+    deadline = time.time() + 300
+    last_error = "Pages custom domain did not become reachable."
+    request = urllib.request.Request(env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"], headers={"accept": "text/html"})
 
-    if "Board Enthusiasts" not in html or "Get early access" not in html:
-        raise DevCliError("Pages smoke failed: expected landing-page copy was not present in the rendered HTML.")
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                html = response.read().decode("utf-8", errors="replace")
+        except Exception as ex:  # noqa: BLE001
+            last_error = str(ex)
+            time.sleep(5)
+            continue
+
+        if "Board Enthusiasts" in html and "Get early access" in html:
+            return
+
+        last_error = "Expected landing-page copy was not present in the rendered HTML."
+        time.sleep(5)
+
+    raise DevCliError(
+        "Pages smoke failed: the custom domain did not become ready within 300 seconds.\n"
+        f"Last error: {last_error}"
+    )
 
 
 def resolve_deploy_source_branch(
@@ -4394,6 +4605,7 @@ def deploy_migration_target(
                     source_branch=resolved_source_branch,
                     subprocess_env=subprocess_env,
                 )
+                finalize_pages_custom_domain(env_values, target=target, source_branch=resolved_source_branch)
             else:
                 raise DevCliError(f"Unknown deploy stage: {stage_name}")
         except DevCliError as ex:
