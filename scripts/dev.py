@@ -3581,20 +3581,6 @@ def collect_named_entries(payload: object) -> set[str]:
     return discovered
 
 
-def assert_url_hostname_resolves(url: str, *, label: str) -> None:
-    """Ensure a deployment URL hostname resolves in DNS."""
-
-    parsed = urllib.parse.urlparse(url)
-    hostname = parsed.hostname
-    if not hostname:
-        raise DevCliError(f"{label} is not a valid URL: {url}")
-
-    try:
-        socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
-    except socket.gaierror as ex:
-        raise DevCliError(f"{label} host does not currently resolve in DNS: {hostname}") from ex
-
-
 def get_cloudflare_pages_projects(config: DevConfig, *, env: dict[str, str]) -> list[dict[str, object]]:
     """Return the accessible Cloudflare Pages projects for the authenticated account."""
 
@@ -4250,8 +4236,6 @@ def run_deploy_preflight(config: DevConfig, *, target: str, env_values: dict[str
 
     write_step(f"Running {target} deploy preflight")
     assert_github_environment_sync(config, target=target)
-    assert_url_hostname_resolves(env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"], label="SPA base URL")
-    assert_url_hostname_resolves(env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"], label="Workers base URL")
     get_cloudflare_pages_projects(config, env=subprocess_env)
     assert_pages_custom_domain_prerequisites(env_values)
     assert_worker_custom_domain_dns_prerequisites(env_values)
