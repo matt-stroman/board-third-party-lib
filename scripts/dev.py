@@ -3776,6 +3776,21 @@ def is_cloudflare_managed_apex_pages_record(record: dict[str, object], *, hostna
     return bool(record.get("proxied", False))
 
 
+def is_manageable_apex_pages_routing_record(record: dict[str, object], *, hostname: str, zone_name: str) -> bool:
+    """Return whether a Pages deploy can safely replace this apex routing record."""
+
+    normalized_hostname = hostname.strip().lower()
+    normalized_zone_name = zone_name.strip().lower()
+    if normalized_hostname != normalized_zone_name:
+        return False
+
+    record_type = str(record.get("type", "")).strip().upper()
+    if record_type not in {"A", "AAAA", "CNAME"}:
+        return False
+
+    return bool(record.get("proxied", False))
+
+
 def assert_worker_custom_domain_dns_prerequisites(env_values: dict[str, str]) -> None:
     """Fail early when a Worker custom-domain hostname is blocked by an existing DNS record."""
 
@@ -3897,42 +3912,69 @@ def sync_cloudflare_pages_domain_dns(
     )
 
     if len(records) > 1:
-        if all(is_cloudflare_managed_apex_pages_record(record, hostname=hostname, zone_name=zone_name) for record in records):
-            return
-        raise DevCliError(
-            f"Cloudflare DNS has multiple records for '{hostname}'. Clean up the duplicate records before deploying again."
-        )
+        if all(is_manageable_apex_pages_routing_record(record, hostname=hostname, zone_name=zone_name) for record in records):
+            for record in records:
+                record_id = str(record.get("id", "")).strip()
+                if not record_id:
+                    raise DevCliError(f"Cloudflare DNS record for '{hostname}' did not include an id.")
+                write_step(f"Deleting Cloudflare DNS record {hostname} ({str(record.get('type', '')).strip().upper() or 'UNKNOWN'})")
+                request_json(
+                    url=(
+                        f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records/"
+                        f"{urllib.parse.quote(record_id)}"
+                    ),
+                    method="DELETE",
+                    headers=build_cloudflare_api_headers(env_values),
+                )
+            records = []
+        else:
+            raise DevCliError(
+                f"Cloudflare DNS has multiple records for '{hostname}'. Clean up the duplicate records before deploying again."
+            )
 
     if records:
         record = records[0]
         record_type = str(record.get("type", "")).strip().upper()
         if is_cloudflare_managed_apex_pages_record(record, hostname=hostname, zone_name=zone_name):
-            return
-        if record_type != "CNAME":
+            record_id = str(record.get("id", "")).strip()
+            if not record_id:
+                raise DevCliError(f"Cloudflare DNS record for '{hostname}' did not include an id.")
+            write_step(f"Replacing Cloudflare apex routing record for Pages custom domain {hostname} -> {alias_target}")
+            request_json(
+                url=(
+                    f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records/"
+                    f"{urllib.parse.quote(record_id)}"
+                ),
+                method="DELETE",
+                headers=build_cloudflare_api_headers(env_values),
+            )
+            records = []
+        elif record_type != "CNAME":
             raise DevCliError(
                 f"Cloudflare DNS record '{hostname}' is type {record_type}, but Pages custom domains require a CNAME target. "
                 "Replace the record with a proxied CNAME before deploying again."
             )
-        current_target = str(record.get("content", "")).strip().lower()
-        proxied = bool(record.get("proxied", False))
-        if current_target == alias_target and proxied:
+        else:
+            current_target = str(record.get("content", "")).strip().lower()
+            proxied = bool(record.get("proxied", False))
+            if current_target == alias_target and proxied:
+                return
+
+            record_id = str(record.get("id", "")).strip()
+            if not record_id:
+                raise DevCliError(f"Cloudflare DNS record for '{hostname}' did not include an id.")
+
+            write_step(f"Updating Cloudflare DNS for Pages custom domain {hostname} -> {alias_target}")
+            request_json(
+                url=(
+                    f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records/"
+                    f"{urllib.parse.quote(record_id)}"
+                ),
+                method="PUT",
+                headers=build_cloudflare_api_headers(env_values),
+                payload={"type": "CNAME", "name": hostname, "content": alias_target, "proxied": True, "ttl": 1},
+            )
             return
-
-        record_id = str(record.get("id", "")).strip()
-        if not record_id:
-            raise DevCliError(f"Cloudflare DNS record for '{hostname}' did not include an id.")
-
-        write_step(f"Updating Cloudflare DNS for Pages custom domain {hostname} -> {alias_target}")
-        request_json(
-            url=(
-                f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records/"
-                f"{urllib.parse.quote(record_id)}"
-            ),
-            method="PUT",
-            headers=build_cloudflare_api_headers(env_values),
-            payload={"type": "CNAME", "name": hostname, "content": alias_target, "proxied": True, "ttl": 1},
-        )
-        return
 
     write_step(f"Creating Cloudflare DNS for Pages custom domain {hostname} -> {alias_target}")
     request_json(
@@ -3989,7 +4031,7 @@ def assert_pages_custom_domain_prerequisites(env_values: dict[str, str]) -> None
         hostname=hostname,
     )
     if len(records) > 1:
-        if all(is_cloudflare_managed_apex_pages_record(record, hostname=hostname, zone_name=zone_name) for record in records):
+        if all(is_manageable_apex_pages_routing_record(record, hostname=hostname, zone_name=zone_name) for record in records):
             return
         raise DevCliError(
             f"Cloudflare DNS has multiple records for Pages custom domain '{hostname}'. "
@@ -3997,7 +4039,7 @@ def assert_pages_custom_domain_prerequisites(env_values: dict[str, str]) -> None
         )
     if records:
         record_type = str(records[0].get("type", "")).strip().upper()
-        if is_cloudflare_managed_apex_pages_record(records[0], hostname=hostname, zone_name=zone_name):
+        if is_manageable_apex_pages_routing_record(records[0], hostname=hostname, zone_name=zone_name):
             return
         if record_type != "CNAME":
             raise DevCliError(

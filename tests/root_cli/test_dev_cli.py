@@ -555,7 +555,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
         self.assertIn("proxied CNAME target", str(raised.exception))
 
-    def test_assert_pages_custom_domain_prerequisites_allows_apex_cloudflare_managed_routing_records(self) -> None:
+    def test_assert_pages_custom_domain_prerequisites_allows_manageable_apex_routing_records(self) -> None:
         env_values = {
             "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://boardenthusiasts.com",
             "CLOUDFLARE_ACCOUNT_ID": "account-id",
@@ -578,7 +578,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         ):
             dev.assert_pages_custom_domain_prerequisites(env_values)
 
-    def test_sync_cloudflare_pages_domain_dns_skips_apex_cloudflare_managed_routing_records(self) -> None:
+    def test_sync_cloudflare_pages_domain_dns_replaces_manageable_apex_routing_records(self) -> None:
         env_values = {
             "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://boardenthusiasts.com",
             "CLOUDFLARE_ACCOUNT_ID": "account-id",
@@ -593,8 +593,8 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             dev,
             "get_cloudflare_dns_records",
             return_value=[
-                {"id": "a1", "type": "A", "name": "boardenthusiasts.com", "proxied": True},
-                {"id": "a2", "type": "A", "name": "boardenthusiasts.com", "proxied": True},
+                {"id": "a1", "type": "A", "name": "boardenthusiasts.com", "proxied": True, "content": "15.197.148.33"},
+                {"id": "a2", "type": "A", "name": "boardenthusiasts.com", "proxied": True, "content": "3.33.130.190"},
                 {"id": "mx1", "type": "MX", "name": "boardenthusiasts.com"},
             ],
         ), mock.patch.object(dev, "request_json") as request_json:
@@ -604,7 +604,38 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 source_branch="production/1.0.0-landing-page.0",
             )
 
-        request_json.assert_not_called()
+        self.assertEqual(3, request_json.call_count)
+        request_json.assert_any_call(
+            url="https://api.cloudflare.com/client/v4/zones/zone-id/dns_records/a1",
+            method="DELETE",
+            headers={
+                "Authorization": "Bearer token",
+                "Content-Type": "application/json",
+            },
+        )
+        request_json.assert_any_call(
+            url="https://api.cloudflare.com/client/v4/zones/zone-id/dns_records/a2",
+            method="DELETE",
+            headers={
+                "Authorization": "Bearer token",
+                "Content-Type": "application/json",
+            },
+        )
+        request_json.assert_any_call(
+            url="https://api.cloudflare.com/client/v4/zones/zone-id/dns_records",
+            method="POST",
+            headers={
+                "Authorization": "Bearer token",
+                "Content-Type": "application/json",
+            },
+            payload={
+                "type": "CNAME",
+                "name": "boardenthusiasts.com",
+                "content": "production-1-0-0-landing-page-0.board-enthusiasts.pages.dev",
+                "proxied": True,
+                "ttl": 1,
+            },
+        )
 
     def test_assert_worker_custom_domain_dns_prerequisites_skips_existing_live_custom_domain(self) -> None:
         env_values = {
