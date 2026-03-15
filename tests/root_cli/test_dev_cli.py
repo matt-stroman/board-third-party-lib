@@ -426,6 +426,16 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
         self.assertEqual(alias, "staging-1-0-0-landing-page-0.board-enthusiasts-staging.pages.dev")
 
+    def test_parse_cloudflare_pages_alias_hostname_uses_wranger_reported_alias(self) -> None:
+        output = (
+            "✨ Deployment complete! Take a peek over at https://0b1901b2.board-enthusiasts.pages.dev\n"
+            "✨ Deployment alias URL: https://production-1-0-0-landing-pag.board-enthusiasts.pages.dev\n"
+        )
+
+        alias = dev.parse_cloudflare_pages_alias_hostname(output)
+
+        self.assertEqual(alias, "production-1-0-0-landing-pag.board-enthusiasts.pages.dev")
+
     def test_ensure_cloudflare_pages_custom_domain_attaches_missing_hostname(self) -> None:
         env_values = {
             "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
@@ -515,7 +525,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             dev.sync_cloudflare_pages_domain_dns(
                 env_values,
                 target="staging",
-                source_branch="staging/1.0.0-landing-page.0",
+                alias_target="staging-1-0-0-landing-pag.board-enthusiasts-staging.pages.dev",
             )
 
         request_json.assert_called_once_with(
@@ -528,7 +538,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             payload={
                 "type": "CNAME",
                 "name": "staging.boardenthusiasts.com",
-                "content": "staging-1-0-0-landing-page-0.board-enthusiasts-staging.pages.dev",
+                "content": "staging-1-0-0-landing-pag.board-enthusiasts-staging.pages.dev",
                 "proxied": True,
                 "ttl": 1,
             },
@@ -601,7 +611,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             dev.sync_cloudflare_pages_domain_dns(
                 env_values,
                 target="production",
-                source_branch="production/1.0.0-landing-page.0",
+                alias_target="production-1-0-0-landing-pag.board-enthusiasts.pages.dev",
             )
 
         self.assertEqual(3, request_json.call_count)
@@ -631,7 +641,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             payload={
                 "type": "CNAME",
                 "name": "boardenthusiasts.com",
-                "content": "production-1-0-0-landing-page-0.board-enthusiasts.pages.dev",
+                "content": "production-1-0-0-landing-pag.board-enthusiasts.pages.dev",
                 "proxied": True,
                 "ttl": 1,
             },
@@ -883,7 +893,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 <!doctype html>
 <html lang="en">
   <head>
-    <title>Board Enthusiasts</title>
+    <title>Board Enthusiasts | Community Hub for Board Players and Builders</title>
     <script type="module" crossorigin src="/assets/index-abc123.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-def456.css">
   </head>
@@ -894,6 +904,23 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 """
 
         self.assertTrue(dev.is_expected_pages_shell_html(html))
+
+    def test_is_expected_pages_shell_html_rejects_unrelated_shell_without_brand_marker(self) -> None:
+        html = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Example App</title>
+    <script type="module" crossorigin src="/assets/index-abc123.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-def456.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+"""
+
+        self.assertFalse(dev.is_expected_pages_shell_html(html))
 
     def test_is_expected_pages_shell_html_rejects_cloudflare_placeholder(self) -> None:
         html = """
