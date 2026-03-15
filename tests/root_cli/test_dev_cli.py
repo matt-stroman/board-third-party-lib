@@ -893,7 +893,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 <!doctype html>
 <html lang="en">
   <head>
-    <title>Board Enthusiasts</title>
+    <title>Board Enthusiasts | Community Hub for Board Players and Builders</title>
     <script type="module" crossorigin src="/assets/index-abc123.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-def456.css">
   </head>
@@ -904,6 +904,23 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 """
 
         self.assertTrue(dev.is_expected_pages_shell_html(html))
+
+    def test_is_expected_pages_shell_html_rejects_unrelated_shell_without_brand_marker(self) -> None:
+        html = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Example App</title>
+    <script type="module" crossorigin src="/assets/index-abc123.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-def456.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+"""
+
+        self.assertFalse(dev.is_expected_pages_shell_html(html))
 
     def test_is_expected_pages_shell_html_rejects_cloudflare_placeholder(self) -> None:
         html = """
