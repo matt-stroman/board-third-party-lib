@@ -648,6 +648,47 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         ):
             dev.assert_worker_custom_domain_dns_prerequisites(env_values)
 
+    def test_run_deploy_preflight_does_not_require_custom_domains_to_resolve_before_deploy(self) -> None:
+        args = self.create_args()
+        config = dev.config_from_args(args, pathlib.Path.cwd())
+        env_values = {
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://boardenthusiasts.com",
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.boardenthusiasts.com",
+        }
+        subprocess_env = {"CLOUDFLARE_API_TOKEN": "token"}
+
+        with mock.patch.object(dev, "assert_github_environment_sync") as assert_github_environment_sync, mock.patch.object(
+            dev, "get_cloudflare_pages_projects"
+        ) as get_cloudflare_pages_projects, mock.patch.object(
+            dev, "assert_pages_custom_domain_prerequisites"
+        ) as assert_pages_custom_domain_prerequisites, mock.patch.object(
+            dev, "assert_worker_custom_domain_dns_prerequisites"
+        ) as assert_worker_custom_domain_dns_prerequisites, mock.patch.object(
+            dev, "assert_supabase_publishable_access"
+        ) as assert_supabase_publishable_access, mock.patch.object(
+            dev, "assert_supabase_secret_access"
+        ) as assert_supabase_secret_access, mock.patch.object(
+            dev, "assert_turnstile_secret_access"
+        ) as assert_turnstile_secret_access, mock.patch.object(
+            dev, "assert_brevo_configuration"
+        ) as assert_brevo_configuration, mock.patch.object(dev, "run_supabase_link") as run_supabase_link:
+            dev.run_deploy_preflight(
+                config,
+                target="production",
+                env_values=env_values,
+                subprocess_env=subprocess_env,
+            )
+
+        assert_github_environment_sync.assert_called_once_with(config, target="production")
+        get_cloudflare_pages_projects.assert_called_once_with(config, env=subprocess_env)
+        assert_pages_custom_domain_prerequisites.assert_called_once_with(env_values)
+        assert_worker_custom_domain_dns_prerequisites.assert_called_once_with(env_values)
+        assert_supabase_publishable_access.assert_called_once_with(env_values)
+        assert_supabase_secret_access.assert_called_once_with(env_values)
+        assert_turnstile_secret_access.assert_called_once_with(env_values)
+        assert_brevo_configuration.assert_called_once_with(env_values)
+        run_supabase_link.assert_called_once_with(config, env_values=env_values, subprocess_env=subprocess_env)
+
     def test_run_workers_deploy_smoke_preserves_smoke_secret_for_support_issue_probe(self) -> None:
         env_values = {
             "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
