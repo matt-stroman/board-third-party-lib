@@ -4704,9 +4704,9 @@ def is_expected_pages_shell_html(html: str) -> bool:
 
     normalized = html.lower()
     return (
-        "<title>board enthusiasts</title>" in normalized
-        and '<div id="root"></div>' in normalized
+        '<div id="root"></div>' in normalized
         and "/assets/index-" in normalized
+        and "board enthusiasts" in normalized
         and "nothing is here yet" not in normalized
         and "error 1014" not in normalized
     )
