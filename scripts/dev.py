@@ -118,6 +118,7 @@ class DevCliError(RuntimeError):
 
 REDOCLY_CLI_VERSION = "2.20.3"
 DEPLOY_SMOKE_USER_AGENT = "Mozilla/5.0 (compatible; BoardEnthusiastsDevCli/1.0; +https://boardenthusiasts.com)"
+ROUTING_DNS_RECORD_TYPES = {"A", "AAAA", "CNAME"}
 
 SUPABASE_PROFILE_DATABASE = "database"
 SUPABASE_PROFILE_AUTH = "auth"
@@ -3748,6 +3749,48 @@ def get_cloudflare_dns_records(env_values: dict[str, str], *, zone_id: str, host
     return extract_cloudflare_result_list(payload, context=f"DNS lookup for {hostname}")
 
 
+def get_routing_dns_records(records: list[dict[str, object]], *, hostname: str) -> list[dict[str, object]]:
+    """Return only address-routing DNS records for an exact hostname."""
+
+    normalized_hostname = hostname.strip().lower()
+    return [
+        record
+        for record in records
+        if str(record.get("name", "")).strip().lower() == normalized_hostname
+        and str(record.get("type", "")).strip().upper() in ROUTING_DNS_RECORD_TYPES
+    ]
+
+
+def is_cloudflare_managed_apex_pages_record(record: dict[str, object], *, hostname: str, zone_name: str) -> bool:
+    """Return whether a record looks like the expected Cloudflare-managed apex Pages routing record."""
+
+    normalized_hostname = hostname.strip().lower()
+    normalized_zone_name = zone_name.strip().lower()
+    if normalized_hostname != normalized_zone_name:
+        return False
+
+    record_type = str(record.get("type", "")).strip().upper()
+    if record_type not in {"A", "AAAA"}:
+        return False
+
+    return bool(record.get("proxied", False))
+
+
+def is_manageable_apex_pages_routing_record(record: dict[str, object], *, hostname: str, zone_name: str) -> bool:
+    """Return whether a Pages deploy can safely replace this apex routing record."""
+
+    normalized_hostname = hostname.strip().lower()
+    normalized_zone_name = zone_name.strip().lower()
+    if normalized_hostname != normalized_zone_name:
+        return False
+
+    record_type = str(record.get("type", "")).strip().upper()
+    if record_type not in {"A", "AAAA", "CNAME"}:
+        return False
+
+    return bool(record.get("proxied", False))
+
+
 def assert_worker_custom_domain_dns_prerequisites(env_values: dict[str, str]) -> None:
     """Fail early when a Worker custom-domain hostname is blocked by an existing DNS record."""
 
@@ -3801,6 +3844,15 @@ def build_cloudflare_pages_branch_alias_hostname(*, project_name: str, source_br
     return f"{normalized_branch}.{project_name}.pages.dev"
 
 
+def parse_cloudflare_pages_alias_hostname(output: str) -> str | None:
+    """Extract the Pages deployment alias hostname from Wrangler output when present."""
+
+    match = re.search(r"Deployment alias URL:\s+https://(?P<host>[a-z0-9.-]+\.pages\.dev)", output, re.IGNORECASE)
+    if not match:
+        return None
+    return match.group("host").strip().lower()
+
+
 def assert_pages_custom_domain_dns_access(env_values: dict[str, str]) -> None:
     """Verify the token can inspect and later manage DNS for the Pages custom domain hostname."""
 
@@ -3844,7 +3896,7 @@ def sync_cloudflare_pages_domain_dns(
     env_values: dict[str, str],
     *,
     target: str,
-    source_branch: str,
+    alias_target: str,
 ) -> None:
     """Point the Pages custom domain DNS record at the current branch alias target."""
 
@@ -3852,52 +3904,84 @@ def sync_cloudflare_pages_domain_dns(
     if hostname is None:
         return
 
-    project_name = get_deploy_pages_project_name(target=target)
-    alias_target = build_cloudflare_pages_branch_alias_hostname(project_name=project_name, source_branch=source_branch)
     zone = get_cloudflare_zone_for_hostname(env_values, hostname=hostname)
     zone_id = str(zone.get("id", "")).strip()
     if not zone_id:
         raise DevCliError(f"Cloudflare zone lookup for '{hostname}' did not include an id.")
 
-    records = [
-        record
-        for record in get_cloudflare_dns_records(env_values, zone_id=zone_id, hostname=hostname)
-        if str(record.get("name", "")).strip().lower() == hostname
-    ]
+    zone_name = str(zone.get("name", "")).strip()
+    if not zone_name:
+        raise DevCliError(f"Cloudflare zone lookup for '{hostname}' did not include a name.")
+
+    records = get_routing_dns_records(
+        get_cloudflare_dns_records(env_values, zone_id=zone_id, hostname=hostname),
+        hostname=hostname,
+    )
 
     if len(records) > 1:
-        raise DevCliError(
-            f"Cloudflare DNS has multiple records for '{hostname}'. Clean up the duplicate records before deploying again."
-        )
+        if all(is_manageable_apex_pages_routing_record(record, hostname=hostname, zone_name=zone_name) for record in records):
+            for record in records:
+                record_id = str(record.get("id", "")).strip()
+                if not record_id:
+                    raise DevCliError(f"Cloudflare DNS record for '{hostname}' did not include an id.")
+                write_step(f"Deleting Cloudflare DNS record {hostname} ({str(record.get('type', '')).strip().upper() or 'UNKNOWN'})")
+                request_json(
+                    url=(
+                        f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records/"
+                        f"{urllib.parse.quote(record_id)}"
+                    ),
+                    method="DELETE",
+                    headers=build_cloudflare_api_headers(env_values),
+                )
+            records = []
+        else:
+            raise DevCliError(
+                f"Cloudflare DNS has multiple records for '{hostname}'. Clean up the duplicate records before deploying again."
+            )
 
     if records:
         record = records[0]
         record_type = str(record.get("type", "")).strip().upper()
-        if record_type != "CNAME":
+        if is_cloudflare_managed_apex_pages_record(record, hostname=hostname, zone_name=zone_name):
+            record_id = str(record.get("id", "")).strip()
+            if not record_id:
+                raise DevCliError(f"Cloudflare DNS record for '{hostname}' did not include an id.")
+            write_step(f"Replacing Cloudflare apex routing record for Pages custom domain {hostname} -> {alias_target}")
+            request_json(
+                url=(
+                    f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records/"
+                    f"{urllib.parse.quote(record_id)}"
+                ),
+                method="DELETE",
+                headers=build_cloudflare_api_headers(env_values),
+            )
+            records = []
+        elif record_type != "CNAME":
             raise DevCliError(
                 f"Cloudflare DNS record '{hostname}' is type {record_type}, but Pages custom domains require a CNAME target. "
                 "Replace the record with a proxied CNAME before deploying again."
             )
-        current_target = str(record.get("content", "")).strip().lower()
-        proxied = bool(record.get("proxied", False))
-        if current_target == alias_target and proxied:
+        else:
+            current_target = str(record.get("content", "")).strip().lower()
+            proxied = bool(record.get("proxied", False))
+            if current_target == alias_target and proxied:
+                return
+
+            record_id = str(record.get("id", "")).strip()
+            if not record_id:
+                raise DevCliError(f"Cloudflare DNS record for '{hostname}' did not include an id.")
+
+            write_step(f"Updating Cloudflare DNS for Pages custom domain {hostname} -> {alias_target}")
+            request_json(
+                url=(
+                    f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records/"
+                    f"{urllib.parse.quote(record_id)}"
+                ),
+                method="PUT",
+                headers=build_cloudflare_api_headers(env_values),
+                payload={"type": "CNAME", "name": hostname, "content": alias_target, "proxied": True, "ttl": 1},
+            )
             return
-
-        record_id = str(record.get("id", "")).strip()
-        if not record_id:
-            raise DevCliError(f"Cloudflare DNS record for '{hostname}' did not include an id.")
-
-        write_step(f"Updating Cloudflare DNS for Pages custom domain {hostname} -> {alias_target}")
-        request_json(
-            url=(
-                f"https://api.cloudflare.com/client/v4/zones/{urllib.parse.quote(zone_id)}/dns_records/"
-                f"{urllib.parse.quote(record_id)}"
-            ),
-            method="PUT",
-            headers=build_cloudflare_api_headers(env_values),
-            payload={"type": "CNAME", "name": hostname, "content": alias_target, "proxied": True, "ttl": 1},
-        )
-        return
 
     write_step(f"Creating Cloudflare DNS for Pages custom domain {hostname} -> {alias_target}")
     request_json(
@@ -3946,18 +4030,24 @@ def assert_pages_custom_domain_prerequisites(env_values: dict[str, str]) -> None
     zone_id = str(zone.get("id", "")).strip()
     if not zone_id:
         raise DevCliError(f"Cloudflare zone lookup for '{hostname}' did not include an id.")
-    records = [
-        record
-        for record in get_cloudflare_dns_records(env_values, zone_id=zone_id, hostname=hostname)
-        if str(record.get("name", "")).strip().lower() == hostname
-    ]
+    zone_name = str(zone.get("name", "")).strip()
+    if not zone_name:
+        raise DevCliError(f"Cloudflare zone lookup for '{hostname}' did not include a name.")
+    records = get_routing_dns_records(
+        get_cloudflare_dns_records(env_values, zone_id=zone_id, hostname=hostname),
+        hostname=hostname,
+    )
     if len(records) > 1:
+        if all(is_manageable_apex_pages_routing_record(record, hostname=hostname, zone_name=zone_name) for record in records):
+            return
         raise DevCliError(
             f"Cloudflare DNS has multiple records for Pages custom domain '{hostname}'. "
             "Leave at most one record for this hostname before deploying."
         )
     if records:
         record_type = str(records[0].get("type", "")).strip().upper()
+        if is_manageable_apex_pages_routing_record(records[0], hostname=hostname, zone_name=zone_name):
+            return
         if record_type != "CNAME":
             raise DevCliError(
                 f"Cloudflare DNS record '{hostname}' is type {record_type}, but the deploy flow manages Pages custom domains "
@@ -4346,10 +4436,10 @@ def run_pages_deploy(
     target: str,
     source_branch: str,
     subprocess_env: dict[str, str],
-) -> None:
+) -> str:
     """Deploy the built SPA bundle to Cloudflare Pages."""
 
-    run_command(
+    result = run_command(
         [
             "npx",
             "wrangler",
@@ -4363,19 +4453,32 @@ def run_pages_deploy(
         ],
         cwd=config.repo_root,
         env=subprocess_env,
+        capture_output=True,
     )
+    if result.stdout:
+        print_console_text(result.stdout.rstrip())
+    if result.stderr:
+        print_console_text(result.stderr.rstrip())
+
+    alias_hostname = parse_cloudflare_pages_alias_hostname(f"{result.stdout or ''}\n{result.stderr or ''}")
+    if not alias_hostname:
+        raise DevCliError(
+            "Unable to determine the Cloudflare Pages deployment alias from Wrangler output. "
+            "Stopping before DNS changes so deploy automation does not guess an incorrect target."
+        )
+    return alias_hostname
 
 
 def finalize_pages_custom_domain(
     env_values: dict[str, str],
     *,
     target: str,
-    source_branch: str,
+    alias_target: str,
 ) -> None:
     """Attach the Pages custom domain and point it at the current branch alias."""
 
     ensure_cloudflare_pages_custom_domain(env_values, target=target)
-    sync_cloudflare_pages_domain_dns(env_values, target=target, source_branch=source_branch)
+    sync_cloudflare_pages_domain_dns(env_values, target=target, alias_target=alias_target)
 
 
 def run_workers_deploy(config: DevConfig, *, worker_config_path: Path, subprocess_env: dict[str, str]) -> None:
@@ -4601,9 +4704,9 @@ def is_expected_pages_shell_html(html: str) -> bool:
 
     normalized = html.lower()
     return (
-        "<title>board enthusiasts</title>" in normalized
-        and '<div id="root"></div>' in normalized
+        '<div id="root"></div>' in normalized
         and "/assets/index-" in normalized
+        and "board enthusiasts" in normalized
         and "nothing is here yet" not in normalized
         and "error 1014" not in normalized
     )
@@ -4742,13 +4845,13 @@ def deploy_migration_target(
                 run_workers_deploy(config, worker_config_path=worker_config_path, subprocess_env=subprocess_env)
             elif stage_name == "pages_deploy":
                 write_step(f"Deploying Cloudflare Pages bundle for {target}")
-                run_pages_deploy(
+                pages_alias_target = run_pages_deploy(
                     config,
                     target=target,
                     source_branch=resolved_source_branch,
                     subprocess_env=subprocess_env,
                 )
-                finalize_pages_custom_domain(env_values, target=target, source_branch=resolved_source_branch)
+                finalize_pages_custom_domain(env_values, target=target, alias_target=pages_alias_target)
             else:
                 raise DevCliError(f"Unknown deploy stage: {stage_name}")
         except DevCliError as ex:
