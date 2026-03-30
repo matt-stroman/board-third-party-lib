@@ -311,8 +311,6 @@ async function run(): Promise<void> {
         body: JSON.stringify({
           slug: `workers-smoke-title-${uniqueSuffix}`,
           contentKind: "game",
-          lifecycleStatus: "testing",
-          visibility: "listed",
           metadata: {
             displayName: "Workers Smoke Title",
             shortDescription: "A temporary smoke title.",
@@ -337,10 +335,8 @@ async function run(): Promise<void> {
         method: "PUT",
         headers: authHeaders(developerToken),
         body: JSON.stringify({
-          slug: `workers-smoke-title-${uniqueSuffix}`,
           contentKind: "game",
-          lifecycleStatus: "testing",
-          visibility: "listed"
+          visibility: "unlisted"
         })
       },
       200,
@@ -480,10 +476,28 @@ async function run(): Promise<void> {
       200,
       "title release rollback activate"
     );
+    await assertJson(
+      `/developer/titles/${createdTitleId}/activate`,
+      { method: "POST", headers: authHeaders(developerToken, "") },
+      200,
+      "title activate"
+    );
+    await assertJson(
+      `/developer/titles/${createdTitleId}/archive`,
+      { method: "POST", headers: authHeaders(developerToken, "") },
+      200,
+      "title archive"
+    );
+    await assertJson(
+      `/developer/titles/${createdTitleId}/unarchive`,
+      { method: "POST", headers: authHeaders(developerToken, "") },
+      200,
+      "title unarchive"
+    );
     results.push({
       ok: true,
       label: "developer studio and title flows",
-      detail: "studio CRUD, links, uploads, title CRUD, metadata, media, and release flows succeeded"
+      detail: "studio CRUD, links, uploads, title CRUD, lifecycle actions, metadata, media, and release flows succeeded"
     });
 
     const createdPlayerReport = (await assertJson(

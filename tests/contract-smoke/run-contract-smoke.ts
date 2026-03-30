@@ -5,6 +5,7 @@ const fallbackToken = (process.env.CONTRACT_SMOKE_TOKEN ?? "").trim();
 const playerToken = (process.env.CONTRACT_SMOKE_PLAYER_TOKEN ?? "").trim();
 const developerToken = (process.env.CONTRACT_SMOKE_DEVELOPER_TOKEN ?? "").trim();
 const moderatorToken = (process.env.CONTRACT_SMOKE_MODERATOR_TOKEN ?? "").trim();
+const smokeUserPassword = (process.env.CONTRACT_SMOKE_USER_PASSWORD ?? "ChangeMe!123").trim() || "ChangeMe!123";
 const pngPixel = Uint8Array.from(
   atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9pX6N6gAAAAASUVORK5CYII="),
   (character) => character.charCodeAt(0),
@@ -37,6 +38,10 @@ interface SmokeContext {
   moderatedDeveloperSubject: string;
   moderatedValidateReportId: string;
   moderatedInvalidateReportId: string;
+  lifecycleTitleId: string;
+  lifecycleReleaseId: string;
+  deleteTitleId: string;
+  deleteTitleDisplayName: string;
   releaseUnderTestId: string;
 }
 
@@ -125,14 +130,12 @@ async function fetchJson<T>(path: string, token: string, init?: RequestInit): Pr
   return payload;
 }
 
-function buildCreateTitleBody(slug: string): JsonRecord {
+function buildCreateTitleBody(slug: string, displayName = "Smoke Test Title"): JsonRecord {
   return {
     slug,
     contentKind: "game",
-    lifecycleStatus: "testing",
-    visibility: "private",
     metadata: {
-      displayName: "Smoke Test Title",
+      displayName,
       shortDescription: "A deterministic contract-smoke title.",
       description: "This title exists so the contract smoke suite can exercise mutable developer routes.",
       genreSlugs: ["utility", "qa"],
@@ -145,12 +148,10 @@ function buildCreateTitleBody(slug: string): JsonRecord {
   };
 }
 
-function buildUpdateTitleBody(slug: string): JsonRecord {
+function buildUpdateTitleBody(): JsonRecord {
   return {
-    slug,
     contentKind: "game",
-    lifecycleStatus: "testing",
-    visibility: "private",
+    visibility: "unlisted",
   };
 }
 
@@ -165,6 +166,34 @@ function buildMetadataBody(displayName: string): JsonRecord {
     ageRatingAuthority: "ESRB",
     ageRatingValue: "E10+",
     minAgeYears: 10,
+  };
+}
+
+function buildDeleteTitleBody(displayName: string): JsonRecord {
+  return {
+    currentPassword: smokeUserPassword,
+    confirmationTitleName: displayName,
+  };
+}
+
+async function createBootstrapTitle(
+  studioId: string,
+  developerAuth: string,
+  slug: string,
+  displayName: string,
+): Promise<{ id: string; displayName: string }> {
+  const created = await fetchJson<{ title: { id: string; displayName: string } }>(
+    `/developer/studios/${studioId}/titles`,
+    developerAuth,
+    {
+      method: "POST",
+      body: JSON.stringify(buildCreateTitleBody(slug, displayName)),
+    },
+  );
+
+  return {
+    id: created.title.id,
+    displayName: created.title.displayName,
   };
 }
 
@@ -204,6 +233,32 @@ async function bootstrapContext(): Promise<SmokeContext> {
     },
   );
 
+  const bootstrapSuffix = Date.now().toString(36);
+  const lifecycleTitle = await createBootstrapTitle(
+    requireValue(managedStudio?.id, "managed studio id"),
+    developerAuth,
+    `lifecycle-smoke-${bootstrapSuffix}`,
+    "Lifecycle Smoke Title",
+  );
+  const lifecycleRelease = await fetchJson<{ release: { id: string } }>(
+    `/developer/titles/${lifecycleTitle.id}/releases`,
+    developerAuth,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        version: "0.0.1-lifecycle",
+        status: "testing",
+        acquisitionUrl: "https://boardenthusiasts.example/releases/0.0.1-lifecycle",
+      }),
+    },
+  );
+  const deleteTitle = await createBootstrapTitle(
+    requireValue(managedStudio?.id, "managed studio id"),
+    developerAuth,
+    `delete-smoke-${bootstrapSuffix}`,
+    "Delete Smoke Title",
+  );
+
   return {
     publicTitleId: requireValue(publicTitleId, "public title id"),
     managedStudioId: requireValue(managedStudio?.id, "managed studio id"),
@@ -224,6 +279,10 @@ async function bootstrapContext(): Promise<SmokeContext> {
     moderatedDeveloperSubject: "",
     moderatedValidateReportId: "",
     moderatedInvalidateReportId: "",
+    lifecycleTitleId: lifecycleTitle.id,
+    lifecycleReleaseId: lifecycleRelease.release.id,
+    deleteTitleId: deleteTitle.id,
+    deleteTitleDisplayName: deleteTitle.displayName,
     releaseUnderTestId: "",
   };
 }
@@ -253,6 +312,15 @@ function buildRequestPlan(
       return {
         path: "/identity/me/profile",
         init: { method: route.method, headers: buildHeaders(token, "application/json"), body: JSON.stringify({ displayName: "Emma Torres" }) },
+      };
+    case "POST /identity/me/password/verify":
+      return {
+        path: "/identity/me/password/verify",
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({ currentPassword: smokeUserPassword }),
+        },
       };
     case "POST /studios": {
       const slug = `studio-smoke-${uniqueSuffix}`;
@@ -427,7 +495,31 @@ function buildRequestPlan(
         init: {
           method: route.method,
           headers: buildHeaders(token, "application/json"),
-          body: JSON.stringify(buildUpdateTitleBody(requireValue(context.createdTitleSlug, "created title slug"))),
+          body: JSON.stringify(buildUpdateTitleBody()),
+        },
+      };
+    case "POST /developer/titles/{titleId}/activate":
+      return {
+        path: `/developer/titles/${requireValue(context.lifecycleTitleId, "lifecycle title id")}/activate`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/titles/{titleId}/archive":
+      return {
+        path: `/developer/titles/${requireValue(context.lifecycleTitleId, "lifecycle title id")}/archive`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/titles/{titleId}/unarchive":
+      return {
+        path: `/developer/titles/${requireValue(context.lifecycleTitleId, "lifecycle title id")}/unarchive`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/titles/{titleId}/delete":
+      return {
+        path: `/developer/titles/${requireValue(context.deleteTitleId, "delete title id")}/delete`,
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify(buildDeleteTitleBody(requireValue(context.deleteTitleDisplayName, "delete title display name"))),
         },
       };
     case "PUT /developer/titles/{titleId}/metadata/current":
