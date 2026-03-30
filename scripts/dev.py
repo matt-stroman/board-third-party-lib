@@ -33,6 +33,7 @@ import ssl
 import struct
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -168,13 +169,14 @@ SUPABASE_PROFILE_DESCRIPTIONS: dict[str, str] = {
 }
 
 LOCAL_SUPABASE_DB_HOST = "127.0.0.1"
-LOCAL_SUPABASE_DB_PORT = 55432
+LOCAL_SUPABASE_DB_PORT = 55480
 LOCAL_SUPABASE_URL = "http://127.0.0.1:55421"
 LOCAL_SUPABASE_AUTH_URL = "http://127.0.0.1:55421/auth/v1/health"
 LOCAL_SUPABASE_STUDIO_PORT = 55423
 LOCAL_MAILPIT_PORT = 55424
 LOCAL_WORKERS_PORT = 8787
 LOCAL_FRONTEND_PORT = 4173
+SUPABASE_STATUS_TIMEOUT_SECONDS = 15
 SUPABASE_STOP_TIMEOUT_SECONDS = 30
 SUPPORTED_ENVIRONMENT_TARGETS = ("local", "staging", "production")
 GITHUB_ENVIRONMENT_SECRET_NAMES = frozenset(
@@ -188,6 +190,7 @@ GITHUB_ENVIRONMENT_SECRET_NAMES = frozenset(
         "TURNSTILE_SECRET_KEY",
         "BREVO_API_KEY",
         "DEPLOY_SMOKE_SECRET",
+        "DEPLOY_SMOKE_USER_PASSWORD",
     }
 )
 DEPLOY_REQUIRED_ENV_NAMES = (
@@ -224,8 +227,15 @@ DEPLOY_SECRET_ENV_NAMES = (
     "TURNSTILE_SECRET_KEY",
     "BREVO_API_KEY",
     "DEPLOY_SMOKE_SECRET",
+    "DEPLOY_SMOKE_USER_PASSWORD",
 )
 DEPLOY_BREVO_REQUIRED_ATTRIBUTES = ("SOURCE", "BE_LIFECYCLE_STATUS", "BE_ROLE_INTEREST")
+FULL_MVP_DEPLOY_SMOKE_REQUIRED_ENV_NAMES = (
+    "DEPLOY_SMOKE_PLAYER_EMAIL",
+    "DEPLOY_SMOKE_DEVELOPER_EMAIL",
+    "DEPLOY_SMOKE_MODERATOR_EMAIL",
+    "DEPLOY_SMOKE_USER_PASSWORD",
+)
 LEGACY_PAGES_DRY_RUN_REQUIRED_ENV_NAMES = (
     "BOARD_ENTHUSIASTS_WORKERS_BASE_URL",
     "SUPABASE_URL",
@@ -681,7 +691,16 @@ def probe_docker_daemon() -> tuple[bool, str | None]:
     """
 
     assert_command_available("docker")
-    result = run_command(["docker", "info"], check=False, capture_output=True, text=True)
+    try:
+        result = run_command(
+            ["docker", "info"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout_seconds=SUPABASE_STATUS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "docker info timed out while waiting for the Docker daemon."
     if result.returncode == 0:
         return True, None
 
@@ -884,6 +903,33 @@ def ensure_local_url_port_available(*, url: str, description: str) -> None:
         f"Cannot start {description}: {url} is already in use by another local process. "
         f"Stop the existing process bound to port {port}, or reuse that existing instance instead."
     )
+
+
+def ensure_tcp_port_bindable(*, host: str, port: int, description: str) -> None:
+    """Ensure a host TCP port can be bound before delegating to Docker.
+
+    Args:
+        host: Host interface Docker will publish on.
+        port: TCP port to test.
+        description: Human-readable service description used in failure messages.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If the host port cannot be bound locally.
+    """
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, port))
+    except OSError as ex:
+        detail = str(ex).strip() or ex.__class__.__name__
+        raise DevCliError(
+            f"Cannot start {description}: TCP port {port} on {host} is not available for binding ({detail})."
+        ) from ex
+    finally:
+        sock.close()
 
 
 def wait_for_background_process_http_ready(
@@ -1699,14 +1745,16 @@ def run_full_local_web_stack(
 
         api_state_path = save_stack_state(config, stack_name="api", state=backend_state)
         web_state_path = save_stack_state(config, stack_name="web", state=frontend_state)
-        print(f"API stack state: {api_state_path}")
-        print(f"Web stack state: {web_state_path}")
+        print(f"Backend API ready at {backend_url}", flush=True)
+        print(f"Frontend web UI ready at {frontend_url}", flush=True)
+        print(f"API stack state: {api_state_path}", flush=True)
+        print(f"Web stack state: {web_state_path}", flush=True)
 
         if open_browser_on_ready:
             write_step(f"Opening browser to {frontend_url}")
-            webbrowser.open(frontend_url)
+            open_browser_in_background(frontend_url)
 
-        print("Local web stack is running. Press Ctrl+C to stop backend and frontend.")
+        print("Local web stack is running. Press Ctrl+C to stop backend and frontend.", flush=True)
         while True:
             time.sleep(2)
 
@@ -1935,6 +1983,7 @@ def run_tests(config: DevConfig, *, run_integration: bool, restore: bool = True)
             config,
             start_stack=True,
             base_url=config.migration_workers_base_url,
+            player_email=LOCAL_SEED_PLAYER_EMAIL,
             moderator_email=LOCAL_SEED_MODERATOR_EMAIL,
             developer_email=LOCAL_SEED_DEVELOPER_EMAIL,
             seed_password=LOCAL_SEED_DEFAULT_PASSWORD,
@@ -2285,8 +2334,26 @@ def resolve_supabase_command_prefix() -> list[str]:
     if shutil.which("supabase") is not None:
         return ["supabase"]
     if shutil.which("npx") is not None:
-        return ["npx", "supabase"]
+        # Keep the fallback non-interactive so captured calls cannot block on the
+        # npm install confirmation prompt when Supabase CLI is not installed globally.
+        return ["npx", "--yes", "supabase"]
     raise DevCliError("Supabase CLI was not found. Install `supabase` or ensure `npx` is available.")
+
+
+def open_browser_in_background(url: str) -> None:
+    """Open a URL in the system browser without blocking the CLI main thread."""
+
+    def _open() -> None:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            return
+
+    threading.Thread(
+        target=_open,
+        name="dev-cli-browser-open",
+        daemon=True,
+    ).start()
 
 
 def build_supabase_profile_start_command(*, prefix: Sequence[str], profile: str) -> list[str]:
@@ -2341,12 +2408,20 @@ def get_supabase_status_env(config: DevConfig) -> dict[str, str]:
     """
 
     prefix = resolve_supabase_command_prefix()
-    result = run_command(
-        [*prefix, "status", "-o", "env"],
-        cwd=config.repo_root / config.supabase_root,
-        check=False,
-        capture_output=True,
-    )
+    try:
+        result = run_command(
+            [*prefix, "status", "-o", "env"],
+            cwd=config.repo_root / config.supabase_root,
+            check=False,
+            capture_output=True,
+            timeout_seconds=SUPABASE_STATUS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as ex:
+        raise DevCliError(
+            "Supabase status command timed out while checking the local runtime. "
+            "The local Docker/Supabase state may be partial; rerun "
+            "'python ./scripts/dev.py database down' and then start the stack again."
+        ) from ex
     if result.returncode != 0:
         output = "\n".join(
             part.strip()
@@ -2771,6 +2846,11 @@ def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
 
     if action == "start":
         ensure_docker_daemon_available()
+        ensure_tcp_port_bindable(
+            host="0.0.0.0",
+            port=LOCAL_SUPABASE_DB_PORT,
+            description="local Supabase database",
+        )
         write_step("Starting local Supabase services")
         start_command = build_supabase_profile_start_command(
             prefix=prefix,
@@ -2888,12 +2968,20 @@ def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
 
     if action == "status":
         write_step("Showing local Supabase service status")
-        result = run_command(
-            [*prefix, "status", "-o", "env"],
-            cwd=supabase_root,
-            check=False,
-            capture_output=True,
-        )
+        try:
+            result = run_command(
+                [*prefix, "status", "-o", "env"],
+                cwd=supabase_root,
+                check=False,
+                capture_output=True,
+                timeout_seconds=SUPABASE_STATUS_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as ex:
+            raise DevCliError(
+                "Supabase status command timed out while checking local services. "
+                "The local Docker/Supabase state may be partial; rerun "
+                "'python ./scripts/dev.py database down' before starting again."
+            ) from ex
         if result.returncode == 0:
             output = (result.stdout or "").strip()
             if output:
@@ -3122,6 +3210,7 @@ def run_workers_smoke(
     config: DevConfig,
     *,
     base_url: str,
+    player_token: str,
     moderator_token: str,
     developer_token: str,
 ) -> None:
@@ -3130,6 +3219,7 @@ def run_workers_smoke(
     Args:
         config: CLI configuration containing repository paths.
         base_url: Target Workers API base URL.
+        player_token: Bearer token for the seeded player user.
         moderator_token: Bearer token for the seeded moderator user.
         developer_token: Bearer token for the seeded developer user.
 
@@ -3140,6 +3230,7 @@ def run_workers_smoke(
     env = build_subprocess_env(
         extra={
             "WORKERS_SMOKE_BASE_URL": base_url,
+            "WORKERS_SMOKE_PLAYER_TOKEN": player_token,
             "WORKERS_SMOKE_MODERATOR_TOKEN": moderator_token,
             "WORKERS_SMOKE_DEVELOPER_TOKEN": developer_token,
             "NODE_TLS_REJECT_UNAUTHORIZED": "0" if is_local_http_url(base_url) and is_https_url(base_url) else None,
@@ -3154,6 +3245,7 @@ def run_workers_flow_smoke_command(
     *,
     start_stack: bool,
     base_url: str,
+    player_email: str,
     moderator_email: str,
     developer_email: str,
     seed_password: str,
@@ -3164,6 +3256,7 @@ def run_workers_flow_smoke_command(
         config: CLI configuration containing repository paths.
         start_stack: Whether to start and seed the local Supabase + Workers stack.
         base_url: Target Workers API base URL.
+        player_email: Seeded player account email.
         moderator_email: Seeded moderator account email.
         developer_email: Seeded developer account email.
         seed_password: Password assigned to seeded auth users.
@@ -3190,6 +3283,12 @@ def run_workers_flow_smoke_command(
             ensure_api_base_url_reachable(resolved_base_url)
             runtime_env = get_local_supabase_runtime(config)
 
+        player_token = fetch_supabase_access_token(
+            supabase_url=runtime_env["SUPABASE_URL"],
+            publishable_key=runtime_env["SUPABASE_PUBLISHABLE_KEY"],
+            email=player_email,
+            password=seed_password,
+        )
         moderator_token = fetch_supabase_access_token(
             supabase_url=runtime_env["SUPABASE_URL"],
             publishable_key=runtime_env["SUPABASE_PUBLISHABLE_KEY"],
@@ -3205,6 +3304,7 @@ def run_workers_flow_smoke_command(
         run_workers_smoke(
             config,
             base_url=resolved_base_url,
+            player_token=player_token,
             moderator_token=moderator_token,
             developer_token=developer_token,
         )
@@ -3220,8 +3320,10 @@ def run_contract_smoke(
     base_url: str,
     start_workers: bool,
     token: str | None,
+    player_token: str | None,
     moderator_token: str | None,
     developer_token: str | None,
+    player_email: str | None,
     seed_user_email: str | None,
     moderator_email: str | None,
     seed_user_password: str | None,
@@ -3233,8 +3335,10 @@ def run_contract_smoke(
         base_url: Target API base URL.
         start_workers: Whether to start the Workers stack automatically.
         token: Optional bearer token for authenticated smoke checks.
+        player_token: Optional player bearer token for role-specific smoke checks.
         moderator_token: Optional moderator bearer token for role-specific smoke checks.
         developer_token: Optional developer bearer token for role-specific smoke checks.
+        player_email: Optional seeded player email used to fetch an auth token.
         seed_user_email: Optional seeded user email used to fetch an auth token.
         moderator_email: Optional seeded moderator email used to fetch an auth token.
         seed_user_password: Optional seeded user password used to fetch auth tokens.
@@ -3251,6 +3355,7 @@ def run_contract_smoke(
     runtime_env: dict[str, str] | None = None
     resolved_base_url = base_url
     resolved_token = token or ""
+    resolved_player_token = player_token or ""
     resolved_moderator_token = moderator_token or ""
     resolved_developer_token = developer_token or ""
 
@@ -3271,9 +3376,18 @@ def run_contract_smoke(
         runtime_env = get_local_supabase_runtime(config)
 
     if runtime_env is not None:
+        resolved_player_email = player_email or (LOCAL_SEED_PLAYER_EMAIL if start_workers else None)
         developer_email = seed_user_email or (LOCAL_SEED_DEVELOPER_EMAIL if start_workers else None)
         resolved_moderator_email = moderator_email or (LOCAL_SEED_MODERATOR_EMAIL if start_workers else None)
         seed_password = seed_user_password or LOCAL_SEED_DEFAULT_PASSWORD
+
+        if resolved_player_email and not resolved_player_token:
+            resolved_player_token = fetch_supabase_access_token(
+                supabase_url=runtime_env["SUPABASE_URL"],
+                publishable_key=runtime_env["SUPABASE_PUBLISHABLE_KEY"],
+                email=resolved_player_email,
+                password=seed_password,
+            )
 
         if developer_email and not resolved_developer_token:
             resolved_developer_token = fetch_supabase_access_token(
@@ -3292,13 +3406,13 @@ def run_contract_smoke(
             )
 
         if not resolved_token:
-            resolved_token = resolved_developer_token or resolved_moderator_token
+            resolved_token = resolved_player_token or resolved_developer_token or resolved_moderator_token
 
     env = build_subprocess_env(
         extra={
             "CONTRACT_SMOKE_BASE_URL": resolved_base_url,
             "CONTRACT_SMOKE_TOKEN": resolved_token,
-            "CONTRACT_SMOKE_PLAYER_TOKEN": resolved_developer_token or resolved_token,
+            "CONTRACT_SMOKE_PLAYER_TOKEN": resolved_player_token or resolved_token,
             "CONTRACT_SMOKE_DEVELOPER_TOKEN": resolved_developer_token or resolved_token,
             "CONTRACT_SMOKE_MODERATOR_TOKEN": resolved_moderator_token or resolved_token,
             "NODE_TLS_REJECT_UNAUTHORIZED": "0" if is_local_http_url(resolved_base_url) and is_https_url(resolved_base_url) else None,
@@ -4618,10 +4732,52 @@ def wait_for_workers_deploy_smoke_base_url(*, base_url: str, timeout_seconds: in
     )
 
 
-def run_workers_deploy_smoke(config: DevConfig, *, target: str, env_values: dict[str, str]) -> None:
-    """Exercise the hosted Worker directly after deploy and verify external integrations."""
+def is_truthy_env_value(value: str) -> bool:
+    """Return whether an environment-style flag value should be treated as true."""
 
-    write_step("Running post-deploy Workers smoke")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_landing_mode_enabled(env_values: dict[str, str]) -> bool:
+    """Return whether the configured deploy target is running in landing-page-only mode."""
+
+    return is_truthy_env_value(env_values.get("VITE_LANDING_MODE", ""))
+
+
+def build_api_bearer_headers(token: str) -> dict[str, str]:
+    """Build standard API bearer headers for deploy-smoke API requests."""
+
+    return {
+        "authorization": f"Bearer {token}",
+        "accept": "application/json",
+        "user-agent": DEPLOY_SMOKE_USER_AGENT,
+    }
+
+
+def require_full_mvp_deploy_smoke_values(env_values: dict[str, str]) -> dict[str, str]:
+    """Resolve the extra smoke-account values required for full-MVP hosted smoke."""
+
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+    for name in FULL_MVP_DEPLOY_SMOKE_REQUIRED_ENV_NAMES:
+        value = env_values.get(name, "").strip()
+        if not value:
+            missing.append(name)
+            continue
+        resolved[name] = value
+
+    if missing:
+        raise DevCliError(
+            "Full-MVP deploy smoke requires smoke-account credentials when VITE_LANDING_MODE=false.\n"
+            f"Missing values: {', '.join(missing)}"
+        )
+
+    return resolved
+
+
+def run_landing_workers_deploy_smoke(*, target: str, env_values: dict[str, str]) -> None:
+    """Exercise the hosted landing-page Worker routes and external integrations."""
+
     base_url = env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"].rstrip("/")
     spa_origin = env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"].rstrip("/")
     smoke_email = f"deploy-smoke+{target}-{int(time.time())}@boardenthusiasts.com"
@@ -4699,6 +4855,465 @@ def run_workers_deploy_smoke(config: DevConfig, *, target: str, env_values: dict
         delete_brevo_contact(env_values, email=smoke_email)
 
 
+def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]) -> None:
+    """Exercise the hosted full-MVP Worker routes with staged smoke accounts."""
+
+    del target  # The smoke users themselves identify the environment-specific scope.
+    base_url = env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"].rstrip("/")
+    smoke_values = require_full_mvp_deploy_smoke_values(env_values)
+    wait_for_workers_deploy_smoke_base_url(base_url=base_url)
+
+    ready_payload = request_json(
+        url=f"{base_url}/health/ready",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+    if not isinstance(ready_payload, dict) or ready_payload.get("status") != "ready":
+        raise DevCliError("Workers smoke failed: /health/ready did not report ready status.")
+
+    player_token = fetch_supabase_access_token(
+        supabase_url=env_values["SUPABASE_URL"],
+        publishable_key=env_values["SUPABASE_PUBLISHABLE_KEY"],
+        email=smoke_values["DEPLOY_SMOKE_PLAYER_EMAIL"],
+        password=smoke_values["DEPLOY_SMOKE_USER_PASSWORD"],
+    )
+    developer_token = fetch_supabase_access_token(
+        supabase_url=env_values["SUPABASE_URL"],
+        publishable_key=env_values["SUPABASE_PUBLISHABLE_KEY"],
+        email=smoke_values["DEPLOY_SMOKE_DEVELOPER_EMAIL"],
+        password=smoke_values["DEPLOY_SMOKE_USER_PASSWORD"],
+    )
+    moderator_token = fetch_supabase_access_token(
+        supabase_url=env_values["SUPABASE_URL"],
+        publishable_key=env_values["SUPABASE_PUBLISHABLE_KEY"],
+        email=smoke_values["DEPLOY_SMOKE_MODERATOR_EMAIL"],
+        password=smoke_values["DEPLOY_SMOKE_USER_PASSWORD"],
+    )
+
+    metadata_payload = request_json(
+        url=f"{base_url}/",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+    if not isinstance(metadata_payload, dict) or metadata_payload.get("service") != "board-enthusiasts-workers-api":
+        raise DevCliError("Workers smoke failed: root metadata route did not return the expected service name.")
+
+    genres_payload = request_json(
+        url=f"{base_url}/genres",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+    age_rating_payload = request_json(
+        url=f"{base_url}/age-rating-authorities",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+    if not isinstance(genres_payload, dict) or not isinstance(genres_payload.get("genres"), list):
+        raise DevCliError("Workers smoke failed: /genres did not return a genre list.")
+    if not isinstance(age_rating_payload, dict) or not isinstance(age_rating_payload.get("ageRatingAuthorities"), list):
+        raise DevCliError("Workers smoke failed: /age-rating-authorities did not return an authority list.")
+
+    request_json(
+        url=f"{base_url}/identity/user-name-availability?userName=deploy-smoke-check",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+
+    catalog_payload = request_json(
+        url=f"{base_url}/catalog?pageNumber=1&pageSize=4&sort=title-asc",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+    if not isinstance(catalog_payload, dict) or not isinstance(catalog_payload.get("titles"), list) or not catalog_payload["titles"]:
+        raise DevCliError("Workers smoke failed: /catalog did not return at least one public title.")
+
+    public_title = next((entry for entry in catalog_payload["titles"] if isinstance(entry, dict)), None)
+    if not isinstance(public_title, dict):
+        raise DevCliError("Workers smoke failed: catalog payload did not contain a valid title object.")
+
+    public_title_id = str(public_title.get("id", "")).strip()
+    public_title_slug = str(public_title.get("slug", "")).strip()
+    public_studio_slug = str(public_title.get("studioSlug", "")).strip()
+    if not public_title_id or not public_title_slug or not public_studio_slug:
+        raise DevCliError("Workers smoke failed: catalog title did not include id, slug, and studioSlug.")
+
+    request_json(
+        url=f"{base_url}/catalog/{urllib.parse.quote(public_studio_slug)}/{urllib.parse.quote(public_title_slug)}",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+    request_json(
+        url=f"{base_url}/studios/{urllib.parse.quote(public_studio_slug)}",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+
+    player_headers = build_api_bearer_headers(player_token)
+    developer_headers = build_api_bearer_headers(developer_token)
+    moderator_headers = build_api_bearer_headers(moderator_token)
+
+    request_json(url=f"{base_url}/identity/me", headers=player_headers)
+    request_json(url=f"{base_url}/identity/me/profile", headers=player_headers)
+    player_notifications_payload = request_json(url=f"{base_url}/identity/me/notifications", headers=player_headers)
+    request_json(
+        url=f"{base_url}/identity/me/board-profile",
+        method="PUT",
+        headers=player_headers,
+        payload={
+            "boardUserId": "deploy_smoke_player",
+            "displayName": "Deploy Smoke Player",
+            "avatarUrl": "https://example.invalid/deploy-smoke-player.png",
+        },
+    )
+    request_json(url=f"{base_url}/identity/me/board-profile", headers=player_headers)
+    request_json(url=f"{base_url}/identity/me/board-profile", method="DELETE", headers=player_headers)
+    request_json(url=f"{base_url}/identity/me/developer-enrollment", headers=player_headers)
+    if isinstance(player_notifications_payload, dict) and isinstance(player_notifications_payload.get("notifications"), list):
+        first_notification = next(
+            (
+                entry
+                for entry in player_notifications_payload["notifications"]
+                if isinstance(entry, dict) and isinstance(entry.get("id"), str) and entry["id"].strip()
+            ),
+            None,
+        )
+        if isinstance(first_notification, dict):
+            request_json(
+                url=f"{base_url}/identity/me/notifications/{urllib.parse.quote(first_notification['id'])}/read",
+                method="POST",
+                headers=player_headers,
+            )
+
+    request_json(url=f"{base_url}/player/library", headers=player_headers)
+    request_json(
+        url=f"{base_url}/player/library/titles/{urllib.parse.quote(public_title_id)}",
+        method="PUT",
+        headers=player_headers,
+    )
+    request_json(
+        url=f"{base_url}/player/library/titles/{urllib.parse.quote(public_title_id)}",
+        method="DELETE",
+        headers=player_headers,
+    )
+    request_json(url=f"{base_url}/player/wishlist", headers=player_headers)
+    request_json(
+        url=f"{base_url}/player/wishlist/titles/{urllib.parse.quote(public_title_id)}",
+        method="PUT",
+        headers=player_headers,
+    )
+    request_json(
+        url=f"{base_url}/player/wishlist/titles/{urllib.parse.quote(public_title_id)}",
+        method="DELETE",
+        headers=player_headers,
+    )
+
+    request_json(url=f"{base_url}/identity/me", headers=developer_headers)
+    request_json(url=f"{base_url}/identity/me/profile", headers=developer_headers)
+    request_json(url=f"{base_url}/identity/me/developer-enrollment", headers=developer_headers)
+    request_json(url=f"{base_url}/identity/me/developer-enrollment", method="POST", headers=developer_headers)
+
+    managed_studios_payload = request_json(url=f"{base_url}/developer/studios", headers=developer_headers)
+    if not isinstance(managed_studios_payload, dict) or not isinstance(managed_studios_payload.get("studios"), list):
+        raise DevCliError("Workers smoke failed: /developer/studios did not return a managed studio list.")
+
+    unique_suffix = str(int(time.time()))
+    created_studio_id = ""
+    created_title_id = ""
+    created_report_id = ""
+    second_created_report_id = ""
+    created_release_id = ""
+    try:
+        created_studio_payload = request_json(
+            url=f"{base_url}/studios",
+            method="POST",
+            headers=developer_headers,
+            payload={
+                "slug": f"deploy-smoke-{unique_suffix}",
+                "displayName": "Deploy Smoke Studio",
+                "description": "Temporary hosted deploy-smoke studio.",
+            },
+        )
+        if not isinstance(created_studio_payload, dict) or not isinstance(created_studio_payload.get("studio"), dict):
+            raise DevCliError("Workers smoke failed: studio create did not return a studio payload.")
+        created_studio_id = str(created_studio_payload["studio"].get("id", "")).strip()
+        if not created_studio_id:
+            raise DevCliError("Workers smoke failed: studio create did not return a studio id.")
+
+        request_json(
+            url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}",
+            method="PUT",
+            headers=developer_headers,
+            payload={
+                "slug": f"deploy-smoke-{unique_suffix}",
+                "displayName": "Deploy Smoke Studio",
+                "description": "Updated temporary hosted deploy-smoke studio.",
+            },
+        )
+        request_json(url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/links", headers=developer_headers)
+        created_link_payload = request_json(
+            url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/links",
+            method="POST",
+            headers=developer_headers,
+            payload={"label": "Docs", "url": "https://example.invalid/deploy-docs"},
+        )
+        if not isinstance(created_link_payload, dict) or not isinstance(created_link_payload.get("link"), dict):
+            raise DevCliError("Workers smoke failed: studio link create did not return a link payload.")
+        created_link_id = str(created_link_payload["link"].get("id", "")).strip()
+        if not created_link_id:
+            raise DevCliError("Workers smoke failed: studio link create did not return a link id.")
+        request_json(
+            url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/links/{urllib.parse.quote(created_link_id)}",
+            method="PUT",
+            headers=developer_headers,
+            payload={"label": "Support", "url": "https://example.invalid/deploy-support"},
+        )
+        request_json(
+            url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/links/{urllib.parse.quote(created_link_id)}",
+            method="DELETE",
+            headers=developer_headers,
+        )
+        request_json(url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/titles", headers=developer_headers)
+
+        created_title_payload = request_json(
+            url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/titles",
+            method="POST",
+            headers=developer_headers,
+            payload={
+                "slug": f"deploy-smoke-title-{unique_suffix}",
+                "contentKind": "game",
+                "lifecycleStatus": "testing",
+                "visibility": "listed",
+                "metadata": {
+                    "displayName": "Deploy Smoke Title",
+                    "shortDescription": "Temporary hosted deploy-smoke title.",
+                    "description": "This title exists only for hosted MVP smoke coverage.",
+                    "genreSlugs": ["utility", "qa"],
+                    "minPlayers": 1,
+                    "maxPlayers": 4,
+                    "ageRatingAuthority": "ESRB",
+                    "ageRatingValue": "E",
+                    "minAgeYears": 6,
+                },
+            },
+        )
+        if not isinstance(created_title_payload, dict) or not isinstance(created_title_payload.get("title"), dict):
+            raise DevCliError("Workers smoke failed: title create did not return a title payload.")
+        created_title_id = str(created_title_payload["title"].get("id", "")).strip()
+        if not created_title_id:
+            raise DevCliError("Workers smoke failed: title create did not return a title id.")
+
+        request_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}", headers=developer_headers)
+        request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}",
+            method="PUT",
+            headers=developer_headers,
+            payload={
+                "slug": f"deploy-smoke-title-{unique_suffix}",
+                "contentKind": "game",
+                "lifecycleStatus": "testing",
+                "visibility": "listed",
+            },
+        )
+        revised_title_payload = request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/metadata/current",
+            method="PUT",
+            headers=developer_headers,
+            payload={
+                "displayName": "Deploy Smoke Title Revised",
+                "shortDescription": "Revised hosted deploy-smoke title.",
+                "description": "Updated metadata for hosted MVP smoke coverage.",
+                "genreSlugs": ["utility", "qa"],
+                "minPlayers": 1,
+                "maxPlayers": 6,
+                "ageRatingAuthority": "ESRB",
+                "ageRatingValue": "E10+",
+                "minAgeYears": 10,
+            },
+        )
+        if not isinstance(revised_title_payload, dict) or not isinstance(revised_title_payload.get("title"), dict):
+            raise DevCliError("Workers smoke failed: title metadata update did not return a title payload.")
+        current_metadata_revision = revised_title_payload["title"].get("currentMetadataRevision")
+        if not isinstance(current_metadata_revision, int):
+            raise DevCliError("Workers smoke failed: title metadata update did not return currentMetadataRevision.")
+
+        request_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/metadata-versions", headers=developer_headers)
+        request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/metadata-versions/{current_metadata_revision}/activate",
+            method="POST",
+            headers=developer_headers,
+        )
+        request_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/media", headers=developer_headers)
+        request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/media/card",
+            method="PUT",
+            headers=developer_headers,
+            payload={
+                "sourceUrl": "https://example.invalid/deploy-card.png",
+                "altText": "Deploy smoke card art",
+                "mimeType": "image/png",
+                "width": 900,
+                "height": 1280,
+            },
+        )
+        request_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases", headers=developer_headers)
+        created_release_payload = request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases",
+            method="POST",
+            headers=developer_headers,
+            payload={
+                "version": "0.1.0-smoke",
+                "metadataRevisionNumber": current_metadata_revision,
+                "acquisitionUrl": "https://example.invalid/releases/0.1.0-smoke",
+            },
+        )
+        if not isinstance(created_release_payload, dict) or not isinstance(created_release_payload.get("release"), dict):
+            raise DevCliError("Workers smoke failed: title release create did not return a release payload.")
+        created_release_id = str(created_release_payload["release"].get("id", "")).strip()
+        if not created_release_id:
+            raise DevCliError("Workers smoke failed: title release create did not return a release id.")
+        request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(created_release_id)}",
+            method="PUT",
+            headers=developer_headers,
+            payload={
+                "version": "0.1.1-smoke",
+                "metadataRevisionNumber": current_metadata_revision,
+                "acquisitionUrl": "https://example.invalid/releases/0.1.1-smoke",
+            },
+        )
+        request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(created_release_id)}/publish",
+            method="POST",
+            headers=developer_headers,
+        )
+        request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(created_release_id)}/activate",
+            method="POST",
+            headers=developer_headers,
+        )
+        request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(created_release_id)}/withdraw",
+            method="POST",
+            headers=developer_headers,
+        )
+
+        created_report_payload = request_json(
+            url=f"{base_url}/player/reports",
+            method="POST",
+            headers=player_headers,
+            payload={
+                "titleId": created_title_id,
+                "reason": f"Deploy smoke report {unique_suffix}",
+            },
+        )
+        second_created_report_payload = request_json(
+            url=f"{base_url}/player/reports",
+            method="POST",
+            headers=player_headers,
+            payload={
+                "titleId": created_title_id,
+                "reason": f"Deploy smoke report secondary {unique_suffix}",
+            },
+        )
+        if not isinstance(created_report_payload, dict) or not isinstance(created_report_payload.get("report"), dict):
+            raise DevCliError("Workers smoke failed: player report create did not return a report payload.")
+        if not isinstance(second_created_report_payload, dict) or not isinstance(second_created_report_payload.get("report"), dict):
+            raise DevCliError("Workers smoke failed: second player report create did not return a report payload.")
+        created_report_id = str(created_report_payload["report"].get("id", "")).strip()
+        second_created_report_id = str(second_created_report_payload["report"].get("id", "")).strip()
+        if not created_report_id or not second_created_report_id:
+            raise DevCliError("Workers smoke failed: player report creation did not return both report ids.")
+
+        request_json(url=f"{base_url}/player/reports", headers=player_headers)
+        request_json(url=f"{base_url}/player/reports/{urllib.parse.quote(created_report_id)}", headers=player_headers)
+        request_json(
+            url=f"{base_url}/player/reports/{urllib.parse.quote(created_report_id)}/messages",
+            method="POST",
+            headers=player_headers,
+            payload={"message": "Deploy smoke player follow-up."},
+        )
+
+        request_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/reports", headers=developer_headers)
+        request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/reports/{urllib.parse.quote(created_report_id)}",
+            headers=developer_headers,
+        )
+        request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/reports/{urllib.parse.quote(created_report_id)}/messages",
+            method="POST",
+            headers=developer_headers,
+            payload={"message": "Deploy smoke developer follow-up."},
+        )
+
+        developer_search_term = smoke_values["DEPLOY_SMOKE_DEVELOPER_EMAIL"].split("@", 1)[0]
+        moderation_search_payload = request_json(
+            url=f"{base_url}/moderation/developers?search={urllib.parse.quote(developer_search_term)}",
+            headers=moderator_headers,
+        )
+        if not isinstance(moderation_search_payload, dict) or not isinstance(moderation_search_payload.get("developers"), list):
+            raise DevCliError("Workers smoke failed: moderation developer search did not return a developer list.")
+        moderated_developer = next(
+            (
+                entry
+                for entry in moderation_search_payload["developers"]
+                if isinstance(entry, dict) and entry.get("email") == smoke_values["DEPLOY_SMOKE_DEVELOPER_EMAIL"]
+            ),
+            None,
+        )
+        if not isinstance(moderated_developer, dict) or not isinstance(moderated_developer.get("developerSubject"), str):
+            raise DevCliError("Workers smoke failed: moderation search did not return the configured smoke developer.")
+        moderated_developer_subject = moderated_developer["developerSubject"].strip()
+        request_json(
+            url=f"{base_url}/moderation/developers/{urllib.parse.quote(moderated_developer_subject)}/verification",
+            headers=moderator_headers,
+        )
+        request_json(
+            url=f"{base_url}/moderation/developers/{urllib.parse.quote(moderated_developer_subject)}/verified-developer",
+            method="PUT",
+            headers=moderator_headers,
+        )
+        request_json(
+            url=f"{base_url}/moderation/developers/{urllib.parse.quote(moderated_developer_subject)}/verified-developer",
+            method="DELETE",
+            headers=moderator_headers,
+        )
+
+        request_json(url=f"{base_url}/moderation/title-reports", headers=moderator_headers)
+        request_json(
+            url=f"{base_url}/moderation/title-reports/{urllib.parse.quote(created_report_id)}",
+            headers=moderator_headers,
+        )
+        request_json(
+            url=f"{base_url}/moderation/title-reports/{urllib.parse.quote(created_report_id)}/messages",
+            method="POST",
+            headers=moderator_headers,
+            payload={"message": "Deploy smoke moderation follow-up.", "recipientRole": "developer"},
+        )
+        request_json(
+            url=f"{base_url}/moderation/title-reports/{urllib.parse.quote(created_report_id)}/validate",
+            method="POST",
+            headers=moderator_headers,
+            payload={"note": "Validated by deploy smoke."},
+        )
+        request_json(
+            url=f"{base_url}/moderation/title-reports/{urllib.parse.quote(second_created_report_id)}/invalidate",
+            method="POST",
+            headers=moderator_headers,
+            payload={"note": "Invalidated by deploy smoke."},
+        )
+    finally:
+        if created_studio_id:
+            request_json(
+                url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}",
+                method="DELETE",
+                headers=developer_headers,
+            )
+
+
+def run_workers_deploy_smoke(config: DevConfig, *, target: str, env_values: dict[str, str]) -> None:
+    """Exercise the hosted Worker directly after deploy and verify the active product mode."""
+
+    del config
+    write_step("Running post-deploy Workers smoke")
+    if is_landing_mode_enabled(env_values):
+        run_landing_workers_deploy_smoke(target=target, env_values=env_values)
+        return
+
+    run_full_mvp_workers_deploy_smoke(target=target, env_values=env_values)
+
+
 def is_expected_pages_shell_html(html: str) -> bool:
     """Return whether the fetched HTML looks like the expected deployed SPA shell."""
 
@@ -4712,14 +5327,13 @@ def is_expected_pages_shell_html(html: str) -> bool:
     )
 
 
-def run_pages_deploy_smoke(env_values: dict[str, str]) -> None:
-    """Verify the hosted SPA is reachable after deploy."""
+def wait_for_pages_shell(url: str) -> None:
+    """Poll a hosted SPA route until it serves the expected application shell."""
 
-    write_step("Running post-deploy Pages smoke")
     deadline = time.time() + 300
-    last_error = "Pages custom domain did not become reachable."
+    last_error = f"{url} did not become reachable."
     request = urllib.request.Request(
-        env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"],
+        url,
         headers={"accept": "text/html", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
 
@@ -4742,6 +5356,28 @@ def run_pages_deploy_smoke(env_values: dict[str, str]) -> None:
         "Pages smoke failed: the custom domain did not become ready within 300 seconds.\n"
         f"Last error: {last_error}"
     )
+
+
+def run_pages_deploy_smoke(env_values: dict[str, str]) -> None:
+    """Verify the hosted SPA is reachable after deploy for the active product mode."""
+
+    write_step("Running post-deploy Pages smoke")
+    base_url = env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"].rstrip("/")
+    smoke_paths = [""]
+    if not is_landing_mode_enabled(env_values):
+        smoke_paths.extend(
+            [
+                "/browse",
+                "/studios/blue-harbor-games",
+                "/browse/blue-harbor-games/lantern-drift",
+                "/player",
+                "/develop",
+                "/moderate",
+            ]
+        )
+
+    for path in smoke_paths:
+        wait_for_pages_shell(f"{base_url}{path}")
 
 
 def resolve_deploy_source_branch(
@@ -5665,6 +6301,28 @@ def run_verify(
         moderator_email=LOCAL_SEED_MODERATOR_EMAIL,
         seed_user_password=LOCAL_SEED_DEFAULT_PASSWORD,
     )
+    run_contract_smoke(
+        config,
+        base_url=base_url,
+        start_workers=start_workers,
+        token=None,
+        player_token=None,
+        moderator_token=None,
+        developer_token=None,
+        player_email=LOCAL_SEED_PLAYER_EMAIL,
+        seed_user_email=LOCAL_SEED_DEVELOPER_EMAIL,
+        moderator_email=LOCAL_SEED_MODERATOR_EMAIL,
+        seed_user_password=LOCAL_SEED_DEFAULT_PASSWORD,
+    )
+    run_workers_flow_smoke_command(
+        config,
+        start_stack=start_workers,
+        base_url=base_url,
+        player_email=LOCAL_SEED_PLAYER_EMAIL,
+        moderator_email=LOCAL_SEED_MODERATOR_EMAIL,
+        developer_email=LOCAL_SEED_DEVELOPER_EMAIL,
+        seed_password=LOCAL_SEED_DEFAULT_PASSWORD,
+    )
 
 
 def run_all_tests(
@@ -5718,9 +6376,32 @@ def run_all_tests(
         moderator_email=LOCAL_SEED_MODERATOR_EMAIL,
         seed_user_password=LOCAL_SEED_DEFAULT_PASSWORD,
     )
+    run_contract_smoke(
+        config,
+        base_url=base_url,
+        start_workers=start_workers,
+        token=None,
+        player_token=None,
+        moderator_token=None,
+        developer_token=None,
+        player_email=LOCAL_SEED_PLAYER_EMAIL,
+        seed_user_email=LOCAL_SEED_DEVELOPER_EMAIL,
+        moderator_email=LOCAL_SEED_MODERATOR_EMAIL,
+        seed_user_password=LOCAL_SEED_DEFAULT_PASSWORD,
+    )
+    run_workers_flow_smoke_command(
+        config,
+        start_stack=start_workers,
+        base_url=base_url,
+        player_email=LOCAL_SEED_PLAYER_EMAIL,
+        moderator_email=LOCAL_SEED_MODERATOR_EMAIL,
+        developer_email=LOCAL_SEED_DEVELOPER_EMAIL,
+        seed_password=LOCAL_SEED_DEFAULT_PASSWORD,
+    )
 
 
 LOCAL_SEED_DEFAULT_PASSWORD = "ChangeMe!123"
+LOCAL_SEED_PLAYER_EMAIL = "ava.garcia@boardtpl.local"
 LOCAL_SEED_MODERATOR_EMAIL = "alex.rivera@boardtpl.local"
 LOCAL_SEED_DEVELOPER_EMAIL = "emma.torres@boardtpl.local"
 
@@ -6167,6 +6848,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional fallback bearer token for authenticated smoke endpoints",
     )
     contract_smoke.add_argument(
+        "--player-token",
+        default=None,
+        help="Optional player bearer token for role-specific smoke endpoints",
+    )
+    contract_smoke.add_argument(
         "--moderator-token",
         default=None,
         help="Optional moderator bearer token for role-specific smoke endpoints",
@@ -6175,6 +6861,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--developer-token",
         default=None,
         help="Optional developer bearer token for role-specific smoke endpoints",
+    )
+    contract_smoke.add_argument(
+        "--player-email",
+        default=LOCAL_SEED_PLAYER_EMAIL,
+        help="Seeded Supabase player email used to fetch an auth token automatically",
     )
     contract_smoke.add_argument(
         "--seed-user-email",
@@ -6207,6 +6898,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--base-url",
         default="http://127.0.0.1:8787",
         help="Workers API base URL",
+    )
+    workers_smoke.add_argument(
+        "--player-email",
+        default=LOCAL_SEED_PLAYER_EMAIL,
+        help="Seeded player account email",
     )
     workers_smoke.add_argument(
         "--moderator-email",
@@ -6526,8 +7222,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 base_url=args.base_url,
                 start_workers=args.start_workers,
                 token=args.token,
+                player_token=args.player_token,
                 moderator_token=args.moderator_token,
                 developer_token=args.developer_token,
+                player_email=args.player_email,
                 seed_user_email=args.seed_user_email,
                 moderator_email=args.moderator_email,
                 seed_user_password=args.seed_user_password,
@@ -6537,6 +7235,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 config,
                 start_stack=args.start_stack,
                 base_url=args.base_url,
+                player_email=args.player_email,
                 moderator_email=args.moderator_email,
                 developer_email=args.developer_email,
                 seed_password=args.seed_password,
