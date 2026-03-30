@@ -2459,7 +2459,23 @@ def get_local_supabase_runtime(config: DevConfig) -> dict[str, str]:
         Mapping containing the API URL plus publishable and secret keys.
     """
 
-    status_env = get_supabase_status_env(config)
+    attempts = 5
+    last_error: DevCliError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            status_env = get_supabase_status_env(config)
+            break
+        except DevCliError as ex:
+            last_error = ex
+            if attempt < attempts and is_transient_local_supabase_runtime_error(ex):
+                time.sleep(2)
+                continue
+            raise
+    else:
+        if last_error is not None:
+            raise last_error
+        raise DevCliError("Unable to determine the local Supabase runtime.")
+
     return {
         "SUPABASE_URL": status_env["API_URL"],
         "SUPABASE_PUBLISHABLE_KEY": status_env.get("PUBLISHABLE_KEY", status_env["ANON_KEY"]),
@@ -2624,6 +2640,23 @@ def is_partial_local_supabase_runtime_error(error: DevCliError) -> bool:
     """Return whether a local Supabase runtime probe found only a partial service profile."""
 
     return "supabase status output did not include the expected runtime keys" in str(error).lower()
+
+
+def is_transient_local_supabase_runtime_error(error: DevCliError) -> bool:
+    """Return whether a local Supabase runtime probe looks temporarily incomplete during startup."""
+
+    message = str(error).lower()
+    return (
+        is_partial_local_supabase_runtime_error(error)
+        or (
+            "supabase status command failed" in message
+            and (
+                "container is not ready: starting" in message
+                or "failed to inspect container health" in message
+                or "no such container" in message
+            )
+        )
+    )
 
 
 def has_local_demo_seed_data(*, runtime_env: dict[str, str]) -> bool:
