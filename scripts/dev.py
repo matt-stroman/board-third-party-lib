@@ -637,6 +637,60 @@ def assert_command_available(name: str) -> None:
         raise DevCliError(f"Required command '{name}' was not found on PATH.")
 
 
+def resolve_github_cli_executable() -> str:
+    """Resolve the official GitHub CLI executable.
+
+    On Windows, prefer ``gh.exe`` so npm-installed ``gh.cmd`` / ``gh.ps1`` shims do
+    not shadow the official GitHub CLI.
+
+    Returns:
+        Absolute path to the resolved GitHub CLI executable.
+
+    Raises:
+        DevCliError: If GitHub CLI is unavailable or a non-official shim shadows it.
+    """
+
+    if os.name == "nt":
+        github_cli_executable = shutil.which("gh.exe")
+        if github_cli_executable:
+            return github_cli_executable
+
+    github_cli_executable = shutil.which("gh")
+    if github_cli_executable is None:
+        raise DevCliError("Required command 'gh' was not found on PATH.")
+
+    if os.name == "nt" and Path(github_cli_executable).suffix.lower() != ".exe":
+        gh_candidates: list[str] = []
+        try:
+            where_result = subprocess.run(
+                ["where.exe", "gh"],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except OSError:
+            where_result = None
+
+        if where_result and where_result.stdout:
+            gh_candidates = [line.strip() for line in where_result.stdout.splitlines() if line.strip()]
+
+        detail = ""
+        if gh_candidates:
+            detail = "\nAvailable gh candidates:\n- " + "\n- ".join(gh_candidates)
+
+        raise DevCliError(
+            "Resolved 'gh' to a non-GitHub CLI wrapper on PATH.\n"
+            f"Found: {github_cli_executable}\n"
+            "This usually means the npm 'gh' package is shadowing the official GitHub CLI.\n"
+            "Install GitHub CLI and ensure 'gh.exe' is available on PATH, or move the GitHub CLI directory ahead of the Node shim directory."
+            f"{detail}"
+        )
+
+    return github_cli_executable
+
+
 def get_repo_root(script_path: Path) -> Path:
     """Resolve the repository root from this script path.
 
@@ -5604,7 +5658,7 @@ def sync_root_environment_file_to_github_environment(
     if target == "local":
         raise DevCliError("GitHub Environment sync is supported only for staging or production targets, not local.")
 
-    assert_command_available("gh")
+    github_cli_executable = resolve_github_cli_executable()
     env_path = get_environment_file_path(config, target=target)
     if not env_path.exists():
         raise DevCliError(
@@ -5618,7 +5672,7 @@ def sync_root_environment_file_to_github_environment(
 
     subprocess_env = build_subprocess_env()
     auth_status = run_command(
-        ["gh", "auth", "status"],
+        [github_cli_executable, "auth", "status"],
         cwd=config.repo_root,
         env=subprocess_env,
         check=False,
@@ -5646,7 +5700,7 @@ def sync_root_environment_file_to_github_environment(
 
         if is_github_environment_secret(key):
             run_command(
-                ["gh", "secret", "set", key, "--env", target_environment, *repo_flag],
+                [github_cli_executable, "secret", "set", key, "--env", target_environment, *repo_flag],
                 cwd=config.repo_root,
                 env=subprocess_env,
                 input_data=value,
@@ -5655,7 +5709,7 @@ def sync_root_environment_file_to_github_environment(
             continue
 
         run_command(
-            ["gh", "variable", "set", key, "--env", target_environment, "--body", value, *repo_flag],
+            [github_cli_executable, "variable", "set", key, "--env", target_environment, "--body", value, *repo_flag],
             cwd=config.repo_root,
             env=subprocess_env,
         )
@@ -5695,12 +5749,13 @@ def infer_github_repo_from_origin(config: DevConfig) -> str:
 def get_github_environment_variables(config: DevConfig, *, repo_slug: str, environment_name: str) -> dict[str, str]:
     """Return the current GitHub Environment variables for the target environment."""
 
+    github_cli_executable = resolve_github_cli_executable()
     path = (
         f"repos/{repo_slug}/environments/{urllib.parse.quote(environment_name, safe='')}"
         "/variables?per_page=100"
     )
     result = run_command(
-        ["gh", "api", path],
+        [github_cli_executable, "api", path],
         cwd=config.repo_root,
         capture_output=True,
     )
@@ -5723,12 +5778,13 @@ def get_github_environment_variables(config: DevConfig, *, repo_slug: str, envir
 def get_github_environment_secret_names(config: DevConfig, *, repo_slug: str, environment_name: str) -> set[str]:
     """Return the current GitHub Environment secret names for the target environment."""
 
+    github_cli_executable = resolve_github_cli_executable()
     path = (
         f"repos/{repo_slug}/environments/{urllib.parse.quote(environment_name, safe='')}"
         "/secrets?per_page=100"
     )
     result = run_command(
-        ["gh", "api", path],
+        [github_cli_executable, "api", path],
         cwd=config.repo_root,
         capture_output=True,
     )
@@ -5756,9 +5812,9 @@ def assert_github_environment_sync(config: DevConfig, *, target: str) -> None:
         print("Skipping GitHub Environment sync preflight inside GitHub Actions.")
         return
 
-    assert_command_available("gh")
+    github_cli_executable = resolve_github_cli_executable()
     auth_status = run_command(
-        ["gh", "auth", "status"],
+        [github_cli_executable, "auth", "status"],
         cwd=config.repo_root,
         check=False,
         capture_output=True,
@@ -5777,7 +5833,7 @@ def assert_github_environment_sync(config: DevConfig, *, target: str) -> None:
     repo_slug = infer_github_repo_from_origin(config)
     environment_name = target
     environment_path = f"repos/{repo_slug}/environments/{urllib.parse.quote(environment_name, safe='')}"
-    run_command(["gh", "api", environment_path], cwd=config.repo_root, capture_output=True)
+    run_command([github_cli_executable, "api", environment_path], cwd=config.repo_root, capture_output=True)
 
     expected = {
         key: value.strip()
