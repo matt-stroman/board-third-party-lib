@@ -29,8 +29,8 @@ export type MarketingContactRoleInterest = "player" | "developer";
 
 export type StudioMembershipRole = "owner" | "admin" | "editor";
 export type TitleContentKind = "game" | "app";
-export type TitleLifecycleStatus = "draft" | "testing" | "published" | "archived";
-export type TitleVisibility = "private" | "unlisted" | "listed";
+export type TitleLifecycleStatus = "draft" | "active" | "archived";
+export type TitleVisibility = "unlisted" | "listed";
 export type TitleMediaRole = "card" | "hero" | "logo";
 
 export interface CurrentUserResponse {
@@ -40,6 +40,7 @@ export interface CurrentUserResponse {
   emailVerified: boolean;
   identityProvider: string | null;
   roles: PlatformRole[];
+  avatarUrl?: string | null;
 }
 
 export interface UserProfile {
@@ -378,18 +379,26 @@ export interface UpsertTitleMetadataRequest {
 }
 
 export interface CreateDeveloperTitleRequest {
-  slug: string;
   contentKind: TitleContentKind;
-  lifecycleStatus: TitleLifecycleStatus;
-  visibility: TitleVisibility;
   metadata: UpsertTitleMetadataRequest;
 }
 
 export interface UpdateDeveloperTitleRequest {
-  slug: string;
   contentKind: TitleContentKind;
-  lifecycleStatus: TitleLifecycleStatus;
   visibility: TitleVisibility;
+}
+
+export interface DeleteDeveloperTitleRequest {
+  currentPassword: string;
+  confirmationTitleName: string;
+}
+
+export interface VerifyCurrentUserPasswordRequest {
+  currentPassword: string;
+}
+
+export interface VerifyCurrentUserPasswordResponse {
+  verified: true;
 }
 
 export interface TitleMediaAsset {
@@ -423,7 +432,6 @@ export interface UpsertTitleMediaAssetRequest {
 export interface CurrentTitleRelease {
   id: string;
   version: string;
-  metadataRevisionNumber: number;
   publishedAt: string;
 }
 
@@ -486,11 +494,11 @@ export interface TitleMetadataVersionListResponse {
   metadataVersions: TitleMetadataVersion[];
 }
 
-export type TitleReleaseStatus = "draft" | "published" | "withdrawn";
+export type TitleReleaseStatus = "testing" | "production";
 
 export interface UpsertTitleReleaseRequest {
   version: string;
-  metadataRevisionNumber: number;
+  status: TitleReleaseStatus;
   acquisitionUrl: string | null;
 }
 
@@ -498,7 +506,6 @@ export interface TitleRelease {
   id: string;
   version: string;
   status: TitleReleaseStatus;
-  metadataRevisionNumber: number;
   acquisitionUrl: string | null;
   isCurrent: boolean;
   publishedAt: string | null;
@@ -669,29 +676,44 @@ export const migrationMediaBuckets = {
 
 export type MigrationMediaBucketKey = keyof typeof migrationMediaBuckets;
 export type MigrationMediaBucketName = (typeof migrationMediaBuckets)[MigrationMediaBucketKey];
+export type MigrationMediaUploadPolicy = {
+  readonly bucket: MigrationMediaBucketName;
+  readonly maxUploadBytes: number;
+  readonly acceptedMimeTypes: readonly string[];
+  readonly recommendedWidth: number;
+  readonly recommendedHeight: number;
+};
 
 export const migrationMediaUploadPolicies = {
   avatars: {
     bucket: migrationMediaBuckets.avatars,
     maxUploadBytes: 256 * 1024,
     acceptedMimeTypes: ["image/webp", "image/jpeg", "image/png"],
+    recommendedWidth: 512,
+    recommendedHeight: 512,
   },
   cardImages: {
     bucket: migrationMediaBuckets.cardImages,
     maxUploadBytes: 1536 * 1024,
     acceptedMimeTypes: ["image/webp", "image/jpeg", "image/png"],
+    recommendedWidth: 900,
+    recommendedHeight: 1280,
   },
   heroImages: {
     bucket: migrationMediaBuckets.heroImages,
     maxUploadBytes: 3 * 1024 * 1024,
     acceptedMimeTypes: ["image/webp", "image/jpeg", "image/png", "image/svg+xml"],
+    recommendedWidth: 1600,
+    recommendedHeight: 900,
   },
   logoImages: {
     bucket: migrationMediaBuckets.logoImages,
     maxUploadBytes: 256 * 1024,
     acceptedMimeTypes: ["image/webp", "image/png", "image/svg+xml"],
+    recommendedWidth: 1200,
+    recommendedHeight: 400,
   },
-} as const;
+} as const satisfies Record<MigrationMediaBucketKey, MigrationMediaUploadPolicy>;
 
 const migrationSeedStudioDescriptionMaxLength = 1600;
 const migrationSeedTitleShortDescriptionMaxLength = 220;
@@ -1118,7 +1140,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "lantern-drift",
     displayName: "Lantern Drift",
     contentKind: "game",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 2,
     shortDescription: "Guide glowing paper boats through a midnight canal festival without snuffing the flame.",
     description: "Tilt waterways, spin lock-gates, and weave through fireworks as every lantern casts new puzzle shadows across the river. Developed by Blue Harbor Games.",
@@ -1137,7 +1159,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "compass-echo",
     displayName: "Compass Echo",
     contentKind: "app",
-    lifecycleStatus: "testing",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Plot expedition routes, track secrets, and sync clue boards for sprawling adventures.",
     description: "Compass Echo is a premium companion app for campaign nights, with layered maps, route planning, and clue pinning for cooperative exploration games.",
@@ -1156,7 +1178,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "riverlight-quest",
     displayName: "Riverlight Quest",
     contentKind: "game",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 2,
     shortDescription: "Chart branching raft routes and cooperative rescues through glowing canyon waterways.",
     description: "Crew a lantern raft, barter with riverside towns, and coordinate rescue missions as currents shift every round.",
@@ -1175,7 +1197,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "parade-of-sparks",
     displayName: "Parade of Sparks",
     contentKind: "game",
-    lifecycleStatus: "testing",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Build synchronized float routes and light shows for a citywide midnight celebration.",
     description: "Balance timing, crowd flow, and fireworks cues in a polished festival-management puzzler designed for short sessions.",
@@ -1194,7 +1216,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "orbit-orchard",
     displayName: "Orbit Orchard",
     contentKind: "game",
-    lifecycleStatus: "testing",
+    lifecycleStatus: "active",
     isReported: true,
     currentMetadataRevision: 1,
     shortDescription: "Cultivate fruit rings around a tiny planet in zero gravity.",
@@ -1214,7 +1236,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "nebula-relay",
     displayName: "Nebula Relay",
     contentKind: "app",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Coordinate community tournaments, relay schedules, and match alerts from a single dashboard.",
     description: "A tournament companion app for leagues and local clubs, with bracket snapshots and player-ready event reminders.",
@@ -1233,7 +1255,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "solar-orchard",
     displayName: "Solar Orchard",
     contentKind: "game",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Arrange reflective gardens and solar collectors across a drifting farm colony.",
     description: "Optimize heat, water, and pollination paths in a calm orbital builder with family-friendly pacing.",
@@ -1252,7 +1274,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "starlane-sprint",
     displayName: "Starlane Sprint",
     contentKind: "game",
-    lifecycleStatus: "testing",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Race modular courier craft through shifting asteroid lanes and signal gates.",
     description: "Short competitive runs, upgrade drafting, and bright orbital hazards make this a strong arcade anchor for local sessions.",
@@ -1271,7 +1293,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "clockwork-crew",
     displayName: "Clockwork Crew",
     contentKind: "game",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Direct a tiny team of workshop automatons through timed repair shifts.",
     description: "Assign clockwork specialists, reroute belts, and keep every bench moving in a compact strategy sim.",
@@ -1290,7 +1312,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "patchwork-port",
     displayName: "Patchwork Port",
     contentKind: "game",
-    lifecycleStatus: "testing",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Balance incoming cargo, repairs, and ferry traffic in a stitched-together harbor town.",
     description: "A cozy logistics game where every dock, crane, and repair queue becomes part of a larger port puzzle.",
@@ -1309,7 +1331,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "signal-harbor",
     displayName: "Signal Harbor",
     contentKind: "app",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Monitor fleet status, player sessions, and maintenance notices from a polished dockside dashboard.",
     description: "A support utility for clubs and event hosts that keeps installation notes, room rosters, and service advisories in one place.",
@@ -1328,7 +1350,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "cinderline-workshop",
     displayName: "Cinderline Workshop",
     contentKind: "game",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Restore traveling maker caravans and rebuild gear trains before the next market stop.",
     description: "Part repair sim and part organization puzzle, with approachable systems and strong tactile feedback.",
@@ -1347,7 +1369,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "anchorpoint-atlas",
     displayName: "Anchorpoint Atlas",
     contentKind: "app",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Bookmark routes, landmarks, and encounter notes for sprawling campaigns.",
     description: "A map-first companion app that helps players pin clues, annotate landmarks, and revisit branching travel paths.",
@@ -1366,7 +1388,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "trailblazer-terminal",
     displayName: "Trailblazer Terminal",
     contentKind: "app",
-    lifecycleStatus: "testing",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Plan branching expeditions, expedition kits, and route briefings from one terminal view.",
     description: "Mission planning, route handoff, and shared gear checklists make this a strong co-op planning tool for local groups.",
@@ -1385,7 +1407,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "cobalt-almanac",
     displayName: "Cobalt Almanac",
     contentKind: "app",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Collect creature notes, recipe experiments, and seasonal discoveries in a shared almanac.",
     description: "A relaxed utility for long-running family saves, with illustrated journals and easy sharing between profiles.",
@@ -1404,7 +1426,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "hearthside-protocol",
     displayName: "Hearthside Protocol",
     contentKind: "game",
-    lifecycleStatus: "testing",
+    lifecycleStatus: "active",
     isReported: true,
     currentMetadataRevision: 1,
     shortDescription: "Protect a woodland settlement by balancing warmth, food, and quiet machine helpers.",
@@ -1424,7 +1446,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "beacon-boardwalk",
     displayName: "Beacon Boardwalk",
     contentKind: "game",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Restore a weathered shoreline promenade through mini-games and family quests.",
     description: "Reopen arcades, rebuild attractions, and guide visitors through a bright seasonal boardwalk full of small objectives.",
@@ -1443,7 +1465,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "marble-meridian",
     displayName: "Marble Meridian",
     contentKind: "game",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Roll magnetic marbles through shifting global landmarks and route gates.",
     description: "A brisk family puzzler about momentum, shortcuts, and map-based contraptions with quick rematch appeal.",
@@ -1462,7 +1484,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "mosaic-drift",
     displayName: "Mosaic Drift",
     contentKind: "game",
-    lifecycleStatus: "testing",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Compose drifting tile murals while matching wind, color, and crowd patterns.",
     description: "A meditative score-chase game built around layered tiles, pattern chains, and soft visual feedback.",
@@ -1481,7 +1503,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "festival-foundry",
     displayName: "Festival Foundry",
     contentKind: "game",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Design parade props, light rigs, and celebration routes for a cooperative city showcase.",
     description: "Mix crafting, staging, and short tactical planning in a lively builder tuned for couch co-op.",
@@ -1500,7 +1522,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "nightglass-tactics",
     displayName: "Nightglass Tactics",
     contentKind: "game",
-    lifecycleStatus: "published",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Outmaneuver rival squads through mirrored corridors and breakable glass sightlines.",
     description: "A compact tactics game with fast rounds, crisp silhouettes, and approachable but rewarding positioning rules.",
@@ -1519,7 +1541,7 @@ export const migrationSeedTitles: ReadonlyArray<MigrationSeedTitleFixture> = [
     slug: "cascade-courier",
     displayName: "Cascade Courier",
     contentKind: "game",
-    lifecycleStatus: "testing",
+    lifecycleStatus: "active",
     currentMetadataRevision: 1,
     shortDescription: "Leap delivery gliders across canyon waterfalls under tight dispatch windows.",
     description: "An arcade courier game about momentum, drop accuracy, and route memory, with a strong speedrun loop.",

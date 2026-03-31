@@ -91,6 +91,21 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             command,
         )
 
+    def test_resolve_supabase_command_prefix_prefers_standalone_cli(self) -> None:
+        with mock.patch.object(dev.shutil, "which", side_effect=lambda name: "C:/tools/supabase.exe" if name == "supabase" else None):
+            self.assertEqual(["supabase"], dev.resolve_supabase_command_prefix())
+
+    def test_resolve_supabase_command_prefix_uses_non_interactive_npx_fallback(self) -> None:
+        def fake_which(name: str) -> str | None:
+            if name == "supabase":
+                return None
+            if name == "npx":
+                return "C:/Program Files/nodejs/npx.cmd"
+            return None
+
+        with mock.patch.object(dev.shutil, "which", side_effect=fake_which):
+            self.assertEqual(["npx", "--yes", "supabase"], dev.resolve_supabase_command_prefix())
+
     def test_apply_environment_file_preserves_existing_values(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_path = pathlib.Path(temp_dir) / ".env.local"
@@ -124,6 +139,24 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertTrue(dev.is_github_environment_secret("DEPLOY_SMOKE_SECRET"))
         self.assertFalse(dev.is_github_environment_secret("SUPABASE_PUBLISHABLE_KEY"))
         self.assertFalse(dev.is_github_environment_secret("BREVO_SIGNUPS_LIST_ID"))
+
+    def test_deploy_required_env_names_include_smoke_password(self) -> None:
+        self.assertIn("DEPLOY_SMOKE_USER_PASSWORD", dev.DEPLOY_REQUIRED_ENV_NAMES)
+
+    def test_manual_deploy_workflow_exports_and_writes_smoke_credentials(self) -> None:
+        workflow_path = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "manual-deploy.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+
+        self.assertIn("DEPLOY_SMOKE_PLAYER_EMAIL: ${{ vars.DEPLOY_SMOKE_PLAYER_EMAIL }}", workflow)
+        self.assertIn("DEPLOY_SMOKE_DEVELOPER_EMAIL: ${{ vars.DEPLOY_SMOKE_DEVELOPER_EMAIL }}", workflow)
+        self.assertIn("DEPLOY_SMOKE_MODERATOR_EMAIL: ${{ vars.DEPLOY_SMOKE_MODERATOR_EMAIL }}", workflow)
+        self.assertIn("DEPLOY_SMOKE_SECRET: ${{ secrets.DEPLOY_SMOKE_SECRET }}", workflow)
+        self.assertIn("DEPLOY_SMOKE_USER_PASSWORD: ${{ secrets.DEPLOY_SMOKE_USER_PASSWORD }}", workflow)
+        self.assertIn('"DEPLOY_SMOKE_PLAYER_EMAIL",', workflow)
+        self.assertIn('"DEPLOY_SMOKE_DEVELOPER_EMAIL",', workflow)
+        self.assertIn('"DEPLOY_SMOKE_MODERATOR_EMAIL",', workflow)
+        self.assertIn('"DEPLOY_SMOKE_SECRET",', workflow)
+        self.assertIn('"DEPLOY_SMOKE_USER_PASSWORD",', workflow)
 
     def test_infer_supabase_url_from_project_ref_for_hosted_env(self) -> None:
         with mock.patch.dict(
@@ -787,8 +820,10 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
             "DEPLOY_SMOKE_SECRET": "smoke-secret",
             "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
             "SUPABASE_SECRET_KEY": "secret-key",
             "BREVO_API_KEY": "brevo-api-key",
+            "VITE_LANDING_MODE": "true",
         }
         contact = {"id": "contact-1", "lifecycle_status": "waitlisted"}
 
@@ -832,6 +867,46 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         support_call = request_json.call_args_list[2]
         self.assertEqual("https://api.staging.boardenthusiasts.com/support/issues", support_call.kwargs["url"])
         self.assertEqual("smoke-secret", support_call.kwargs["headers"]["x-board-enthusiasts-deploy-smoke-secret"])
+
+    def test_run_workers_deploy_smoke_requires_full_mvp_credentials_when_landing_disabled(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
+            "VITE_LANDING_MODE": "false",
+        }
+
+        with self.assertRaises(dev.DevCliError) as raised:
+            dev.run_workers_deploy_smoke(
+                dev.config_from_args(self.create_args(), pathlib.Path.cwd()),
+                target="staging",
+                env_values=env_values,
+            )
+
+        self.assertIn("Full-MVP deploy smoke requires smoke-account credentials", str(raised.exception))
+
+    def test_run_pages_deploy_smoke_checks_full_mvp_routes_when_landing_disabled(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
+            "VITE_LANDING_MODE": "false",
+        }
+
+        with mock.patch.object(dev, "wait_for_pages_shell") as wait_for_pages_shell:
+            dev.run_pages_deploy_smoke(env_values)
+
+        self.assertEqual(
+            [
+                mock.call("https://staging.boardenthusiasts.com"),
+                mock.call("https://staging.boardenthusiasts.com/browse"),
+                mock.call("https://staging.boardenthusiasts.com/studios/blue-harbor-games"),
+                mock.call("https://staging.boardenthusiasts.com/browse/blue-harbor-games/lantern-drift"),
+                mock.call("https://staging.boardenthusiasts.com/player"),
+                mock.call("https://staging.boardenthusiasts.com/develop"),
+                mock.call("https://staging.boardenthusiasts.com/moderate"),
+            ],
+            wait_for_pages_shell.call_args_list,
+        )
 
     def test_has_local_required_schema_includes_marketing_contacts(self) -> None:
         runtime_env = {
@@ -1063,6 +1138,24 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertEqual(dev.LOCAL_SUPABASE_URL, status_env["API_URL"])
         self.assertEqual("anon", status_env["ANON_KEY"])
         self.assertEqual("service", status_env["SERVICE_ROLE_KEY"])
+
+    def test_get_supabase_status_env_times_out_with_recovery_guidance(self) -> None:
+        args = self.create_args()
+        config = dev.config_from_args(args, pathlib.Path.cwd())
+
+        with mock.patch.object(dev, "resolve_supabase_command_prefix", return_value=["npx", "supabase"]), mock.patch.object(
+            dev,
+            "run_command",
+            side_effect=subprocess.TimeoutExpired(
+                cmd=["npx", "supabase", "status", "-o", "env"],
+                timeout=dev.SUPABASE_STATUS_TIMEOUT_SECONDS,
+            ),
+        ):
+            with self.assertRaises(dev.DevCliError) as raised:
+                dev.get_supabase_status_env(config)
+
+        self.assertIn("timed out", str(raised.exception).lower())
+        self.assertIn("database down", str(raised.exception))
 
     def test_get_local_supabase_urls_and_mailpit_respect_port_overrides(self) -> None:
         with mock.patch.dict(
@@ -1299,6 +1392,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             with (
                 mock.patch.object(dev, "ensure_migration_workspace_scaffolding"),
                 mock.patch.object(dev, "ensure_docker_daemon_available"),
+                mock.patch.object(dev, "ensure_tcp_port_bindable"),
                 mock.patch.object(dev, "resolve_supabase_command_prefix", return_value=["npx", "supabase"]),
                 mock.patch.object(dev, "remove_stale_supabase_project_containers") as remove_stale,
                 mock.patch.object(dev, "run_command", side_effect=[conflict, success]) as run_command,
@@ -1335,6 +1429,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             with (
                 mock.patch.object(dev, "ensure_migration_workspace_scaffolding"),
                 mock.patch.object(dev, "ensure_docker_daemon_available"),
+                mock.patch.object(dev, "ensure_tcp_port_bindable"),
                 mock.patch.object(dev, "resolve_supabase_command_prefix", return_value=["npx", "supabase"]),
                 mock.patch.object(dev, "run_command", return_value=already_starting) as run_command,
                 mock.patch.object(
@@ -1370,6 +1465,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             with (
                 mock.patch.object(dev, "ensure_migration_workspace_scaffolding"),
                 mock.patch.object(dev, "ensure_docker_daemon_available"),
+                mock.patch.object(dev, "ensure_tcp_port_bindable"),
                 mock.patch.object(dev, "resolve_supabase_command_prefix", return_value=["npx", "supabase"]),
                 mock.patch.object(dev, "run_command", return_value=success) as run_command,
                 mock.patch.object(
@@ -1422,6 +1518,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             with (
                 mock.patch.object(dev, "ensure_migration_workspace_scaffolding"),
                 mock.patch.object(dev, "ensure_docker_daemon_available"),
+                mock.patch.object(dev, "ensure_tcp_port_bindable"),
                 mock.patch.object(dev, "resolve_supabase_command_prefix", return_value=["npx", "supabase"]),
                 mock.patch.object(dev, "run_command", side_effect=[transient_failure, success]) as run_command,
                 mock.patch.object(
@@ -1437,6 +1534,36 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 dev.run_supabase_stack_command(config, action="start")
 
             self.assertEqual(2, run_command.call_count)
+
+    def test_run_supabase_start_validates_db_port_bindability_before_starting(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            args = self.create_args()
+            config = dev.config_from_args(args, repo_root)
+            supabase_root = repo_root / config.supabase_root
+            supabase_root.mkdir(parents=True, exist_ok=True)
+
+            with (
+                mock.patch.object(dev, "ensure_migration_workspace_scaffolding"),
+                mock.patch.object(dev, "ensure_docker_daemon_available"),
+                mock.patch.object(
+                    dev,
+                    "ensure_tcp_port_bindable",
+                    side_effect=dev.DevCliError("port is excluded"),
+                ) as ensure_tcp_port_bindable,
+                mock.patch.object(dev, "resolve_supabase_command_prefix", return_value=["npx", "supabase"]),
+                mock.patch.object(dev, "run_command") as run_command,
+            ):
+                with self.assertRaises(dev.DevCliError) as raised:
+                    dev.run_supabase_stack_command(config, action="start")
+
+            ensure_tcp_port_bindable.assert_called_once_with(
+                host="0.0.0.0",
+                port=dev.LOCAL_SUPABASE_DB_PORT,
+                description="local Supabase database",
+            )
+            run_command.assert_not_called()
+            self.assertIn("port is excluded", str(raised.exception))
 
     def test_run_supabase_db_reset_retries_when_container_removal_is_still_in_progress(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1831,6 +1958,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
             with (
                 mock.patch.object(dev, "assert_command_available"),
+                mock.patch.object(dev, "resolve_github_cli_executable", return_value="gh"),
                 mock.patch.object(dev, "run_command", side_effect=fake_run_command),
             ):
                 dev.sync_root_environment_file_to_github_environment(
@@ -1961,6 +2089,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
             with (
                 mock.patch.object(dev, "assert_command_available"),
+                mock.patch.object(dev, "resolve_github_cli_executable", return_value="gh"),
                 mock.patch.object(dev, "run_command", side_effect=fake_run_command),
                 mock.patch.dict(dev.os.environ, {}, clear=True),
             ):
