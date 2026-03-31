@@ -140,6 +140,24 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertFalse(dev.is_github_environment_secret("SUPABASE_PUBLISHABLE_KEY"))
         self.assertFalse(dev.is_github_environment_secret("BREVO_SIGNUPS_LIST_ID"))
 
+    def test_deploy_required_env_names_include_smoke_password(self) -> None:
+        self.assertIn("DEPLOY_SMOKE_USER_PASSWORD", dev.DEPLOY_REQUIRED_ENV_NAMES)
+
+    def test_manual_deploy_workflow_exports_and_writes_smoke_credentials(self) -> None:
+        workflow_path = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "manual-deploy.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+
+        self.assertIn("DEPLOY_SMOKE_PLAYER_EMAIL: ${{ vars.DEPLOY_SMOKE_PLAYER_EMAIL }}", workflow)
+        self.assertIn("DEPLOY_SMOKE_DEVELOPER_EMAIL: ${{ vars.DEPLOY_SMOKE_DEVELOPER_EMAIL }}", workflow)
+        self.assertIn("DEPLOY_SMOKE_MODERATOR_EMAIL: ${{ vars.DEPLOY_SMOKE_MODERATOR_EMAIL }}", workflow)
+        self.assertIn("DEPLOY_SMOKE_SECRET: ${{ secrets.DEPLOY_SMOKE_SECRET }}", workflow)
+        self.assertIn("DEPLOY_SMOKE_USER_PASSWORD: ${{ secrets.DEPLOY_SMOKE_USER_PASSWORD }}", workflow)
+        self.assertIn('"DEPLOY_SMOKE_PLAYER_EMAIL",', workflow)
+        self.assertIn('"DEPLOY_SMOKE_DEVELOPER_EMAIL",', workflow)
+        self.assertIn('"DEPLOY_SMOKE_MODERATOR_EMAIL",', workflow)
+        self.assertIn('"DEPLOY_SMOKE_SECRET",', workflow)
+        self.assertIn('"DEPLOY_SMOKE_USER_PASSWORD",', workflow)
+
     def test_infer_supabase_url_from_project_ref_for_hosted_env(self) -> None:
         with mock.patch.dict(
             dev.os.environ,
