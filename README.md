@@ -60,14 +60,10 @@ git submodule status
 
 ## Planning
 
-- Current planning and implementation alignment:
-  - Current architecture and wave alignment: [`planning/current-state-and-wave-plan.md`](planning/current-state-and-wave-plan.md)
-  - Cloudflare/Supabase/Workers conversion plan: [`planning/cloudflare-supabase-workers-conversion-plan.md`](planning/cloudflare-supabase-workers-conversion-plan.md)
-  - Product realignment implementation sequencing: [`planning/product-realignment-implementation-plan.md`](planning/product-realignment-implementation-plan.md)
-  - Backend schema implementation plan: [`backend/planning/mvp-schema-implementation-plan.md`](backend/planning/mvp-schema-implementation-plan.md)
-  - Wave 5 publisher/platform research notes: [`planning/wave-5-publisher-research-notes.md`](planning/wave-5-publisher-research-notes.md)
-  - Technology recommendation: [`planning/technology-fit-recommendation.md`](planning/technology-fit-recommendation.md)
+- Active release-planning reference:
+  - MVP release audit: [`planning/mvp-release-audit.md`](planning/mvp-release-audit.md)
 - Historical planning context:
+  - Root historical plans and landing-page wave notes: [`planning/README.md`](planning/README.md)
   - Initial data schema plan: [`api/planning/initial-data-schema-plan.md`](api/planning/initial-data-schema-plan.md)
 
 ## Developer Automation

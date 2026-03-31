@@ -5,6 +5,11 @@ const fallbackToken = (process.env.CONTRACT_SMOKE_TOKEN ?? "").trim();
 const playerToken = (process.env.CONTRACT_SMOKE_PLAYER_TOKEN ?? "").trim();
 const developerToken = (process.env.CONTRACT_SMOKE_DEVELOPER_TOKEN ?? "").trim();
 const moderatorToken = (process.env.CONTRACT_SMOKE_MODERATOR_TOKEN ?? "").trim();
+const smokeUserPassword = (process.env.CONTRACT_SMOKE_USER_PASSWORD ?? "ChangeMe!123").trim() || "ChangeMe!123";
+const pngPixel = Uint8Array.from(
+  atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9pX6N6gAAAAASUVORK5CYII="),
+  (character) => character.charCodeAt(0),
+);
 
 interface SmokeResult {
   route: string;
@@ -16,16 +21,27 @@ interface SmokeResult {
 interface SmokeContext {
   publicTitleId: string;
   managedStudioId: string;
+  managedStudioSlug: string;
+  managedStudioDisplayName: string;
+  managedStudioDescription: string | null;
   managedTitleId: string;
   managedTitleMetadataRevision: number;
   currentUserNotificationId: string;
+  createdStudioId: string;
+  createdStudioSlug: string;
   createdTitleId: string;
   createdTitleSlug: string;
   createdTitleMetadataRevision: number;
+  createdStudioLinkId: string;
   createdPlayerReportId: string;
   developerReportId: string;
+  moderatedDeveloperSubject: string;
   moderatedValidateReportId: string;
   moderatedInvalidateReportId: string;
+  lifecycleTitleId: string;
+  lifecycleReleaseId: string;
+  deleteTitleId: string;
+  deleteTitleDisplayName: string;
   releaseUnderTestId: string;
 }
 
@@ -114,14 +130,12 @@ async function fetchJson<T>(path: string, token: string, init?: RequestInit): Pr
   return payload;
 }
 
-function buildCreateTitleBody(slug: string): JsonRecord {
+function buildCreateTitleBody(slug: string, displayName = "Smoke Test Title"): JsonRecord {
   return {
     slug,
     contentKind: "game",
-    lifecycleStatus: "testing",
-    visibility: "private",
     metadata: {
-      displayName: "Smoke Test Title",
+      displayName,
       shortDescription: "A deterministic contract-smoke title.",
       description: "This title exists so the contract smoke suite can exercise mutable developer routes.",
       genreSlugs: ["utility", "qa"],
@@ -134,12 +148,10 @@ function buildCreateTitleBody(slug: string): JsonRecord {
   };
 }
 
-function buildUpdateTitleBody(slug: string): JsonRecord {
+function buildUpdateTitleBody(): JsonRecord {
   return {
-    slug,
     contentKind: "game",
-    lifecycleStatus: "testing",
-    visibility: "private",
+    visibility: "unlisted",
   };
 }
 
@@ -157,8 +169,37 @@ function buildMetadataBody(displayName: string): JsonRecord {
   };
 }
 
+function buildDeleteTitleBody(displayName: string): JsonRecord {
+  return {
+    currentPassword: smokeUserPassword,
+    confirmationTitleName: displayName,
+  };
+}
+
+async function createBootstrapTitle(
+  studioId: string,
+  developerAuth: string,
+  slug: string,
+  displayName: string,
+): Promise<{ id: string; displayName: string }> {
+  const created = await fetchJson<{ title: { id: string; displayName: string } }>(
+    `/developer/studios/${studioId}/titles`,
+    developerAuth,
+    {
+      method: "POST",
+      body: JSON.stringify(buildCreateTitleBody(slug, displayName)),
+    },
+  );
+
+  return {
+    id: created.title.id,
+    displayName: created.title.displayName,
+  };
+}
+
 async function bootstrapContext(): Promise<SmokeContext> {
   const developerAuth = requireValue(getRouteToken("developer"), "developer token");
+  const playerAuth = getRouteToken("player") || developerAuth;
 
   const catalog = await fetchJson<{ titles: Array<{ id: string }> }>(
     "/catalog?pageNumber=1&pageSize=5",
@@ -181,7 +222,7 @@ async function bootstrapContext(): Promise<SmokeContext> {
 
   await fetchJson<{ boardProfile: { boardUserId: string } }>(
     "/identity/me/board-profile",
-    developerAuth,
+    playerAuth,
     {
       method: "PUT",
       body: JSON.stringify({
@@ -192,19 +233,56 @@ async function bootstrapContext(): Promise<SmokeContext> {
     },
   );
 
+  const bootstrapSuffix = Date.now().toString(36);
+  const lifecycleTitle = await createBootstrapTitle(
+    requireValue(managedStudio?.id, "managed studio id"),
+    developerAuth,
+    `lifecycle-smoke-${bootstrapSuffix}`,
+    "Lifecycle Smoke Title",
+  );
+  const lifecycleRelease = await fetchJson<{ release: { id: string } }>(
+    `/developer/titles/${lifecycleTitle.id}/releases`,
+    developerAuth,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        version: "0.0.1-lifecycle",
+        status: "testing",
+        acquisitionUrl: "https://boardenthusiasts.example/releases/0.0.1-lifecycle",
+      }),
+    },
+  );
+  const deleteTitle = await createBootstrapTitle(
+    requireValue(managedStudio?.id, "managed studio id"),
+    developerAuth,
+    `delete-smoke-${bootstrapSuffix}`,
+    "Delete Smoke Title",
+  );
+
   return {
     publicTitleId: requireValue(publicTitleId, "public title id"),
     managedStudioId: requireValue(managedStudio?.id, "managed studio id"),
+    managedStudioSlug: requireValue(managedStudio?.slug, "managed studio slug"),
+    managedStudioDisplayName: String((managedStudio as JsonRecord | undefined)?.displayName ?? ""),
+    managedStudioDescription: ((managedStudio as JsonRecord | undefined)?.description as string | null | undefined) ?? null,
     managedTitleId: requireValue(managedTitle?.id, "managed title id"),
     managedTitleMetadataRevision: requireNumber(managedTitle?.currentMetadataRevision, "managed title metadata revision"),
     currentUserNotificationId: "",
+    createdStudioId: "",
+    createdStudioSlug: "",
     createdTitleId: "",
     createdTitleSlug: "",
     createdTitleMetadataRevision: 0,
+    createdStudioLinkId: "",
     createdPlayerReportId: "",
     developerReportId: "",
+    moderatedDeveloperSubject: "",
     moderatedValidateReportId: "",
     moderatedInvalidateReportId: "",
+    lifecycleTitleId: lifecycleTitle.id,
+    lifecycleReleaseId: lifecycleRelease.release.id,
+    deleteTitleId: deleteTitle.id,
+    deleteTitleDisplayName: deleteTitle.displayName,
     releaseUnderTestId: "",
   };
 }
@@ -218,7 +296,11 @@ function buildRequestPlan(
 
   switch (`${route.method} ${route.path}`) {
     case "GET /catalog":
-      return { path: "/catalog?pageNumber=1&pageSize=2", init: { method: route.method, headers: buildHeaders(token) } };
+      return {
+        path:
+          "/catalog?pageNumber=1&pageSize=2&studioSlug=blue-harbor-games&genre=Adventure&contentKind=game&search=lantern&minPlayers=1&maxPlayers=4&sort=title-asc",
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
     case "GET /identity/user-name-availability":
       return {
         path: "/identity/user-name-availability?userName=smoke-user-check",
@@ -231,6 +313,31 @@ function buildRequestPlan(
         path: "/identity/me/profile",
         init: { method: route.method, headers: buildHeaders(token, "application/json"), body: JSON.stringify({ displayName: "Emma Torres" }) },
       };
+    case "POST /identity/me/password/verify":
+      return {
+        path: "/identity/me/password/verify",
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({ currentPassword: smokeUserPassword }),
+        },
+      };
+    case "POST /studios": {
+      const slug = `studio-smoke-${uniqueSuffix}`;
+      context.createdStudioSlug = slug;
+      return {
+        path: "/studios",
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({
+            slug,
+            displayName: "Studio Smoke",
+            description: "A temporary studio for contract-smoke coverage.",
+          }),
+        },
+      };
+    }
     case "GET /identity/me/board-profile":
       return { path: "/identity/me/board-profile", init: { method: route.method, headers: buildHeaders(token) } };
     case "PUT /identity/me/board-profile":
@@ -291,16 +398,85 @@ function buildRequestPlan(
           body: JSON.stringify({ message: "Smoke test follow-up from the player workflow." }),
         },
       };
+    case "PUT /developer/studios/{studioId}":
+      return {
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}`,
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({
+            slug: requireValue(context.createdStudioSlug || context.managedStudioSlug, "studio slug"),
+            displayName: "Studio Smoke",
+            description: "Updated temporary studio for contract-smoke coverage.",
+          }),
+        },
+      };
+    case "DELETE /developer/studios/{studioId}": {
+      return {
+        path: `/developer/studios/${requireValue(context.createdStudioId, "created studio id")}`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    }
+    case "GET /developer/studios/{studioId}/links":
+      return {
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/links`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/studios/{studioId}/links":
+      return {
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/links`,
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({
+            label: "Smoke Docs",
+            url: "https://example.invalid/smoke-docs",
+          }),
+        },
+      };
+    case "PUT /developer/studios/{studioId}/links/{linkId}":
+      return {
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/links/${requireValue(context.createdStudioLinkId, "created studio link id")}`,
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({
+            label: "Smoke Support",
+            url: "https://example.invalid/smoke-support",
+          }),
+        },
+      };
+    case "DELETE /developer/studios/{studioId}/links/{linkId}":
+      return {
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/links/${requireValue(context.createdStudioLinkId, "created studio link id")}`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/studios/{studioId}/logo-upload":
+    case "POST /developer/studios/{studioId}/avatar-upload":
+    case "POST /developer/studios/{studioId}/banner-upload": {
+      const formData = new FormData();
+      formData.set("media", new Blob([pngPixel], { type: "image/png" }), "smoke.png");
+      const uploadPath =
+        route.path === "/developer/studios/{studioId}/logo-upload"
+          ? "logo-upload"
+          : route.path === "/developer/studios/{studioId}/avatar-upload"
+            ? "avatar-upload"
+            : "banner-upload";
+      return {
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/${uploadPath}`,
+        init: { method: route.method, headers: buildHeaders(token), body: formData },
+      };
+    }
     case "GET /developer/studios/{studioId}/titles":
       return {
-        path: `/developer/studios/${requireValue(context.managedStudioId, "managed studio id")}/titles`,
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/titles`,
         init: { method: route.method, headers: buildHeaders(token) },
       };
     case "POST /developer/studios/{studioId}/titles": {
       const slug = `smoke-${uniqueSuffix}`;
       context.createdTitleSlug = slug;
       return {
-        path: `/developer/studios/${requireValue(context.managedStudioId, "managed studio id")}/titles`,
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/titles`,
         init: {
           method: route.method,
           headers: buildHeaders(token, "application/json"),
@@ -319,7 +495,31 @@ function buildRequestPlan(
         init: {
           method: route.method,
           headers: buildHeaders(token, "application/json"),
-          body: JSON.stringify(buildUpdateTitleBody(requireValue(context.createdTitleSlug, "created title slug"))),
+          body: JSON.stringify(buildUpdateTitleBody()),
+        },
+      };
+    case "POST /developer/titles/{titleId}/activate":
+      return {
+        path: `/developer/titles/${requireValue(context.lifecycleTitleId, "lifecycle title id")}/activate`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/titles/{titleId}/archive":
+      return {
+        path: `/developer/titles/${requireValue(context.lifecycleTitleId, "lifecycle title id")}/archive`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/titles/{titleId}/unarchive":
+      return {
+        path: `/developer/titles/${requireValue(context.lifecycleTitleId, "lifecycle title id")}/unarchive`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/titles/{titleId}/delete":
+      return {
+        path: `/developer/titles/${requireValue(context.deleteTitleId, "delete title id")}/delete`,
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify(buildDeleteTitleBody(requireValue(context.deleteTitleDisplayName, "delete title display name"))),
         },
       };
     case "PUT /developer/titles/{titleId}/metadata/current":
@@ -407,7 +607,7 @@ function buildRequestPlan(
           headers: buildHeaders(token, "application/json"),
           body: JSON.stringify({
             version: "0.1.0-smoke",
-            metadataRevisionNumber: requireNumber(context.createdTitleMetadataRevision, "created title metadata revision"),
+            status: "testing",
             acquisitionUrl: "https://boardenthusiasts.example/releases/0.1.0-smoke",
           }),
         },
@@ -420,24 +620,29 @@ function buildRequestPlan(
           headers: buildHeaders(token, "application/json"),
           body: JSON.stringify({
             version: "0.1.1-smoke",
-            metadataRevisionNumber: requireNumber(context.createdTitleMetadataRevision, "created title metadata revision"),
+            status: "production",
             acquisitionUrl: "https://boardenthusiasts.example/releases/0.1.1-smoke",
           }),
         },
-      };
-    case "POST /developer/titles/{titleId}/releases/{releaseId}/publish":
-      return {
-        path: `/developer/titles/${requireValue(context.createdTitleId, "created title id")}/releases/${requireValue(context.releaseUnderTestId, "release under test id")}/publish`,
-        init: { method: route.method, headers: buildHeaders(token) },
       };
     case "POST /developer/titles/{titleId}/releases/{releaseId}/activate":
       return {
         path: `/developer/titles/${requireValue(context.createdTitleId, "created title id")}/releases/${requireValue(context.releaseUnderTestId, "release under test id")}/activate`,
         init: { method: route.method, headers: buildHeaders(token) },
       };
-    case "POST /developer/titles/{titleId}/releases/{releaseId}/withdraw":
+    case "GET /moderation/developers/{developerSubject}/verification":
       return {
-        path: `/developer/titles/${requireValue(context.createdTitleId, "created title id")}/releases/${requireValue(context.releaseUnderTestId, "release under test id")}/withdraw`,
+        path: `/moderation/developers/${requireValue(context.moderatedDeveloperSubject, "moderated developer subject")}/verification`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "PUT /moderation/developers/{developerSubject}/verified-developer":
+      return {
+        path: `/moderation/developers/${requireValue(context.moderatedDeveloperSubject, "moderated developer subject")}/verified-developer`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "DELETE /moderation/developers/{developerSubject}/verified-developer":
+      return {
+        path: `/moderation/developers/${requireValue(context.moderatedDeveloperSubject, "moderated developer subject")}/verified-developer`,
         init: { method: route.method, headers: buildHeaders(token) },
       };
     case "GET /moderation/title-reports/{reportId}":
@@ -493,6 +698,12 @@ function applyResponseContext(route: (typeof maintainedApiRoutes)[number], paylo
       context.currentUserNotificationId = ((notifications[0]?.id as string | undefined) ?? "");
       break;
     }
+    case "POST /studios":
+      context.createdStudioId = (((json.studio as JsonRecord | undefined)?.id as string | undefined) ?? "");
+      break;
+    case "POST /developer/studios/{studioId}/links":
+      context.createdStudioLinkId = (((json.link as JsonRecord | undefined)?.id as string | undefined) ?? "");
+      break;
     case "POST /developer/studios/{studioId}/titles":
       context.createdTitleId = (((json.title as JsonRecord | undefined)?.id as string | undefined) ?? "");
       context.createdTitleMetadataRevision = Number(((json.title as JsonRecord | undefined)?.currentMetadataRevision as number | undefined) ?? 0);
@@ -506,6 +717,11 @@ function applyResponseContext(route: (typeof maintainedApiRoutes)[number], paylo
     case "GET /developer/titles/{titleId}/reports": {
       const reports = (json.reports as Array<JsonRecord> | undefined) ?? [];
       context.developerReportId = ((reports[0]?.id as string | undefined) ?? "");
+      break;
+    }
+    case "GET /moderation/developers": {
+      const developers = (json.developers as Array<JsonRecord> | undefined) ?? [];
+      context.moderatedDeveloperSubject = ((developers[0]?.developerSubject as string | undefined) ?? "");
       break;
     }
     case "POST /developer/titles/{titleId}/releases":

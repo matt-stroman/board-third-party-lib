@@ -1,9 +1,10 @@
 const baseUrl = (process.env.WORKERS_SMOKE_BASE_URL ?? "http://127.0.0.1:8787").replace(/\/$/, "");
+const playerToken = (process.env.WORKERS_SMOKE_PLAYER_TOKEN ?? "").trim();
 const moderatorToken = (process.env.WORKERS_SMOKE_MODERATOR_TOKEN ?? "").trim();
 const developerToken = (process.env.WORKERS_SMOKE_DEVELOPER_TOKEN ?? "").trim();
 
-if (!moderatorToken || !developerToken) {
-  throw new Error("WORKERS_SMOKE_MODERATOR_TOKEN and WORKERS_SMOKE_DEVELOPER_TOKEN are required.");
+if (!playerToken || !moderatorToken || !developerToken) {
+  throw new Error("WORKERS_SMOKE_PLAYER_TOKEN, WORKERS_SMOKE_MODERATOR_TOKEN, and WORKERS_SMOKE_DEVELOPER_TOKEN are required.");
 }
 
 interface SmokeResult {
@@ -45,64 +46,147 @@ function authHeaders(token: string, contentType = "application/json"): HeadersIn
 async function run(): Promise<void> {
   const results: SmokeResult[] = [];
 
-  const catalog = (await assertJson("/catalog?pageNumber=1&pageSize=2", {}, 200, "catalog list")) as {
-    titles: Array<{ slug: string }>;
+  const metadata = (await assertJson("/", {}, 200, "api metadata")) as {
+    service: string;
   };
-  results.push({ ok: catalog.titles.length >= 2, label: "catalog list", detail: "public titles returned" });
+  if (metadata.service !== "board-enthusiasts-workers-api") {
+    throw new Error("Root API metadata did not return the expected service name.");
+  }
 
-  const marketingEmail = `workers-smoke-${Date.now()}@example.invalid`;
-  const marketingSignup = (await assertJson(
-    "/marketing/signups",
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        origin: "http://localhost:5173"
-      },
-      body: JSON.stringify({
-        email: marketingEmail,
-        firstName: "Workers",
-        source: "landing_page",
-        consentTextVersion: "landing-page-v1",
-        turnstileToken: null
-      })
-    },
-    201,
-    "marketing signup"
-  )) as {
-    accepted: boolean;
-    duplicate: boolean;
-    signup: { email: string; source: string; status: string };
+  const genres = (await assertJson("/genres", {}, 200, "genre list")) as { genres: Array<{ slug: string }> };
+  const ageRatingAuthorities = (await assertJson("/age-rating-authorities", {}, 200, "age-rating authority list")) as {
+    ageRatingAuthorities: Array<{ code: string }>;
   };
+  const catalog = (await assertJson(
+    "/catalog?pageNumber=1&pageSize=4&sort=title-asc",
+    {},
+    200,
+    "catalog list"
+  )) as {
+    titles: Array<{ id: string; studioSlug: string; slug: string }>;
+  };
+  const studios = (await assertJson("/studios", {}, 200, "studio list")) as {
+    studios: Array<{ slug: string }>;
+  };
+  const userNameAvailability = (await assertJson(
+    "/identity/user-name-availability?userName=workers-smoke-check",
+    {},
+    200,
+    "username availability"
+  )) as {
+    userNameAvailability: { normalizedUserName: string };
+  };
+  await assertJson("/catalog/blue-harbor-games/lantern-drift", {}, 200, "catalog detail");
+  await assertJson("/studios/blue-harbor-games", {}, 200, "studio detail");
   results.push({
     ok:
-      marketingSignup.accepted &&
-      !marketingSignup.duplicate &&
-      marketingSignup.signup.email === marketingEmail &&
-      marketingSignup.signup.source === "landing_page" &&
-      marketingSignup.signup.status === "subscribed",
-    label: "marketing signup",
-    detail: "landing-page waitlist submission accepted from an approved local web origin"
+      genres.genres.length > 0 &&
+      ageRatingAuthorities.ageRatingAuthorities.length > 0 &&
+      catalog.titles.length > 0 &&
+      studios.studios.length > 0 &&
+      userNameAvailability.userNameAvailability.normalizedUserName === "workers-smoke-check",
+    label: "public browse flows",
+    detail: "metadata, browse helpers, catalog, studios, and username availability succeeded"
   });
 
-  const title = (await assertJson("/catalog/blue-harbor-games/lantern-drift", {}, 200, "catalog detail")) as {
-    title: { mediaAssets: Array<{ sourceUrl: string }> };
-  };
-  results.push({ ok: title.title.mediaAssets.length >= 1, label: "catalog detail", detail: "public title detail returned" });
+  const publicTitleId = catalog.titles[0]?.id;
+  if (!publicTitleId) {
+    throw new Error("Public catalog list did not return a title id for player collection checks.");
+  }
 
-  await assertJson("/identity/me", { headers: authHeaders(developerToken, "") }, 200, "identity bootstrap");
-  await assertJson("/identity/me/profile", { headers: authHeaders(developerToken, "") }, 200, "profile read");
-  const notifications = (await assertJson("/identity/me/notifications", { headers: authHeaders(developerToken, "") }, 200, "notification list")) as {
+  await assertJson("/identity/me", { headers: authHeaders(playerToken, "") }, 200, "player identity bootstrap");
+  await assertJson("/identity/me/profile", { headers: authHeaders(playerToken, "") }, 200, "player profile read");
+  await assertJson(
+    "/identity/me/profile",
+    {
+      method: "PUT",
+      headers: authHeaders(playerToken),
+      body: JSON.stringify({ displayName: "Ava Garcia" })
+    },
+    200,
+    "player profile update"
+  );
+  const playerNotifications = (await assertJson(
+    "/identity/me/notifications",
+    { headers: authHeaders(playerToken, "") },
+    200,
+    "player notifications"
+  )) as {
     notifications: Array<{ id: string }>;
   };
-  if (notifications.notifications.length > 0) {
+  if (playerNotifications.notifications.length > 0) {
     await assertJson(
-      `/identity/me/notifications/${notifications.notifications[0]!.id}/read`,
-      { method: "POST", headers: authHeaders(developerToken, "") },
+      `/identity/me/notifications/${playerNotifications.notifications[0]!.id}/read`,
+      { method: "POST", headers: authHeaders(playerToken, "") },
       200,
-      "notification read"
+      "player notification read"
     );
   }
+  await assertJson(
+    "/identity/me/board-profile",
+    {
+      method: "PUT",
+      headers: authHeaders(playerToken),
+      body: JSON.stringify({
+        boardUserId: "board_workers_smoke_player",
+        displayName: "Workers Smoke Player",
+        avatarUrl: "https://example.invalid/board-workers-smoke-player.png"
+      })
+    },
+    200,
+    "player board profile upsert"
+  );
+  await assertJson("/identity/me/board-profile", { headers: authHeaders(playerToken, "") }, 200, "player board profile read");
+  await assertJson(
+    "/identity/me/board-profile",
+    {
+      method: "DELETE",
+      headers: authHeaders(playerToken, "")
+    },
+    204,
+    "player board profile delete"
+  );
+  await assertJson("/identity/me/developer-enrollment", { headers: authHeaders(playerToken, "") }, 200, "player developer enrollment read");
+  results.push({
+    ok: true,
+    label: "player identity flows",
+    detail: "identity bootstrap, profile, notifications, board profile, and enrollment read succeeded"
+  });
+
+  await assertJson("/player/library", { headers: authHeaders(playerToken, "") }, 200, "player library read");
+  await assertJson(
+    `/player/library/titles/${publicTitleId}`,
+    { method: "PUT", headers: authHeaders(playerToken, "") },
+    200,
+    "player library add"
+  );
+  await assertJson(
+    `/player/library/titles/${publicTitleId}`,
+    { method: "DELETE", headers: authHeaders(playerToken, "") },
+    200,
+    "player library remove"
+  );
+  await assertJson("/player/wishlist", { headers: authHeaders(playerToken, "") }, 200, "player wishlist read");
+  await assertJson(
+    `/player/wishlist/titles/${publicTitleId}`,
+    { method: "PUT", headers: authHeaders(playerToken, "") },
+    200,
+    "player wishlist add"
+  );
+  await assertJson(
+    `/player/wishlist/titles/${publicTitleId}`,
+    { method: "DELETE", headers: authHeaders(playerToken, "") },
+    200,
+    "player wishlist remove"
+  );
+  results.push({
+    ok: true,
+    label: "player collection flows",
+    detail: "library and wishlist CRUD succeeded"
+  });
+
+  await assertJson("/identity/me", { headers: authHeaders(developerToken, "") }, 200, "developer identity bootstrap");
+  await assertJson("/identity/me/profile", { headers: authHeaders(developerToken, "") }, 200, "developer profile read");
   await assertJson(
     "/identity/me/profile",
     {
@@ -111,31 +195,7 @@ async function run(): Promise<void> {
       body: JSON.stringify({ displayName: "Emma Torres" })
     },
     200,
-    "profile update"
-  );
-  await assertJson(
-    "/identity/me/board-profile",
-    {
-      method: "PUT",
-      headers: authHeaders(developerToken),
-      body: JSON.stringify({
-        boardUserId: "board_workers_smoke",
-        displayName: "Workers Smoke",
-        avatarUrl: "https://example.invalid/board-workers-smoke.png"
-      })
-    },
-    200,
-    "board profile upsert"
-  );
-  await assertJson("/identity/me/board-profile", { headers: authHeaders(developerToken, "") }, 200, "board profile read");
-  await assertJson(
-    "/identity/me/board-profile",
-    {
-      method: "DELETE",
-      headers: authHeaders(developerToken, "")
-    },
-    204,
-    "board profile delete"
+    "developer profile update"
   );
   await assertJson("/identity/me/developer-enrollment", { headers: authHeaders(developerToken, "") }, 200, "developer enrollment read");
   await assertJson(
@@ -144,24 +204,23 @@ async function run(): Promise<void> {
     200,
     "developer enrollment write"
   );
-  results.push({ ok: true, label: "identity flows", detail: "bootstrap, notifications, profile, board profile, and developer enrollment succeeded" });
 
   const managedStudios = (await assertJson("/developer/studios", { headers: authHeaders(developerToken, "") }, 200, "managed studios")) as {
-    studios: Array<{ id: string; slug: string }>;
+    studios: Array<{ id: string }>;
   };
-  const blueHarbor = managedStudios.studios.find((studio) => studio.slug === "blue-harbor-games");
-  if (!blueHarbor) {
-    throw new Error("Developer managed studios response did not include blue-harbor-games.");
+  if (managedStudios.studios.length === 0) {
+    throw new Error("Developer managed studios response did not include any managed studios.");
   }
 
+  const uniqueSuffix = Date.now().toString(36);
   const createdStudio = (await assertJson(
     "/studios",
     {
       method: "POST",
       headers: authHeaders(developerToken),
       body: JSON.stringify({
-        slug: "ember-cove-lab",
-        displayName: "Ember Cove Lab",
+        slug: `workers-smoke-${uniqueSuffix}`,
+        displayName: "Workers Smoke Studio",
         description: "Temporary maintained-stack smoke studio."
       })
     },
@@ -169,109 +228,445 @@ async function run(): Promise<void> {
     "studio create"
   )) as { studio: { id: string } };
 
-  const createdLink = (await assertJson(
-    `/developer/studios/${blueHarbor.id}/links`,
-    {
-      method: "POST",
-      headers: authHeaders(developerToken),
-      body: JSON.stringify({
-        label: "Docs",
-        url: "https://blueharborgames.example/docs"
-      })
-    },
-    201,
-    "studio link create"
-  )) as { link: { id: string } };
+  const createdStudioId = createdStudio.studio.id;
+  let createdTitleId = "";
+  let createdReportId = "";
+  let secondCreatedReportId = "";
+  let releaseUnderTestId = "";
 
-  await assertJson(
-    `/developer/studios/${blueHarbor.id}/links/${createdLink.link.id}`,
-    {
-      method: "PUT",
-      headers: authHeaders(developerToken),
-      body: JSON.stringify({
-        label: "Support",
-        url: "https://blueharborgames.example/support"
-      })
-    },
-    200,
-    "studio link update"
-  );
-  await assertJson(
-    `/developer/studios/${blueHarbor.id}/links/${createdLink.link.id}`,
-    {
-      method: "DELETE",
-      headers: authHeaders(developerToken, "")
-    },
-    204,
-    "studio link delete"
-  );
-
-  const uploadFile = new File([pngPixel], "logo.png", { type: "image/png" });
-  const uploadForm = new FormData();
-  uploadForm.set("media", uploadFile);
-  const uploadedLogo = (await assertJson(
-    `/developer/studios/${blueHarbor.id}/logo-upload`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${developerToken}`
+  try {
+    await assertJson(
+      `/developer/studios/${createdStudioId}`,
+      {
+        method: "PUT",
+        headers: authHeaders(developerToken),
+        body: JSON.stringify({
+          slug: `workers-smoke-${uniqueSuffix}`,
+          displayName: "Workers Smoke Studio",
+          description: "Updated temporary maintained-stack smoke studio."
+        })
       },
-      body: uploadForm
-    },
-    200,
-    "studio logo upload"
-  )) as { studio: { logoUrl: string | null } };
-  if (!uploadedLogo.studio.logoUrl) {
-    throw new Error("Studio logo upload did not return a logoUrl.");
-  }
-  const uploadedLogoResponse = await fetch(uploadedLogo.studio.logoUrl);
-  if (!uploadedLogoResponse.ok) {
-    throw new Error(`Uploaded studio logo was not retrievable: ${uploadedLogoResponse.status}`);
-  }
+      200,
+      "studio update"
+    );
 
-  await assertJson(
-    `/developer/studios/${createdStudio.studio.id}`,
-    {
-      method: "DELETE",
-      headers: authHeaders(developerToken, "")
-    },
-    204,
-    "studio delete"
-  );
-  results.push({ ok: true, label: "developer studio flows", detail: "studio create/delete, links, and media upload succeeded" });
+    await assertJson(`/developer/studios/${createdStudioId}/links`, { headers: authHeaders(developerToken, "") }, 200, "studio links read");
+    const createdLink = (await assertJson(
+      `/developer/studios/${createdStudioId}/links`,
+      {
+        method: "POST",
+        headers: authHeaders(developerToken),
+        body: JSON.stringify({
+          label: "Docs",
+          url: "https://example.invalid/docs"
+        })
+      },
+      201,
+      "studio link create"
+    )) as { link: { id: string } };
 
-  const moderationSearch = (await assertJson(
-    "/moderation/developers?search=olivia",
-    {
-      headers: authHeaders(moderatorToken, "")
-    },
-    200,
-    "moderation search"
-  )) as { developers: Array<{ developerSubject: string; userName: string | null }> };
-  const olivia = moderationSearch.developers.find((developer) => developer.userName === "olivia.bennett");
-  if (!olivia) {
-    throw new Error("Moderation developer search did not return olivia.bennett.");
+    await assertJson(
+      `/developer/studios/${createdStudioId}/links/${createdLink.link.id}`,
+      {
+        method: "PUT",
+        headers: authHeaders(developerToken),
+        body: JSON.stringify({
+          label: "Support",
+          url: "https://example.invalid/support"
+        })
+      },
+      200,
+      "studio link update"
+    );
+    await assertJson(
+      `/developer/studios/${createdStudioId}/links/${createdLink.link.id}`,
+      { method: "DELETE", headers: authHeaders(developerToken, "") },
+      204,
+      "studio link delete"
+    );
+
+    for (const kind of ["logo", "avatar", "banner"] as const) {
+      const uploadFile = new File([pngPixel], `${kind}.png`, { type: "image/png" });
+      const uploadForm = new FormData();
+      uploadForm.set("media", uploadFile);
+      await assertJson(
+        `/developer/studios/${createdStudioId}/${kind}-upload`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${developerToken}` },
+          body: uploadForm
+        },
+        200,
+        `studio ${kind} upload`
+      );
+    }
+
+    await assertJson(`/developer/studios/${createdStudioId}/titles`, { headers: authHeaders(developerToken, "") }, 200, "studio title list");
+
+    const createdTitle = (await assertJson(
+      `/developer/studios/${createdStudioId}/titles`,
+      {
+        method: "POST",
+        headers: authHeaders(developerToken),
+        body: JSON.stringify({
+          slug: `workers-smoke-title-${uniqueSuffix}`,
+          contentKind: "game",
+          metadata: {
+            displayName: "Workers Smoke Title",
+            shortDescription: "A temporary smoke title.",
+            description: "This title exists so the workers smoke suite can exercise full developer CRUD coverage.",
+            genreSlugs: ["utility", "qa"],
+            minPlayers: 1,
+            maxPlayers: 4,
+            ageRatingAuthority: "ESRB",
+            ageRatingValue: "E",
+            minAgeYears: 6
+          }
+        })
+      },
+      201,
+      "title create"
+    )) as { title: { id: string; currentMetadataRevision: number } };
+    createdTitleId = createdTitle.title.id;
+
+    const updatedTitle = (await assertJson(
+      `/developer/titles/${createdTitleId}`,
+      {
+        method: "PUT",
+        headers: authHeaders(developerToken),
+        body: JSON.stringify({
+          contentKind: "game",
+          visibility: "unlisted"
+        })
+      },
+      200,
+      "title update"
+    )) as { title: { currentMetadataRevision: number } };
+    await assertJson(`/developer/titles/${createdTitleId}`, { headers: authHeaders(developerToken, "") }, 200, "title detail");
+
+    const revisedTitle = (await assertJson(
+      `/developer/titles/${createdTitleId}/metadata/current`,
+      {
+        method: "PUT",
+        headers: authHeaders(developerToken),
+        body: JSON.stringify({
+          displayName: "Workers Smoke Title Revised",
+          shortDescription: "A revised temporary smoke title.",
+          description: "Updated metadata for the workers smoke suite.",
+          genreSlugs: ["utility", "qa"],
+          minPlayers: 1,
+          maxPlayers: 6,
+          ageRatingAuthority: "ESRB",
+          ageRatingValue: "E10+",
+          minAgeYears: 10
+        })
+      },
+      200,
+      "title metadata upsert"
+    )) as { title: { currentMetadataRevision: number } };
+
+    await assertJson(`/developer/titles/${createdTitleId}/metadata-versions`, { headers: authHeaders(developerToken, "") }, 200, "title metadata versions");
+    await assertJson(
+      `/developer/titles/${createdTitleId}/metadata-versions/${revisedTitle.title.currentMetadataRevision}/activate`,
+      { method: "POST", headers: authHeaders(developerToken, "") },
+      200,
+      "title metadata activate"
+    );
+
+    await assertJson(`/developer/titles/${createdTitleId}/media`, { headers: authHeaders(developerToken, "") }, 200, "title media list");
+    await assertJson(
+      `/developer/titles/${createdTitleId}/media/card`,
+      {
+        method: "PUT",
+        headers: authHeaders(developerToken),
+        body: JSON.stringify({
+          sourceUrl: "https://example.invalid/workers-card.png",
+          altText: "Workers card art",
+          mimeType: "image/png",
+          width: 900,
+          height: 1280
+        })
+      },
+      200,
+      "title media upsert"
+    );
+
+    const heroUploadFile = new File([pngPixel], "hero.png", { type: "image/png" });
+    const heroUploadForm = new FormData();
+    heroUploadForm.set("media", heroUploadFile);
+    heroUploadForm.set("altText", "Workers hero art");
+    await assertJson(
+      `/developer/titles/${createdTitleId}/media/hero/upload`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${developerToken}` },
+        body: heroUploadForm
+      },
+      200,
+      "title media upload"
+    );
+    await assertJson(
+      `/developer/titles/${createdTitleId}/media/hero`,
+      { method: "DELETE", headers: authHeaders(developerToken, "") },
+      204,
+      "title media delete"
+    );
+
+    await assertJson(`/developer/titles/${createdTitleId}/releases`, { headers: authHeaders(developerToken, "") }, 200, "title releases list");
+    const createdRelease = (await assertJson(
+      `/developer/titles/${createdTitleId}/releases`,
+      {
+        method: "POST",
+        headers: authHeaders(developerToken),
+        body: JSON.stringify({
+          version: "0.1.0-smoke",
+          status: "testing",
+          acquisitionUrl: "https://example.invalid/releases/0.1.0-smoke"
+        })
+      },
+      201,
+      "title release create"
+    )) as { release: { id: string } };
+    const rollbackReleaseId = createdRelease.release.id;
+
+    const createdSecondRelease = (await assertJson(
+      `/developer/titles/${createdTitleId}/releases`,
+      {
+        method: "POST",
+        headers: authHeaders(developerToken),
+        body: JSON.stringify({
+          version: "0.1.1-smoke",
+          status: "production",
+          acquisitionUrl: "https://example.invalid/releases/0.1.1-smoke"
+        })
+      },
+      201,
+      "second title release create"
+    )) as { release: { id: string } };
+    releaseUnderTestId = createdSecondRelease.release.id;
+
+    const releasesAfterSecondCreate = (await assertJson(
+      `/developer/titles/${createdTitleId}/releases`,
+      { headers: authHeaders(developerToken, "") },
+      200,
+      "title releases list after second create"
+    )) as { releases: Array<{ id: string; version: string }> };
+    const releaseVersions = releasesAfterSecondCreate.releases.map((release) => release.version);
+    if (!releaseVersions.includes("0.1.0-smoke") || !releaseVersions.includes("0.1.1-smoke")) {
+      throw new Error("Title releases list did not preserve both release versions after creating a second release.");
+    }
+
+    await assertJson(
+      `/developer/titles/${createdTitleId}/releases/${releaseUnderTestId}`,
+      {
+        method: "PUT",
+        headers: authHeaders(developerToken),
+        body: JSON.stringify({
+          version: "0.1.1-smoke",
+          status: "production",
+          acquisitionUrl: "https://example.invalid/releases/0.1.1-smoke"
+        })
+      },
+      200,
+      "title release update"
+    );
+    await assertJson(
+      `/developer/titles/${createdTitleId}/releases/${rollbackReleaseId}/activate`,
+      { method: "POST", headers: authHeaders(developerToken, "") },
+      200,
+      "title release rollback activate"
+    );
+    await assertJson(
+      `/developer/titles/${createdTitleId}/activate`,
+      { method: "POST", headers: authHeaders(developerToken, "") },
+      200,
+      "title activate"
+    );
+    await assertJson(
+      `/developer/titles/${createdTitleId}/archive`,
+      { method: "POST", headers: authHeaders(developerToken, "") },
+      200,
+      "title archive"
+    );
+    await assertJson(
+      `/developer/titles/${createdTitleId}/unarchive`,
+      { method: "POST", headers: authHeaders(developerToken, "") },
+      200,
+      "title unarchive"
+    );
+    results.push({
+      ok: true,
+      label: "developer studio and title flows",
+      detail: "studio CRUD, links, uploads, title CRUD, lifecycle actions, metadata, media, and release flows succeeded"
+    });
+
+    const createdPlayerReport = (await assertJson(
+      "/player/reports",
+      {
+        method: "POST",
+        headers: authHeaders(playerToken),
+        body: JSON.stringify({
+          titleId: createdTitleId,
+          reason: `Workers smoke report ${uniqueSuffix}`
+        })
+      },
+      201,
+      "player report create"
+    )) as { report: { id: string } };
+    createdReportId = createdPlayerReport.report.id;
+
+    const createdSecondPlayerReport = (await assertJson(
+      "/player/reports",
+      {
+        method: "POST",
+        headers: authHeaders(playerToken),
+        body: JSON.stringify({
+          titleId: createdTitleId,
+          reason: `Workers smoke report secondary ${uniqueSuffix}`
+        })
+      },
+      201,
+      "player second report create"
+    )) as { report: { id: string } };
+    secondCreatedReportId = createdSecondPlayerReport.report.id;
+
+    await assertJson("/player/reports", { headers: authHeaders(playerToken, "") }, 200, "player report list");
+    await assertJson(`/player/reports/${createdReportId}`, { headers: authHeaders(playerToken, "") }, 200, "player report detail");
+    await assertJson(
+      `/player/reports/${createdReportId}/messages`,
+      {
+        method: "POST",
+        headers: authHeaders(playerToken),
+        body: JSON.stringify({
+          message: "Workers smoke player follow-up."
+        })
+      },
+      200,
+      "player report message"
+    );
+
+    await assertJson(`/developer/titles/${createdTitleId}/reports`, { headers: authHeaders(developerToken, "") }, 200, "developer report list");
+    await assertJson(
+      `/developer/titles/${createdTitleId}/reports/${createdReportId}`,
+      { headers: authHeaders(developerToken, "") },
+      200,
+      "developer report detail"
+    );
+    await assertJson(
+      `/developer/titles/${createdTitleId}/reports/${createdReportId}/messages`,
+      {
+        method: "POST",
+        headers: authHeaders(developerToken),
+        body: JSON.stringify({
+          message: "Workers smoke developer follow-up."
+        })
+      },
+      200,
+      "developer report message"
+    );
+    results.push({
+      ok: true,
+      label: "player and developer report flows",
+      detail: "player report creation and developer report response succeeded"
+    });
+    const moderationSearch = (await assertJson(
+      "/moderation/developers?search=olivia",
+      {
+        headers: authHeaders(moderatorToken, "")
+      },
+      200,
+      "moderation search"
+    )) as { developers: Array<{ developerSubject: string; userName: string | null }> };
+    const olivia = moderationSearch.developers.find((developer) => developer.userName === "olivia.bennett");
+    if (!olivia) {
+      throw new Error("Moderation developer search did not return olivia.bennett.");
+    }
+
+    await assertJson(
+      `/moderation/developers/${olivia.developerSubject}/verification`,
+      { headers: authHeaders(moderatorToken, "") },
+      200,
+      "moderation verification read"
+    );
+    await assertJson(
+      `/moderation/developers/${olivia.developerSubject}/verified-developer`,
+      { method: "PUT", headers: authHeaders(moderatorToken, "") },
+      200,
+      "moderation verification grant"
+    );
+    await assertJson(
+      `/moderation/developers/${olivia.developerSubject}/verified-developer`,
+      { method: "DELETE", headers: authHeaders(moderatorToken, "") },
+      200,
+      "moderation verification revoke"
+    );
+
+    await assertJson("/moderation/title-reports", { headers: authHeaders(moderatorToken, "") }, 200, "moderation report list");
+    if (createdReportId) {
+      await assertJson(
+        `/moderation/title-reports/${createdReportId}`,
+        { headers: authHeaders(moderatorToken, "") },
+        200,
+        "moderation report detail"
+      );
+      await assertJson(
+        `/moderation/title-reports/${createdReportId}/messages`,
+        {
+          method: "POST",
+          headers: authHeaders(moderatorToken),
+          body: JSON.stringify({
+            message: "Workers smoke moderation follow-up.",
+            recipientRole: "developer"
+          })
+        },
+        200,
+        "moderation report message"
+      );
+      await assertJson(
+        `/moderation/title-reports/${createdReportId}/validate`,
+        {
+          method: "POST",
+          headers: authHeaders(moderatorToken),
+          body: JSON.stringify({
+            note: "Validated by workers smoke."
+          })
+        },
+        200,
+        "moderation report validate"
+      );
+    }
+    if (secondCreatedReportId) {
+      await assertJson(
+        `/moderation/title-reports/${secondCreatedReportId}/invalidate`,
+        {
+          method: "POST",
+          headers: authHeaders(moderatorToken),
+          body: JSON.stringify({
+            note: "Invalidated by workers smoke."
+          })
+        },
+        200,
+        "moderation report invalidate"
+      );
+    }
+    results.push({
+      ok: true,
+      label: "moderation flows",
+      detail: "developer verification and title-report moderation flows succeeded"
+    });
+  } finally {
+    if (createdStudioId) {
+      await assertJson(
+        `/developer/studios/${createdStudioId}`,
+        {
+          method: "DELETE",
+          headers: authHeaders(developerToken, "")
+        },
+        204,
+        "studio delete"
+      );
+    }
   }
-
-  await assertJson(
-    `/moderation/developers/${olivia.developerSubject}/verification`,
-    { headers: authHeaders(moderatorToken, "") },
-    200,
-    "moderation verification read"
-  );
-  await assertJson(
-    `/moderation/developers/${olivia.developerSubject}/verified-developer`,
-    { method: "PUT", headers: authHeaders(moderatorToken, "") },
-    200,
-    "moderation verification grant"
-  );
-  await assertJson(
-    `/moderation/developers/${olivia.developerSubject}/verified-developer`,
-    { method: "DELETE", headers: authHeaders(moderatorToken, "") },
-    200,
-    "moderation verification revoke"
-  );
-  results.push({ ok: true, label: "moderation flows", detail: "search and verification mutation succeeded" });
 
   for (const result of results) {
     console.log(`PASS ${result.label} (${result.detail})`);
