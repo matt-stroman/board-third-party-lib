@@ -1940,6 +1940,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
             with (
                 mock.patch.object(dev, "assert_command_available"),
+                mock.patch.object(dev, "resolve_github_cli_executable", return_value="gh"),
                 mock.patch.object(dev, "run_command", side_effect=fake_run_command),
             ):
                 dev.sync_root_environment_file_to_github_environment(
@@ -2070,6 +2071,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
             with (
                 mock.patch.object(dev, "assert_command_available"),
+                mock.patch.object(dev, "resolve_github_cli_executable", return_value="gh"),
                 mock.patch.object(dev, "run_command", side_effect=fake_run_command),
                 mock.patch.dict(dev.os.environ, {}, clear=True),
             ):
