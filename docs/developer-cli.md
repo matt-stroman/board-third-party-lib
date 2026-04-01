@@ -421,12 +421,14 @@ Typical Environment `secrets`:
 - `BREVO_API_KEY`
 - `DEPLOY_SMOKE_SECRET`
 
-Optional future hosted-auth values can also be provided there when needed:
+Hosted social-auth values can also be provided there when needed:
 
 - `SUPABASE_AUTH_GITHUB_CLIENT_ID`
 - `SUPABASE_AUTH_GITHUB_CLIENT_SECRET`
 - `SUPABASE_AUTH_GOOGLE_CLIENT_ID`
 - `SUPABASE_AUTH_GOOGLE_CLIENT_SECRET`
+
+When the root env file includes either provider client ID, the maintained CLI now passes matching frontend runtime flags into the SPA build so the sign-in page shows only the enabled Google and GitHub buttons.
 
 ### Check local tool and environment status
 

@@ -181,6 +181,7 @@ SUPABASE_STOP_TIMEOUT_SECONDS = 30
 SUPPORTED_ENVIRONMENT_TARGETS = ("local", "staging", "production")
 GITHUB_ENVIRONMENT_SECRET_NAMES = frozenset(
     {
+        "SUPABASE_AUTH_DISCORD_CLIENT_SECRET",
         "SUPABASE_SECRET_KEY",
         "SUPABASE_DB_PASSWORD",
         "SUPABASE_ACCESS_TOKEN",
@@ -542,6 +543,27 @@ def require_environment_values(*names: str, context: str) -> dict[str, str]:
         )
 
     return resolved
+
+
+def get_frontend_oauth_enabled_value(
+    values: dict[str, str] | os._Environ[str],
+    *,
+    provider: str,
+) -> str:
+    """Resolve the frontend-visible OAuth enablement flag for a provider.
+
+    The maintained stack keeps provider client IDs in the root-managed environment
+    file, so the SPA can infer whether to show a provider button without exposing
+    the secret or requiring a second manual toggle.
+    """
+
+    explicit_key = f"VITE_SUPABASE_AUTH_{provider.upper()}_ENABLED"
+    explicit_value = values.get(explicit_key, "").strip()
+    if explicit_value:
+        return explicit_value
+
+    client_id_key = f"SUPABASE_AUTH_{provider.upper()}_CLIENT_ID"
+    return "true" if values.get(client_id_key, "").strip() else ""
 
 
 def open_environment_file(path: Path) -> None:
@@ -2140,6 +2162,9 @@ def build_migration_frontend_environment(
             "VITE_API_BASE_URL": config.migration_workers_base_url,
             "VITE_SUPABASE_URL": runtime_env["SUPABASE_URL"],
             "VITE_SUPABASE_PUBLISHABLE_KEY": runtime_env["SUPABASE_PUBLISHABLE_KEY"],
+            "VITE_SUPABASE_AUTH_DISCORD_ENABLED": get_frontend_oauth_enabled_value(os.environ, provider="discord"),
+            "VITE_SUPABASE_AUTH_GITHUB_ENABLED": get_frontend_oauth_enabled_value(os.environ, provider="github"),
+            "VITE_SUPABASE_AUTH_GOOGLE_ENABLED": get_frontend_oauth_enabled_value(os.environ, provider="google"),
             "VITE_TURNSTILE_SITE_KEY": os.environ.get("VITE_TURNSTILE_SITE_KEY", ""),
             "VITE_LANDING_MODE": "true" if landing_mode else os.environ.get("VITE_LANDING_MODE", ""),
         }
@@ -3649,6 +3674,9 @@ def build_deploy_frontend_environment(env_values: dict[str, str]) -> dict[str, s
             "VITE_API_BASE_URL": env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"],
             "VITE_SUPABASE_URL": env_values["SUPABASE_URL"],
             "VITE_SUPABASE_PUBLISHABLE_KEY": env_values["SUPABASE_PUBLISHABLE_KEY"],
+            "VITE_SUPABASE_AUTH_DISCORD_ENABLED": get_frontend_oauth_enabled_value(env_values, provider="discord"),
+            "VITE_SUPABASE_AUTH_GITHUB_ENABLED": get_frontend_oauth_enabled_value(env_values, provider="github"),
+            "VITE_SUPABASE_AUTH_GOOGLE_ENABLED": get_frontend_oauth_enabled_value(env_values, provider="google"),
             "VITE_TURNSTILE_SITE_KEY": env_values["VITE_TURNSTILE_SITE_KEY"],
             "VITE_LANDING_MODE": env_values["VITE_LANDING_MODE"],
         }

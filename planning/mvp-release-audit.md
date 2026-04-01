@@ -122,6 +122,7 @@ Deferred beyond MVP:
 
 - populate the real staging environment values, including full-MVP smoke-account credentials
 - confirm hosted Supabase redirect and recovery URLs for the maintained SPA routes
+- configure hosted Supabase Google and GitHub auth providers plus their upstream OAuth app callback URLs
 - confirm Turnstile, Brevo, support-report sender, and allowed-origin values in hosted staging
 
 ### Wave 2: Hosted MVP Smoke And Browser QA
@@ -157,7 +158,11 @@ Deferred beyond MVP:
 - populate hosted staging values in `config/.env.staging`
 - keep `VITE_LANDING_MODE=false` for the maintained staging target
 - confirm Supabase hosted redirect URLs include the maintained sign-in and recovery callback routes
+- populate `SUPABASE_AUTH_GITHUB_CLIENT_ID` / `SUPABASE_AUTH_GITHUB_CLIENT_SECRET` and `SUPABASE_AUTH_GOOGLE_CLIENT_ID` / `SUPABASE_AUTH_GOOGLE_CLIENT_SECRET` for staging
+- register the staging Supabase auth callback URL with both GitHub and Google OAuth apps
+- confirm the hosted sign-in page shows the expected social sign-in buttons once those client IDs are present
 - confirm Turnstile, Brevo, support-report sender configuration, and allowed web origins are correct for hosted staging
+- keep storage upload authorization in the Workers API for this release; do not treat browser `storage.objects` RLS policies as a staging blocker unless a direct browser-to-Supabase upload path is introduced
 - run `python ./scripts/dev.py deploy --staging --preflight-only`
 - run `python ./scripts/dev.py deploy --staging --dry-run-only`
 - run `python ./scripts/dev.py deploy --staging`
@@ -166,7 +171,7 @@ Deferred beyond MVP:
 
 - verify public landing or home route renders the expected shell for the chosen mode
 - verify browse search, filters, and title detail data match the hosted API behavior
-- verify sign-in, confirmation, recovery, and sign-out flows against hosted Supabase Auth
+- verify email sign-in, Google sign-in, GitHub sign-in, confirmation, recovery, and sign-out flows against hosted Supabase Auth
 - verify player library, wishlist, and reporting flows
 - verify developer enrollment, studio CRUD, title CRUD, metadata, media, and release workflows
 - verify moderator developer verification and title-report resolution workflows
