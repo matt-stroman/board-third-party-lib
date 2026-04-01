@@ -1,9 +1,9 @@
 [submodule "frontend"]
 	path = frontend
-	url = https://github.com/matt-stroman/board-enthusiasts_frontend.git
+	url = https://github.com/board-enthusiasts/board-enthusiasts_frontend.git
 [submodule "backend"]
 	path = backend
-	url = https://github.com/matt-stroman/board-enthusiasts_backend.git
+	url = https://github.com/board-enthusiasts/board-enthusiasts_backend.git
 [submodule "api"]
 	path = api
-	url = https://github.com/matt-stroman/board-enthusiasts_api.git
+	url = https://github.com/board-enthusiasts/board-enthusiasts_api.git

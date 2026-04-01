@@ -1757,6 +1757,12 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             (repo_root / "node_modules" / "@supabase" / "supabase-js" / "package.json").write_text("{}", encoding="utf-8")
             (repo_root / "node_modules" / "@playwright" / "test").mkdir(parents=True)
             (repo_root / "node_modules" / "@playwright" / "test" / "package.json").write_text("{}", encoding="utf-8")
+            (repo_root / "node_modules" / "@board-enthusiasts" / "migration-contract").mkdir(parents=True)
+            (repo_root / "node_modules" / "@board-enthusiasts" / "migration-contract" / "package.json").write_text("{}", encoding="utf-8")
+            (repo_root / "node_modules" / "@board-enthusiasts" / "spa").mkdir(parents=True)
+            (repo_root / "node_modules" / "@board-enthusiasts" / "spa" / "package.json").write_text("{}", encoding="utf-8")
+            (repo_root / "node_modules" / "@board-enthusiasts" / "workers-api").mkdir(parents=True)
+            (repo_root / "node_modules" / "@board-enthusiasts" / "workers-api" / "package.json").write_text("{}", encoding="utf-8")
             (repo_root / "node_modules" / ".bin").mkdir(parents=True)
             (repo_root / "node_modules" / ".bin" / "tsx.cmd").write_text("", encoding="utf-8")
             (repo_root / "node_modules" / ".bin" / "playwright.cmd").write_text("", encoding="utf-8")
@@ -1919,14 +1925,14 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 "--github-environment",
                 "staging-release",
                 "--repo",
-                "matt-stroman/board-enthusiasts",
+                "board-enthusiasts/board-enthusiasts",
             ]
         )
 
         self.assertEqual("staging", env_args.target)
         self.assertTrue(env_args.sync_github_environment)
         self.assertEqual("staging-release", env_args.github_environment)
-        self.assertEqual("matt-stroman/board-enthusiasts", env_args.repo)
+        self.assertEqual("board-enthusiasts/board-enthusiasts", env_args.repo)
 
     def test_sync_root_environment_file_to_github_environment_sets_vars_and_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1965,7 +1971,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     config,
                     target="staging",
                     github_environment=None,
-                    github_repo="matt-stroman/board-enthusiasts",
+                    github_repo="board-enthusiasts/board-enthusiasts",
                 )
 
         self.assertEqual(["gh", "auth", "status"], run_calls[0][:3])
@@ -1980,7 +1986,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 "--body",
                 "staging",
                 "--repo",
-                "matt-stroman/board-enthusiasts",
+                "board-enthusiasts/board-enthusiasts",
             ],
             run_calls,
         )
@@ -1995,7 +2001,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 "--body",
                 "publishable",
                 "--repo",
-                "matt-stroman/board-enthusiasts",
+                "board-enthusiasts/board-enthusiasts",
             ],
             run_calls,
         )
@@ -2008,7 +2014,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 "--env",
                 "staging",
                 "--repo",
-                "matt-stroman/board-enthusiasts",
+                "board-enthusiasts/board-enthusiasts",
             ],
             run_calls,
         )
@@ -2037,11 +2043,11 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             return_value=subprocess.CompletedProcess(
                 ["git", "config", "--get", "remote.origin.url"],
                 0,
-                stdout="https://github.com/matt-stroman/board-enthusiasts.git\n",
+                stdout="https://github.com/board-enthusiasts/board-enthusiasts.git\n",
                 stderr="",
             ),
         ):
-            self.assertEqual("matt-stroman/board-enthusiasts", dev.infer_github_repo_from_origin(config))
+            self.assertEqual("board-enthusiasts/board-enthusiasts", dev.infer_github_repo_from_origin(config))
 
     def test_assert_github_environment_sync_detects_var_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2066,7 +2072,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 if normalized[:3] == ["gh", "auth", "status"]:
                     return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
                 if normalized[:2] == ["git", "config"]:
-                    return subprocess.CompletedProcess(cmd, 0, stdout="https://github.com/matt-stroman/board-enthusiasts.git\n", stderr="")
+                    return subprocess.CompletedProcess(cmd, 0, stdout="https://github.com/board-enthusiasts/board-enthusiasts.git\n", stderr="")
                 if normalized[:2] == ["gh", "api"]:
                     path = normalized[2]
                     if path.endswith("/environments/staging"):

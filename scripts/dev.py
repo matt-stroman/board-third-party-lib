@@ -2280,6 +2280,9 @@ def has_current_migration_workspace_dependencies(config: DevConfig) -> bool:
         node_modules_path / "tsx" / "package.json",
         node_modules_path / "@supabase" / "supabase-js" / "package.json",
         node_modules_path / "@playwright" / "test" / "package.json",
+        node_modules_path / "@board-enthusiasts" / "migration-contract" / "package.json",
+        node_modules_path / "@board-enthusiasts" / "spa" / "package.json",
+        node_modules_path / "@board-enthusiasts" / "workers-api" / "package.json",
     )
     if any(not path.exists() for path in required_paths):
         return False
