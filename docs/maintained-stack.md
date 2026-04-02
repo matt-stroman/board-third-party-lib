@@ -6,6 +6,12 @@ The maintained Board Enthusiasts stack consists of:
 - a Cloudflare Workers API in [`backend/apps/workers-api`](../backend/apps/workers-api)
 - Supabase Auth, Postgres, and Storage configured under [`backend/supabase`](../backend/supabase)
 
+Related release and operations docs:
+
+- [Analytics Guide](./analytics.md)
+- [Data Operations Guide](./data-operations.md)
+- [Staging Release Runbook](./staging-release-runbook.md)
+
 ## Local Workflow
 
 Use the root CLI for all routine local work:
