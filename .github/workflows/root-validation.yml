@@ -245,6 +245,9 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install workspace dependencies
+        run: npm ci
+
       - name: Run Pages staging dry run
         env:
           CLOUDFLARE_ACCOUNT_ID: ci-dry-run-account
@@ -276,6 +279,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Install workspace dependencies
+        run: npm ci
 
       - name: Run Workers staging dry run
         env:
