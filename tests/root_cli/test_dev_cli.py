@@ -2404,14 +2404,23 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             mock.patch.object(dev, "ensure_migration_workspace_scaffolding"),
             mock.patch.object(dev, "install_migration_workspace_dependencies"),
             mock.patch.object(dev, "ensure_playwright_browser_installed"),
-            mock.patch.object(dev, "ensure_local_web_stack_for_parity") as ensure_local_web_stack_for_parity,
+            mock.patch.object(
+                dev,
+                "ensure_local_web_stack_for_parity",
+                return_value=dev.ParityStackStartupResult(started_frontend=True),
+            ) as ensure_local_web_stack_for_parity,
             mock.patch.object(dev, "build_subprocess_env", return_value={"PARITY_BASE_URL": config.frontend_base_url}),
             mock.patch.object(dev, "run_command") as run_command,
+            mock.patch.object(dev, "cleanup_local_web_stack_after_parity") as cleanup_local_web_stack_after_parity,
         ):
             dev.run_parity_suite(config, update_snapshots=False)
 
         ensure_local_web_stack_for_parity.assert_called_once_with(config)
         run_command.assert_called_once()
+        cleanup_local_web_stack_after_parity.assert_called_once_with(
+            config,
+            startup_result=dev.ParityStackStartupResult(started_frontend=True),
+        )
 
     def test_ensure_local_web_stack_for_parity_starts_missing_services(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2435,16 +2444,20 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 mock.patch.object(
                     dev,
                     "get_local_supabase_runtime",
-                    return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:55421",
-                        "SUPABASE_PUBLISHABLE_KEY": "publishable",
-                        "SUPABASE_SECRET_KEY": "secret",
-                        "SUPABASE_AVATARS_BUCKET": "avatars",
-                        "SUPABASE_CARD_IMAGES_BUCKET": "card-images",
-                        "SUPABASE_HERO_IMAGES_BUCKET": "hero-images",
-                        "SUPABASE_LOGO_IMAGES_BUCKET": "logo-images",
-                    },
+                    side_effect=[
+                        dev.DevCliError("local runtime unavailable"),
+                        {
+                            "SUPABASE_URL": "http://127.0.0.1:55421",
+                            "SUPABASE_PUBLISHABLE_KEY": "publishable",
+                            "SUPABASE_SECRET_KEY": "secret",
+                            "SUPABASE_AVATARS_BUCKET": "avatars",
+                            "SUPABASE_CARD_IMAGES_BUCKET": "card-images",
+                            "SUPABASE_HERO_IMAGES_BUCKET": "hero-images",
+                            "SUPABASE_LOGO_IMAGES_BUCKET": "logo-images",
+                        },
+                    ],
                 ),
+                mock.patch.object(dev, "wait_for_local_supabase_http_ready"),
                 mock.patch.object(dev, "ensure_local_demo_seed_data"),
                 mock.patch.object(
                     dev,
@@ -2459,13 +2472,59 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 mock.patch.object(dev, "wait_for_background_process_http_ready") as wait_for_background_process_http_ready,
                 mock.patch.object(dev, "save_stack_state") as save_stack_state,
             ):
-                dev.ensure_local_web_stack_for_parity(config)
+                startup_result = dev.ensure_local_web_stack_for_parity(config)
 
+        self.assertEqual(
+            dev.ParityStackStartupResult(
+                started_runtime=True,
+                started_backend=True,
+                started_frontend=True,
+            ),
+            startup_result,
+        )
         ensure_runtime_profile.assert_called_once_with(config, profile=dev.SUPABASE_PROFILE_WEB)
         start_migration_workers_process.assert_called_once()
         start_background_command_with_log.assert_called_once()
         self.assertEqual(2, save_stack_state.call_count)
         wait_for_background_process_http_ready.assert_called_once()
+
+    def test_cleanup_local_web_stack_after_parity_stops_only_started_services(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        with (
+            mock.patch.object(dev, "stop_frontend_service") as stop_frontend_service,
+            mock.patch.object(dev, "stop_backend_service") as stop_backend_service,
+            mock.patch.object(dev, "stop_runtime_profile") as stop_runtime_profile,
+        ):
+            dev.cleanup_local_web_stack_after_parity(
+                config,
+                startup_result=dev.ParityStackStartupResult(
+                    started_runtime=False,
+                    started_backend=True,
+                    started_frontend=True,
+                ),
+            )
+
+        stop_frontend_service.assert_called_once_with(config)
+        stop_backend_service.assert_called_once_with(config)
+        stop_runtime_profile.assert_not_called()
+
+    def test_cleanup_local_web_stack_after_parity_stops_runtime_when_parity_started_it(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        with (
+            mock.patch.object(dev, "stop_frontend_service") as stop_frontend_service,
+            mock.patch.object(dev, "stop_backend_service") as stop_backend_service,
+            mock.patch.object(dev, "stop_runtime_profile") as stop_runtime_profile,
+        ):
+            dev.cleanup_local_web_stack_after_parity(
+                config,
+                startup_result=dev.ParityStackStartupResult(started_runtime=True),
+            )
+
+        stop_runtime_profile.assert_called_once_with(config)
+        stop_frontend_service.assert_not_called()
+        stop_backend_service.assert_not_called()
 
     def test_removed_legacy_runtime_commands_are_rejected(self) -> None:
         parser = dev.build_parser()

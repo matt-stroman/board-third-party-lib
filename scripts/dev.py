@@ -113,6 +113,21 @@ class DevConfig:
     migration_workers_base_url: str
 
 
+@dataclass(frozen=True)
+class ParityStackStartupResult:
+    """Tracks which local stack pieces parity launched for temporary use.
+
+    Attributes:
+        started_runtime: Whether parity had to start or repair the local Supabase runtime.
+        started_backend: Whether parity launched the managed backend API process.
+        started_frontend: Whether parity launched the managed frontend SPA process.
+    """
+
+    started_runtime: bool = False
+    started_backend: bool = False
+    started_frontend: bool = False
+
+
 class DevCliError(RuntimeError):
     """Raised for expected CLI/runtime failures with user-friendly messages."""
 
@@ -4020,7 +4035,7 @@ def run_parity_suite(
     ensure_migration_workspace_scaffolding(config)
     install_migration_workspace_dependencies(config)
     ensure_playwright_browser_installed(config)
-    ensure_local_web_stack_for_parity(config)
+    startup_result = ensure_local_web_stack_for_parity(config)
 
     env = build_subprocess_env(
         extra={
@@ -4031,18 +4046,21 @@ def run_parity_suite(
         }
     )
     command = ["npm", "run", "capture:parity-baseline" if update_snapshots else "test:parity"]
-    write_step("Running parity browser baseline suite")
-    run_command(command, cwd=config.repo_root, env=env)
+    try:
+        write_step("Running parity browser baseline suite")
+        run_command(command, cwd=config.repo_root, env=env)
+    finally:
+        cleanup_local_web_stack_after_parity(config, startup_result=startup_result)
 
 
-def ensure_local_web_stack_for_parity(config: DevConfig) -> None:
+def ensure_local_web_stack_for_parity(config: DevConfig) -> ParityStackStartupResult:
     """Ensure the maintained local web stack is reachable for parity tests.
 
     Args:
         config: CLI configuration containing repository paths and URLs.
 
     Returns:
-        None.
+        Summary of which local services parity started for temporary use.
 
     Raises:
         DevCliError: If the frontend still is not reachable after attempting startup.
@@ -4050,13 +4068,22 @@ def ensure_local_web_stack_for_parity(config: DevConfig) -> None:
 
     frontend_ready, detail = probe_http_url(config.frontend_base_url)
     if frontend_ready:
-        return
+        return ParityStackStartupResult()
 
     write_step("Frontend was not running; starting the maintained local web stack for parity")
-    ensure_runtime_profile(config, profile=SUPABASE_PROFILE_WEB)
-    runtime_env = get_local_supabase_runtime(config)
+    started_runtime = False
+    try:
+        runtime_env = get_local_supabase_runtime(config)
+        wait_for_local_supabase_http_ready(runtime_env=runtime_env)
+    except DevCliError:
+        ensure_runtime_profile(config, profile=SUPABASE_PROFILE_WEB)
+        runtime_env = get_local_supabase_runtime(config)
+        wait_for_local_supabase_http_ready(runtime_env=runtime_env)
+        started_runtime = True
+
     ensure_local_demo_seed_data(config, runtime_env=runtime_env)
 
+    started_backend = False
     backend_ready, _backend_detail = probe_http_url(f"{config.migration_workers_base_url.rstrip('/')}/health/ready")
     if not backend_ready:
         write_step("Starting maintained backend API in the background for parity")
@@ -4074,8 +4101,10 @@ def ensure_local_web_stack_for_parity(config: DevConfig) -> None:
                 },
             },
         )
+        started_backend = True
 
     frontend_ready, _detail = probe_http_url(config.frontend_base_url)
+    started_frontend = False
     if not frontend_ready:
         write_step("Starting SPA in the background for parity")
         frontend_process, frontend_log_path = start_background_command_with_log(
@@ -4104,6 +4133,7 @@ def ensure_local_web_stack_for_parity(config: DevConfig) -> None:
                 },
             },
         )
+        started_frontend = True
 
     frontend_ready, detail = probe_http_url(config.frontend_base_url)
     if not frontend_ready:
@@ -4111,6 +4141,40 @@ def ensure_local_web_stack_for_parity(config: DevConfig) -> None:
             f"Frontend base URL is not reachable: {config.frontend_base_url}"
             + (f" ({detail})" if detail else "")
         )
+    return ParityStackStartupResult(
+        started_runtime=started_runtime,
+        started_backend=started_backend,
+        started_frontend=started_frontend,
+    )
+
+
+def cleanup_local_web_stack_after_parity(
+    config: DevConfig,
+    *,
+    startup_result: ParityStackStartupResult,
+) -> None:
+    """Stop only the local services parity started for itself.
+
+    Args:
+        config: CLI configuration containing repository paths and URLs.
+        startup_result: Summary of which services parity launched.
+
+    Returns:
+        None.
+    """
+
+    if startup_result.started_runtime:
+        write_step("Stopping parity-started local runtime")
+        stop_runtime_profile(config)
+        return
+
+    if startup_result.started_frontend:
+        write_step("Stopping parity-started SPA")
+        stop_frontend_service(config)
+
+    if startup_result.started_backend:
+        write_step("Stopping parity-started backend API")
+        stop_backend_service(config)
 
 
 def get_deploy_pages_project_name(*, target: str) -> str:
