@@ -2049,6 +2049,31 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
         self.assertIn("staging or production", str(raised.exception))
 
+    def test_sync_api_workspace_without_api_key_skips_shared_mock_reprovision(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        with (
+            mock.patch.object(dev, "assert_command_available"),
+            mock.patch.object(dev, "login_postman_cli") as login_postman_cli,
+            mock.patch.object(dev, "run_command") as run_command,
+            mock.patch.object(dev, "provision_api_mock") as provision_api_mock,
+            mock.patch.dict(dev.os.environ, {}, clear=True),
+        ):
+            dev.sync_api_workspace(
+                config,
+                postman_api_key=None,
+                reprovision_shared_mock=True,
+            )
+
+        login_postman_cli.assert_not_called()
+        run_command.assert_has_calls(
+            [
+                mock.call(["postman", "workspace", "prepare"], cwd=mock.ANY),
+                mock.call(["postman", "workspace", "push", "--yes"], cwd=mock.ANY),
+            ]
+        )
+        provision_api_mock.assert_not_called()
+
     def test_infer_github_repo_from_origin_supports_https_remote(self) -> None:
         config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
 

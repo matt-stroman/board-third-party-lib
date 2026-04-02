@@ -6837,6 +6837,12 @@ def sync_api_workspace(config: DevConfig, *, postman_api_key: str | None, reprov
     run_command(["postman", "workspace", "push", "--yes"], cwd=api_root)
 
     if reprovision_shared_mock:
+        if not api_key:
+            print(
+                "Skipping shared mock reprovision because POSTMAN_API_KEY was not provided. "
+                "The workspace sync succeeded; rerun with --postman-api-key or set POSTMAN_API_KEY if you also want to reprovision the shared mock."
+            )
+            return
         provision_api_mock(
             config,
             admin_environment_path=config.repo_root / config.api_mock_admin_environment,
