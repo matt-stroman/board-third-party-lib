@@ -3640,6 +3640,12 @@ def get_deploy_worker_config_path(config: DevConfig, *, target: str, env_values:
         count=1,
     )
     rendered = re.sub(
+        r'"dataset":\s*"board_enthusiasts_events_[^"]+"',
+        f'"dataset": "board_enthusiasts_events_{target}"',
+        rendered,
+        count=1,
+    )
+    rendered = re.sub(
         r'"main":\s*"[^"]+"',
         f'"main": "{worker_entry_relative_path}"',
         rendered,
