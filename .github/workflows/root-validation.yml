@@ -224,6 +224,80 @@ jobs:
       - name: Run Postman API contract tests
         run: python ./scripts/dev.py api-test --start-workers
 
+  pages-dry-run:
+    name: Pages Staging Dry Run
+    runs-on: ubuntu-latest
+    needs: root-tooling
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run Pages staging dry run
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ci-dry-run-account
+          CLOUDFLARE_API_TOKEN: ci-dry-run-token
+          BOARD_ENTHUSIASTS_WORKERS_BASE_URL: https://api.staging.boardenthusiasts.com
+          SUPABASE_URL: https://example-project.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: ci-dry-run-publishable-key
+          VITE_TURNSTILE_SITE_KEY: ci-dry-run-turnstile-site-key
+          VITE_LANDING_MODE: true
+        run: python ./scripts/dev.py deploy-staging --dry-run --pages-only
+
+  workers-dry-run:
+    name: Workers Staging Dry Run
+    runs-on: ubuntu-latest
+    needs: root-tooling
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run Workers staging dry run
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ci-dry-run-account
+          CLOUDFLARE_API_TOKEN: ci-dry-run-token
+          BOARD_ENTHUSIASTS_WORKERS_BASE_URL: https://api.staging.boardenthusiasts.com
+          SUPABASE_URL: https://example-project.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: ci-dry-run-publishable-key
+          SUPABASE_SECRET_KEY: ci-dry-run-secret-key
+          SUPABASE_AVATARS_BUCKET: avatars
+          SUPABASE_CARD_IMAGES_BUCKET: card-images
+          SUPABASE_HERO_IMAGES_BUCKET: hero-images
+          SUPABASE_LOGO_IMAGES_BUCKET: logo-images
+          TURNSTILE_SECRET_KEY: ci-dry-run-turnstile-secret-key
+          BREVO_API_KEY: ci-dry-run-brevo-api-key
+          BREVO_SIGNUPS_LIST_ID: 1
+          ALLOWED_WEB_ORIGINS: https://boardenthusiasts.com,https://staging.boardenthusiasts.com
+          SUPPORT_REPORT_RECIPIENT: support@boardenthusiasts.com
+          SUPPORT_REPORT_SENDER_EMAIL: noreply@boardenthusiasts.com
+          SUPPORT_REPORT_SENDER_NAME: Board Enthusiasts
+        run: python ./scripts/dev.py deploy-staging --dry-run --workers-only
+
   deploy-cli-surface:
     name: Deploy CLI Surface
     runs-on: ubuntu-latest
