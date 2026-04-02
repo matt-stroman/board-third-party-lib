@@ -2396,6 +2396,77 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             parser.parse_args(["capture-parity-baseline", "--start-stack"])
 
+    def test_run_parity_suite_ensures_local_web_stack_before_running(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        with (
+            mock.patch.object(dev, "assert_command_available"),
+            mock.patch.object(dev, "ensure_migration_workspace_scaffolding"),
+            mock.patch.object(dev, "install_migration_workspace_dependencies"),
+            mock.patch.object(dev, "ensure_playwright_browser_installed"),
+            mock.patch.object(dev, "ensure_local_web_stack_for_parity") as ensure_local_web_stack_for_parity,
+            mock.patch.object(dev, "build_subprocess_env", return_value={"PARITY_BASE_URL": config.frontend_base_url}),
+            mock.patch.object(dev, "run_command") as run_command,
+        ):
+            dev.run_parity_suite(config, update_snapshots=False)
+
+        ensure_local_web_stack_for_parity.assert_called_once_with(config)
+        run_command.assert_called_once()
+
+    def test_ensure_local_web_stack_for_parity_starts_missing_services(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            config = dev.config_from_args(self.create_args(), repo_root)
+            backend_process = mock.Mock(pid=321)
+            frontend_process = mock.Mock(pid=654)
+
+            with (
+                mock.patch.object(
+                    dev,
+                    "probe_http_url",
+                    side_effect=[
+                        (False, "connection refused"),
+                        (False, "backend missing"),
+                        (False, "frontend missing"),
+                        (True, None),
+                    ],
+                ),
+                mock.patch.object(dev, "ensure_runtime_profile") as ensure_runtime_profile,
+                mock.patch.object(
+                    dev,
+                    "get_local_supabase_runtime",
+                    return_value={
+                        "SUPABASE_URL": "http://127.0.0.1:55421",
+                        "SUPABASE_PUBLISHABLE_KEY": "publishable",
+                        "SUPABASE_SECRET_KEY": "secret",
+                        "SUPABASE_AVATARS_BUCKET": "avatars",
+                        "SUPABASE_CARD_IMAGES_BUCKET": "card-images",
+                        "SUPABASE_HERO_IMAGES_BUCKET": "hero-images",
+                        "SUPABASE_LOGO_IMAGES_BUCKET": "logo-images",
+                    },
+                ),
+                mock.patch.object(dev, "ensure_local_demo_seed_data"),
+                mock.patch.object(
+                    dev,
+                    "start_migration_workers_process",
+                    return_value=(backend_process, repo_root / ".dev-cli-logs" / "workers-api.log"),
+                ) as start_migration_workers_process,
+                mock.patch.object(
+                    dev,
+                    "start_background_command_with_log",
+                    return_value=(frontend_process, repo_root / ".dev-cli-logs" / "migration-spa.log"),
+                ) as start_background_command_with_log,
+                mock.patch.object(dev, "wait_for_background_process_http_ready") as wait_for_background_process_http_ready,
+                mock.patch.object(dev, "save_stack_state") as save_stack_state,
+            ):
+                dev.ensure_local_web_stack_for_parity(config)
+
+        ensure_runtime_profile.assert_called_once_with(config, profile=dev.SUPABASE_PROFILE_WEB)
+        start_migration_workers_process.assert_called_once()
+        start_background_command_with_log.assert_called_once()
+        self.assertEqual(2, save_stack_state.call_count)
+        wait_for_background_process_http_ready.assert_called_once()
+
     def test_removed_legacy_runtime_commands_are_rejected(self) -> None:
         parser = dev.build_parser()
 

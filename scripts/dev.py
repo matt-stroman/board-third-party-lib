@@ -4020,13 +4020,7 @@ def run_parity_suite(
     ensure_migration_workspace_scaffolding(config)
     install_migration_workspace_dependencies(config)
     ensure_playwright_browser_installed(config)
-
-    frontend_ready, detail = probe_http_url(config.frontend_base_url)
-    if not frontend_ready:
-        raise DevCliError(
-            f"Frontend base URL is not reachable: {config.frontend_base_url}"
-            + (f" ({detail})" if detail else "")
-        )
+    ensure_local_web_stack_for_parity(config)
 
     env = build_subprocess_env(
         extra={
@@ -4039,6 +4033,84 @@ def run_parity_suite(
     command = ["npm", "run", "capture:parity-baseline" if update_snapshots else "test:parity"]
     write_step("Running parity browser baseline suite")
     run_command(command, cwd=config.repo_root, env=env)
+
+
+def ensure_local_web_stack_for_parity(config: DevConfig) -> None:
+    """Ensure the maintained local web stack is reachable for parity tests.
+
+    Args:
+        config: CLI configuration containing repository paths and URLs.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If the frontend still is not reachable after attempting startup.
+    """
+
+    frontend_ready, detail = probe_http_url(config.frontend_base_url)
+    if frontend_ready:
+        return
+
+    write_step("Frontend was not running; starting the maintained local web stack for parity")
+    ensure_runtime_profile(config, profile=SUPABASE_PROFILE_WEB)
+    runtime_env = get_local_supabase_runtime(config)
+    ensure_local_demo_seed_data(config, runtime_env=runtime_env)
+
+    backend_ready, _backend_detail = probe_http_url(f"{config.migration_workers_base_url.rstrip('/')}/health/ready")
+    if not backend_ready:
+        write_step("Starting maintained backend API in the background for parity")
+        backend_process, backend_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
+        print(f"Backend log: {backend_log_path}")
+        save_stack_state(
+            config,
+            stack_name="api",
+            state={
+                "started_at_utc": datetime.now(timezone.utc).isoformat(),
+                "backend": {
+                    "pid": backend_process.pid,
+                    "url": config.migration_workers_base_url,
+                    "log_path": str(backend_log_path),
+                },
+            },
+        )
+
+    frontend_ready, _detail = probe_http_url(config.frontend_base_url)
+    if not frontend_ready:
+        write_step("Starting SPA in the background for parity")
+        frontend_process, frontend_log_path = start_background_command_with_log(
+            cmd=build_workspace_npm_command(script_name="dev", workspace_name=config.migration_spa_workspace_name),
+            cwd=config.repo_root,
+            log_name="migration-spa.log",
+            config=config,
+            env=build_migration_frontend_environment(config, runtime_env=runtime_env, landing_mode=False),
+        )
+        print(f"Frontend log: {frontend_log_path}")
+        wait_for_background_process_http_ready(
+            process=frontend_process,
+            url=config.frontend_base_url,
+            description="SPA",
+            log_path=frontend_log_path,
+        )
+        save_stack_state(
+            config,
+            stack_name="web",
+            state={
+                "started_at_utc": datetime.now(timezone.utc).isoformat(),
+                "frontend": {
+                    "pid": frontend_process.pid,
+                    "url": config.frontend_base_url,
+                    "log_path": str(frontend_log_path),
+                },
+            },
+        )
+
+    frontend_ready, detail = probe_http_url(config.frontend_base_url)
+    if not frontend_ready:
+        raise DevCliError(
+            f"Frontend base URL is not reachable: {config.frontend_base_url}"
+            + (f" ({detail})" if detail else "")
+        )
 
 
 def get_deploy_pages_project_name(*, target: str) -> str:
