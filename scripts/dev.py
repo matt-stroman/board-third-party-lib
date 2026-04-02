@@ -380,6 +380,224 @@ def get_runtime_profile_state_path(config: DevConfig) -> Path:
     return get_stack_state_path(config, stack_name="runtime-profile")
 
 
+def dedupe_paths(paths: Sequence[Path]) -> list[Path]:
+    """Return the supplied paths without duplicates while preserving order.
+
+    Args:
+        paths: Candidate filesystem paths.
+
+    Returns:
+        Stable list with duplicate path entries removed.
+    """
+
+    seen: set[str] = set()
+    unique_paths: list[Path] = []
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_paths.append(path)
+    return unique_paths
+
+
+def collect_globbed_paths(base_path: Path, *patterns: str) -> list[Path]:
+    """Collect existing paths that match one or more glob patterns.
+
+    Args:
+        base_path: Root path used for glob expansion.
+        patterns: Glob expressions to expand beneath ``base_path``.
+
+    Returns:
+        Existing matching paths in stable order.
+    """
+
+    matches: list[Path] = []
+    if not base_path.exists():
+        return matches
+
+    for pattern in patterns:
+        matches.extend(path for path in base_path.glob(pattern) if path.exists() or path.is_symlink())
+    return dedupe_paths(matches)
+
+
+def get_clean_confirmation_notes(command_name: str) -> list[str]:
+    """Return human-friendly notes describing what a local clean preserves.
+
+    Args:
+        command_name: Runtime command being cleaned.
+
+    Returns:
+        Friendly bullet text displayed in the destructive confirmation prompt.
+    """
+
+    notes = [
+        "Your config secrets in /config/.env* are preserved.",
+        "IDE settings folders such as .idea, .vscode, and .vs are preserved.",
+        "Tracked or otherwise non-ignored working files are preserved.",
+        "Local AI agent context/config files such as .codex-tmp and AGENTS.md are preserved.",
+    ]
+    if command_name == "web":
+        notes.append(
+            "This CLI does not currently provision a managed browser profile, browser cache, or trusted local HTTPS certs, so there is nothing additional to clear there today."
+        )
+    return notes
+
+
+def confirm_clean_action(*, command_name: str, summary_lines: Sequence[str]) -> bool:
+    """Prompt before performing destructive local cleanup.
+
+    Args:
+        command_name: Runtime command being cleaned.
+        summary_lines: Friendly summary of what will be removed.
+
+    Returns:
+        ``True`` when the user confirmed by typing ``clean``; otherwise ``False``.
+    """
+
+    command_label = command_name if command_name == "clean-all" or " " in command_name else f"{command_name} clean"
+    target_scope = "the full local maintained stack" if command_name == "clean-all" else "this area"
+    print(f"Warning: `{command_label}` permanently removes local automation-managed state for {target_scope}.")
+    if command_name == "clean-all":
+        print("This action is intended to reset your full local maintained stack close to a fresh checkout.")
+    else:
+        print("This action is intended to reset your local setup close to a fresh checkout for that area.")
+    print("")
+    print("It will remove:")
+    for line in summary_lines:
+        print(f"- {line}")
+    print("")
+    print("It will keep:")
+    for line in get_clean_confirmation_notes(command_name):
+        print(f"- {line}")
+    print("")
+    response = input("Continue? [y/N]: ").strip().lower()
+    if response != "y":
+        print("Clean cancelled. No files were removed.")
+        return False
+    return True
+
+
+def remove_path(path: Path) -> bool:
+    """Remove a file, symlink, or directory when it exists.
+
+    Args:
+        path: Filesystem path to remove.
+
+    Returns:
+        ``True`` when a filesystem entry was removed; otherwise ``False``.
+    """
+
+    if not path.exists() and not path.is_symlink():
+        return False
+
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return True
+
+    shutil.rmtree(path)
+    return True
+
+
+def remove_paths(paths: Sequence[Path]) -> list[Path]:
+    """Remove the supplied filesystem paths when they exist.
+
+    Args:
+        paths: Candidate files/directories to delete.
+
+    Returns:
+        Paths that were actually removed.
+    """
+
+    removed: list[Path] = []
+    for path in dedupe_paths(paths):
+        if remove_path(path):
+            removed.append(path)
+    return removed
+
+
+def get_database_clean_paths(config: DevConfig) -> list[Path]:
+    """Return automation-managed local artifacts removed by `database clean`.
+
+    Args:
+        config: CLI configuration containing repository paths.
+
+    Returns:
+        Existing database/runtime cleanup paths.
+    """
+
+    logs_dir = config.repo_root / ".dev-cli-logs"
+    paths = [
+        get_runtime_profile_state_path(config),
+        get_stack_state_path(config, stack_name="api"),
+        get_stack_state_path(config, stack_name="web"),
+        logs_dir / "workers-api.log",
+        logs_dir / "migration-spa.log",
+        config.repo_root / config.supabase_root / ".branches",
+        config.repo_root / config.supabase_root / ".temp",
+        config.repo_root / "supabase" / ".temp",
+    ]
+    return dedupe_paths(paths)
+
+
+def get_api_clean_paths(config: DevConfig) -> list[Path]:
+    """Return automation-managed local artifacts removed by `api clean`.
+
+    Args:
+        config: CLI configuration containing repository paths.
+
+    Returns:
+        Existing backend/runtime cleanup paths.
+    """
+
+    backend_root = config.repo_root / "backend"
+    worker_root = config.repo_root / config.migration_workers_root
+    paths = get_database_clean_paths(config) + [
+        get_stack_state_path(config, stack_name="api"),
+        get_stack_state_path(config, stack_name="web"),
+        worker_root / ".dev.vars",
+        worker_root / ".wrangler",
+        config.repo_root / ".wrangler",
+        backend_root / "node_modules",
+        backend_root / "logs",
+        backend_root / ".tmp",
+    ]
+    paths.extend(collect_globbed_paths(backend_root / "apps", "*/node_modules", "*/dist", "*/*.tsbuildinfo"))
+    paths.extend(collect_globbed_paths(backend_root, "*.tsbuildinfo", "*.log"))
+    return dedupe_paths(paths)
+
+
+def get_web_clean_paths(config: DevConfig) -> list[Path]:
+    """Return automation-managed local artifacts removed by `web clean`.
+
+    Args:
+        config: CLI configuration containing repository paths.
+
+    Returns:
+        Existing full-stack cleanup paths.
+    """
+
+    frontend_root = config.repo_root / "frontend"
+    packages_root = config.repo_root / "packages"
+    paths = get_api_clean_paths(config) + [
+        config.repo_root / ".dev-cli-logs",
+        config.repo_root / "node_modules",
+        config.repo_root / "artifacts",
+        config.repo_root / "test-results",
+        config.repo_root / "playwright-report",
+        frontend_root / "node_modules",
+        frontend_root / "dist",
+        frontend_root / "coverage",
+        config.repo_root / "tests" / "parity" / ".auth",
+        config.repo_root / "tests" / "parity" / "test-results",
+        config.repo_root / "tests" / "parity" / "playwright-report",
+    ]
+    paths.extend(collect_globbed_paths(config.repo_root, "*.tsbuildinfo"))
+    paths.extend(collect_globbed_paths(frontend_root, "*.tsbuildinfo"))
+    paths.extend(collect_globbed_paths(packages_root, "*/node_modules", "*/dist", "*/*.tsbuildinfo"))
+    return dedupe_paths(paths)
+
+
 def write_step(message: str) -> None:
     """Print a visible step marker for long-running actions.
 
@@ -2005,6 +2223,190 @@ def handle_web_down(config: DevConfig, *, include_dependencies: bool) -> None:
     print("Web runtime stopped. API, auth, and database remain available.")
 
 
+def summarize_removed_paths(paths: Sequence[Path], *, repo_root: Path) -> None:
+    """Print a friendly summary of removed local artifacts.
+
+    Args:
+        paths: Paths removed during cleanup.
+        repo_root: Repository root for relative display.
+
+    Returns:
+        None.
+    """
+
+    if not paths:
+        print("No removable local files were found for this clean operation.")
+        return
+
+    print("Removed local files and directories:")
+    for path in paths:
+        try:
+            display_path = path.relative_to(repo_root)
+        except ValueError:
+            display_path = path
+        print(f"- {display_path}")
+
+
+def clean_supabase_local_state(config: DevConfig) -> None:
+    """Stop and remove local Supabase runtime state for a clean reset.
+
+    Args:
+        config: CLI configuration containing repository paths.
+
+    Returns:
+        None.
+    """
+
+    stop_runtime_profile(config)
+    try:
+        ensure_docker_daemon_available()
+    except DevCliError:
+        print("Docker daemon is not reachable; skipping direct Docker volume cleanup.")
+        return
+
+    removed_any = force_remove_supabase_project_containers(config)
+    removed_any = force_remove_supabase_project_volumes(config) or removed_any
+    if not removed_any:
+        print("No lingering local Supabase containers or volumes were found.")
+
+
+def run_clean_operation(
+    config: DevConfig,
+    *,
+    command_name: str,
+    summary_lines: Sequence[str],
+    paths: Sequence[Path],
+) -> None:
+    """Run a confirmed destructive local cleanup for one runtime area.
+
+    Args:
+        config: CLI configuration containing repository paths.
+        command_name: Runtime area being cleaned.
+        summary_lines: Friendly prompt lines describing what will be removed.
+        paths: Filesystem paths to remove after runtime shutdown.
+
+    Returns:
+        None.
+    """
+
+    if not confirm_clean_action(command_name=command_name, summary_lines=summary_lines):
+        return
+
+    perform_clean_operation(config, command_name=command_name, paths=paths)
+
+
+def handle_database_clean(config: DevConfig) -> None:
+    """Handle `database clean`."""
+
+    run_clean_operation(
+        config,
+        command_name="database",
+        summary_lines=(
+            "Local Supabase runtime state, containers, and project volumes for this repository",
+            "Supabase temp/branch folders created under backend/supabase",
+            "Managed runtime state files and local service logs created by the CLI",
+        ),
+        paths=get_database_clean_paths(config),
+    )
+
+
+def handle_auth_clean(config: DevConfig) -> None:
+    """Handle `auth clean`."""
+
+    run_clean_operation(
+        config,
+        command_name="auth",
+        summary_lines=(
+            "Everything removed by `database clean`",
+            "Local auth/profile runtime state created for the maintained stack",
+            "Managed runtime logs created while auth-backed local services were running",
+        ),
+        paths=get_database_clean_paths(config),
+    )
+
+
+def handle_api_clean(config: DevConfig) -> None:
+    """Handle `api clean`."""
+
+    run_clean_operation(
+        config,
+        command_name="api",
+        summary_lines=(
+            "Everything removed by `auth clean`",
+            "Backend-generated Wrangler dev files and local backend temp/cache folders",
+            "Backend-only node_modules, dist outputs, tsbuildinfo files, and local logs",
+        ),
+        paths=get_api_clean_paths(config),
+    )
+
+
+def handle_web_clean(config: DevConfig) -> None:
+    """Handle `web clean`."""
+
+    run_clean_operation(
+        config,
+        command_name="web",
+        summary_lines=(
+            "Everything removed by `api clean`",
+            "Root/frontend workspace installs and generated build/test artifacts",
+            "Playwright auth snapshots, reports, and other local web automation outputs",
+        ),
+        paths=get_web_clean_paths(config),
+    )
+
+
+def handle_clean_all(config: DevConfig) -> None:
+    """Handle `clean-all` by running each runtime cleanup from top to bottom.
+
+    Args:
+        config: CLI configuration containing repository paths.
+
+    Returns:
+        None.
+    """
+
+    summary_lines = (
+        "Everything removed by `web clean`, `api clean`, `auth clean`, and `database clean`",
+        "The clean steps run in this order: web, api, auth, database",
+        "Repeated lower-level clean steps will no-op once the higher-level cleanup already removed their artifacts",
+    )
+    if not confirm_clean_action(command_name="clean-all", summary_lines=summary_lines):
+        return
+
+    ordered_cleanups = (
+        ("web", get_web_clean_paths(config)),
+        ("api", get_api_clean_paths(config)),
+        ("auth", get_database_clean_paths(config)),
+        ("database", get_database_clean_paths(config)),
+    )
+    for command_name, paths in ordered_cleanups:
+        perform_clean_operation(config, command_name=command_name, paths=paths)
+    print("`clean-all` completed.")
+
+
+def perform_clean_operation(
+    config: DevConfig,
+    *,
+    command_name: str,
+    paths: Sequence[Path],
+) -> None:
+    """Perform the non-interactive portion of a clean operation.
+
+    Args:
+        config: CLI configuration containing repository paths.
+        command_name: Runtime area being cleaned.
+        paths: Filesystem paths to remove after runtime shutdown.
+
+    Returns:
+        None.
+    """
+
+    clean_supabase_local_state(config)
+    removed_paths = remove_paths(paths)
+    summarize_removed_paths(removed_paths, repo_root=config.repo_root)
+    print(f"`{command_name} clean` completed.")
+
+
 def start_background_command_with_log(
     *,
     cmd: Sequence[str],
@@ -2942,6 +3344,61 @@ def force_remove_supabase_project_containers(config: DevConfig) -> bool:
 
     write_step("Force-removing local Supabase containers")
     run_command(["docker", "rm", "-f", *removable_names], cwd=config.repo_root)
+    return True
+
+
+def list_supabase_project_volumes(config: DevConfig) -> list[str]:
+    """Return Docker volume names associated with the local Supabase project.
+
+    Args:
+        config: CLI configuration containing repository paths.
+
+    Returns:
+        Matching Docker volume names.
+    """
+
+    project_id = get_supabase_project_id(config)
+    result = run_command(
+        [
+            "docker",
+            "volume",
+            "ls",
+            "--filter",
+            f"label=com.docker.compose.project={project_id}",
+            "--format",
+            "{{.Name}}",
+        ],
+        cwd=config.repo_root,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        output = "\n".join(
+            part.strip()
+            for part in ((result.stdout or ""), (result.stderr or ""))
+            if part and part.strip()
+        )
+        raise DevCliError("Failed to inspect Docker volumes for local Supabase state." + (f"\n{output}" if output else ""))
+
+    return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+
+
+def force_remove_supabase_project_volumes(config: DevConfig) -> bool:
+    """Force-remove all Docker volumes for the local Supabase project.
+
+    Args:
+        config: CLI configuration containing repository paths.
+
+    Returns:
+        ``True`` when one or more volumes were removed; otherwise ``False``.
+    """
+
+    removable_names = list_supabase_project_volumes(config)
+    if not removable_names:
+        return False
+
+    write_step("Force-removing local Supabase volumes")
+    run_command(["docker", "volume", "rm", "-f", *removable_names], cwd=config.repo_root)
     return True
 
 
@@ -6558,6 +7015,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Initialize submodules and install maintained workspace dependencies",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    subparsers.add_parser(
+        "clean-all",
+        parents=[shared],
+        help="Run all local clean operations from web down through database",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
 
     database = subparsers.add_parser(
         "database",
@@ -6567,7 +7030,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     database.add_argument(
         "action",
-        choices=("up", "down", "status"),
+        choices=("up", "down", "status", "clean"),
         nargs="?",
         default="up",
         help="Database runtime action",
@@ -6586,7 +7049,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     auth.add_argument(
         "action",
-        choices=("up", "down", "status"),
+        choices=("up", "down", "status", "clean"),
         nargs="?",
         default="up",
         help="Auth runtime action",
@@ -6605,7 +7068,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     api.add_argument(
         "action",
-        choices=("up", "down", "status"),
+        choices=("up", "down", "status", "clean"),
         nargs="?",
         default="up",
         help="API runtime action",
@@ -6636,7 +7099,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     web.add_argument(
         "action",
-        choices=("up", "down", "status"),
+        choices=("up", "down", "status", "clean"),
         nargs="?",
         default="up",
         help="Web runtime action",
@@ -7234,11 +7697,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             ensure_submodules(config)
             restore_backend(config)
             print("Bootstrap complete.")
+        elif args.command == "clean-all":
+            handle_clean_all(config)
         elif args.command == "database":
             if args.action == "up":
                 restart_runtime_profile(config, profile=SUPABASE_PROFILE_DATABASE)
             elif args.action == "down":
                 handle_database_down(config, include_dependencies=args.include_dependencies)
+            elif args.action == "clean":
+                handle_database_clean(config)
             else:
                 show_database_command_status(config, include_dependencies=args.include_dependencies)
         elif args.command == "auth":
@@ -7246,6 +7713,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 restart_runtime_profile(config, profile=SUPABASE_PROFILE_AUTH)
             elif args.action == "down":
                 handle_auth_down(config, include_dependencies=args.include_dependencies)
+            elif args.action == "clean":
+                handle_auth_clean(config)
             else:
                 show_auth_command_status(config, include_dependencies=args.include_dependencies)
         elif args.command == "api":
@@ -7257,6 +7726,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             elif args.action == "down":
                 handle_api_down(config, include_dependencies=args.include_dependencies)
+            elif args.action == "clean":
+                handle_api_clean(config)
             else:
                 show_api_command_status(config, include_dependencies=args.include_dependencies)
         elif args.command == "web":
@@ -7271,6 +7742,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             elif args.action == "down":
                 handle_web_down(config, include_dependencies=args.include_dependencies)
+            elif args.action == "clean":
+                handle_web_clean(config)
             else:
                 show_web_command_status(config, include_dependencies=args.include_dependencies)
         elif args.command == "test":

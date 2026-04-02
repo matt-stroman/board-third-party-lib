@@ -1798,6 +1798,21 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertTrue(web_args.hot_reload)
         self.assertFalse(web_args.landing_mode)
 
+    def test_runtime_parsers_accept_clean_action(self) -> None:
+        parser = dev.build_parser()
+
+        database_args = parser.parse_args(["database", "clean"])
+        auth_args = parser.parse_args(["auth", "clean"])
+        api_args = parser.parse_args(["api", "clean"])
+        web_args = parser.parse_args(["web", "clean"])
+        clean_all_args = parser.parse_args(["clean-all"])
+
+        self.assertEqual("clean", database_args.action)
+        self.assertEqual("clean", auth_args.action)
+        self.assertEqual("clean", api_args.action)
+        self.assertEqual("clean", web_args.action)
+        self.assertEqual("clean-all", clean_all_args.command)
+
     def test_web_parser_accepts_landing_mode_flag(self) -> None:
         parser = dev.build_parser()
 
@@ -2189,6 +2204,105 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             profile=dev.SUPABASE_PROFILE_AUTH,
         )
         stop_runtime_profile.assert_not_called()
+
+    def test_confirm_clean_action_cancels_without_confirmation_token(self) -> None:
+        with mock.patch("builtins.input", return_value=""):
+            confirmed = dev.confirm_clean_action(
+                command_name="web",
+                summary_lines=("root workspace installs",),
+            )
+
+        self.assertFalse(confirmed)
+
+    def test_confirm_clean_action_accepts_uppercase_y(self) -> None:
+        with mock.patch("builtins.input", return_value="Y"):
+            confirmed = dev.confirm_clean_action(
+                command_name="api",
+                summary_lines=("backend-generated artifacts",),
+            )
+
+        self.assertTrue(confirmed)
+
+    def test_database_clean_paths_target_only_expected_automation_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            config = dev.config_from_args(self.create_args(), repo_root)
+
+            expected_paths = [
+                repo_root / ".dev-cli-logs" / "runtime-profile-state.json",
+                repo_root / ".dev-cli-logs" / "api-state.json",
+                repo_root / ".dev-cli-logs" / "web-state.json",
+                repo_root / ".dev-cli-logs" / "workers-api.log",
+                repo_root / ".dev-cli-logs" / "migration-spa.log",
+                repo_root / "backend" / "supabase" / ".branches",
+                repo_root / "backend" / "supabase" / ".temp",
+                repo_root / "supabase" / ".temp",
+            ]
+            for path in expected_paths:
+                if path.name in {".branches", ".temp"}:
+                    path.mkdir(parents=True, exist_ok=True)
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("generated", encoding="utf-8")
+
+            protected_env_path = repo_root / "config" / ".env.local"
+            protected_env_path.parent.mkdir(parents=True, exist_ok=True)
+            protected_env_path.write_text("SECRET=value\n", encoding="utf-8")
+
+            planned = dev.get_database_clean_paths(config)
+            removed = dev.remove_paths(planned)
+
+            self.assertEqual({str(path) for path in expected_paths}, {str(path) for path in removed})
+            self.assertTrue(protected_env_path.exists())
+
+    def test_main_web_clean_requires_confirmation_before_running_cleanup(self) -> None:
+        with (
+            mock.patch("builtins.input", return_value=""),
+            mock.patch.object(dev, "clean_supabase_local_state") as clean_supabase_local_state,
+            mock.patch.object(dev, "remove_paths") as remove_paths,
+        ):
+            exit_code = dev.main(["web", "clean"])
+
+        self.assertEqual(0, exit_code)
+        clean_supabase_local_state.assert_not_called()
+        remove_paths.assert_not_called()
+
+    def test_main_api_clean_runs_confirmed_cleanup(self) -> None:
+        fake_removed_path = pathlib.Path("backend/apps/workers-api/.dev.vars")
+
+        with (
+            mock.patch("builtins.input", return_value="y"),
+            mock.patch.object(dev, "clean_supabase_local_state") as clean_supabase_local_state,
+            mock.patch.object(dev, "remove_paths", return_value=[fake_removed_path]) as remove_paths,
+            mock.patch.object(dev, "summarize_removed_paths") as summarize_removed_paths,
+        ):
+            exit_code = dev.main(["api", "clean"])
+
+        self.assertEqual(0, exit_code)
+        clean_supabase_local_state.assert_called_once()
+        remove_paths.assert_called_once()
+        summarize_removed_paths.assert_called_once_with([fake_removed_path], repo_root=mock.ANY)
+
+    def test_main_clean_all_runs_ordered_cleanups_after_single_confirmation(self) -> None:
+        with (
+            mock.patch("builtins.input", return_value="y"),
+            mock.patch.object(dev, "get_web_clean_paths", return_value=[pathlib.Path("web")]),
+            mock.patch.object(dev, "get_api_clean_paths", return_value=[pathlib.Path("api")]),
+            mock.patch.object(dev, "get_database_clean_paths", side_effect=[[pathlib.Path("auth")], [pathlib.Path("database")]]),
+            mock.patch.object(dev, "perform_clean_operation") as perform_clean_operation,
+        ):
+            exit_code = dev.main(["clean-all"])
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [
+                mock.call(mock.ANY, command_name="web", paths=[pathlib.Path("web")]),
+                mock.call(mock.ANY, command_name="api", paths=[pathlib.Path("api")]),
+                mock.call(mock.ANY, command_name="auth", paths=[pathlib.Path("auth")]),
+                mock.call(mock.ANY, command_name="database", paths=[pathlib.Path("database")]),
+            ],
+            perform_clean_operation.call_args_list,
+        )
 
     def test_main_seed_data_uses_start_and_db_reset_workflow(self) -> None:
         with mock.patch.object(dev, "run_supabase_stack_command") as run_supabase_stack_command:
