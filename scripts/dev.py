@@ -193,6 +193,9 @@ LOCAL_WORKERS_PORT = 8787
 LOCAL_FRONTEND_PORT = 4173
 SUPABASE_STATUS_TIMEOUT_SECONDS = 15
 SUPABASE_STOP_TIMEOUT_SECONDS = 30
+SUPABASE_START_TIMEOUT_SECONDS = 300
+PROCESS_STOP_TIMEOUT_SECONDS = 15
+PROCESS_STATUS_TIMEOUT_SECONDS = 5
 SUPPORTED_ENVIRONMENT_TARGETS = ("local", "staging", "production")
 GITHUB_ENVIRONMENT_SECRET_NAMES = frozenset(
     {
@@ -1603,12 +1606,16 @@ def is_process_running(pid: int) -> bool:
         return False
 
     if os.name == "nt":
-        result = run_command(
-            ["tasklist", "/FI", f"PID eq {pid}"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = run_command(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout_seconds=PROCESS_STATUS_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            return False
         stdout = (result.stdout or "").lower()
         return result.returncode == 0 and f" {pid} " in f" {stdout} "
 
@@ -1633,12 +1640,20 @@ def stop_process_by_pid(pid: int) -> None:
         return
 
     if os.name == "nt":
-        run_command(
-            ["taskkill", "/PID", str(pid), "/T", "/F"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            run_command(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout_seconds=PROCESS_STOP_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            raise DevCliError(
+                "Timed out while stopping a tracked local process. "
+                "The process record may be stale or Windows may still be reconciling the process tree. "
+                "Rerun the command, or use 'python ./scripts/dev.py web clean' if the local web stack remains stuck."
+            )
         return
 
     os.kill(pid, signal.SIGTERM)
@@ -2205,7 +2220,15 @@ def handle_auth_down(config: DevConfig, *, include_dependencies: bool) -> None:
         print("Auth runtime and dependencies stopped.")
         return
 
-    restart_runtime_profile(config, profile=SUPABASE_PROFILE_DATABASE)
+    try:
+        restart_runtime_profile(config, profile=SUPABASE_PROFILE_DATABASE)
+    except DevCliError as ex:
+        clear_runtime_profile_state(config)
+        print("Auth runtime stopped.")
+        print("Database availability could not be refreshed because the local Docker/Supabase runtime was not reachable.")
+        print(str(ex))
+        return
+
     print("Auth runtime stopped. Database remains available.")
 
 
@@ -2219,7 +2242,15 @@ def handle_api_down(config: DevConfig, *, include_dependencies: bool) -> None:
         print("API runtime and dependencies stopped.")
         return
 
-    restart_runtime_profile(config, profile=SUPABASE_PROFILE_AUTH)
+    try:
+        restart_runtime_profile(config, profile=SUPABASE_PROFILE_AUTH)
+    except DevCliError as ex:
+        clear_runtime_profile_state(config)
+        print("API runtime stopped.")
+        print("Auth/database availability could not be refreshed because the local Docker/Supabase runtime was not reachable.")
+        print(str(ex))
+        return
+
     print("API runtime stopped. Auth and database remain available.")
 
 
@@ -3446,12 +3477,29 @@ def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
         )
         attempts = 3
         for attempt in range(1, attempts + 1):
-            result = run_command(
-                start_command,
-                cwd=supabase_root,
-                check=False,
-                capture_output=True,
-            )
+            try:
+                result = run_command(
+                    start_command,
+                    cwd=supabase_root,
+                    check=False,
+                    capture_output=True,
+                    timeout_seconds=SUPABASE_START_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired as ex:
+                print(
+                    "Supabase start timed out after "
+                    f"{SUPABASE_START_TIMEOUT_SECONDS} seconds; attempting to stop any partial local runtime."
+                )
+                try:
+                    run_supabase_stack_command(config, action="stop")
+                except DevCliError:
+                    print("Automatic cleanup of the partial local runtime did not complete cleanly.")
+                raise DevCliError(
+                    "Supabase start timed out while launching the local runtime. "
+                    "A partial local stack may have started (for example, the database without auth/gateway). "
+                    "Rerun 'python ./scripts/dev.py database down' and try again. "
+                    "If the problem continues, run 'python ./scripts/dev.py database clean' before retrying."
+                ) from ex
             if result.returncode == 0:
                 combined_output = "\n".join(
                     part.strip()

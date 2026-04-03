@@ -106,6 +106,87 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         with mock.patch.object(dev.shutil, "which", side_effect=fake_which):
             self.assertEqual(["npx", "--yes", "supabase"], dev.resolve_supabase_command_prefix())
 
+    def test_is_process_running_returns_false_when_windows_tasklist_times_out(self) -> None:
+        with (
+            mock.patch.object(dev.os, "name", "nt"),
+            mock.patch.object(
+                dev,
+                "run_command",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd=["tasklist", "/FI", "PID eq 1234"],
+                    timeout=dev.PROCESS_STATUS_TIMEOUT_SECONDS,
+                ),
+            ),
+        ):
+            self.assertFalse(dev.is_process_running(1234))
+
+    def test_stop_process_by_pid_raises_guidance_when_windows_taskkill_times_out(self) -> None:
+        with (
+            mock.patch.object(dev.os, "name", "nt"),
+            mock.patch.object(dev, "is_process_running", return_value=True),
+            mock.patch.object(
+                dev,
+                "run_command",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd=["taskkill", "/PID", "1234", "/T", "/F"],
+                    timeout=dev.PROCESS_STOP_TIMEOUT_SECONDS,
+                ),
+            ),
+        ):
+            with self.assertRaises(dev.DevCliError) as raised:
+                dev.stop_process_by_pid(1234)
+
+        self.assertIn("Timed out while stopping a tracked local process", str(raised.exception))
+        self.assertIn("web clean", str(raised.exception))
+
+    def test_handle_api_down_succeeds_when_runtime_downgrade_cannot_refresh(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        with (
+            mock.patch.object(dev, "stop_frontend_service") as stop_frontend,
+            mock.patch.object(dev, "stop_backend_service") as stop_backend,
+            mock.patch.object(
+                dev,
+                "restart_runtime_profile",
+                side_effect=dev.DevCliError("Docker daemon is not reachable."),
+            ) as restart_runtime,
+            mock.patch.object(dev, "clear_runtime_profile_state") as clear_runtime_state,
+            mock.patch("builtins.print") as print_mock,
+        ):
+            dev.handle_api_down(config, include_dependencies=False)
+
+        stop_frontend.assert_called_once_with(config)
+        stop_backend.assert_called_once_with(config)
+        restart_runtime.assert_called_once_with(config, profile=dev.SUPABASE_PROFILE_AUTH)
+        clear_runtime_state.assert_called_once_with(config)
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("API runtime stopped.", printed)
+        self.assertIn("Auth/database availability could not be refreshed", printed)
+
+    def test_handle_auth_down_succeeds_when_runtime_downgrade_cannot_refresh(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        with (
+            mock.patch.object(dev, "stop_frontend_service") as stop_frontend,
+            mock.patch.object(dev, "stop_backend_service") as stop_backend,
+            mock.patch.object(
+                dev,
+                "restart_runtime_profile",
+                side_effect=dev.DevCliError("Docker daemon is not reachable."),
+            ) as restart_runtime,
+            mock.patch.object(dev, "clear_runtime_profile_state") as clear_runtime_state,
+            mock.patch("builtins.print") as print_mock,
+        ):
+            dev.handle_auth_down(config, include_dependencies=False)
+
+        stop_frontend.assert_called_once_with(config)
+        stop_backend.assert_called_once_with(config)
+        restart_runtime.assert_called_once_with(config, profile=dev.SUPABASE_PROFILE_DATABASE)
+        clear_runtime_state.assert_called_once_with(config)
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("Auth runtime stopped.", printed)
+        self.assertIn("Database availability could not be refreshed", printed)
+
     def test_apply_environment_file_preserves_existing_values(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_path = pathlib.Path(temp_dir) / ".env.local"
@@ -1488,6 +1569,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 cwd=supabase_root,
                 check=False,
                 capture_output=True,
+                timeout_seconds=dev.SUPABASE_START_TIMEOUT_SECONDS,
             )
 
     def test_run_supabase_start_retries_when_docker_is_still_reconciling_containers(self) -> None:
@@ -1564,6 +1646,65 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             )
             run_command.assert_not_called()
             self.assertIn("port is excluded", str(raised.exception))
+
+    def test_run_supabase_start_times_out_cleans_up_partial_runtime_and_raises_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            args = self.create_args()
+            config = dev.config_from_args(args, repo_root)
+            supabase_root = repo_root / config.supabase_root
+            supabase_root.mkdir(parents=True, exist_ok=True)
+
+            stop_success = subprocess.CompletedProcess(
+                args=["npx", "supabase", "stop"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
+
+            def fake_run_command(*args, **kwargs):
+                command = list(args[0])
+                if command == dev.build_supabase_profile_start_command(
+                    prefix=["npx", "supabase"],
+                    profile=dev.SUPABASE_PROFILE_WEB,
+                ):
+                    raise subprocess.TimeoutExpired(
+                        cmd=command,
+                        timeout=dev.SUPABASE_START_TIMEOUT_SECONDS,
+                    )
+                if command == ["npx", "supabase", "stop"]:
+                    return stop_success
+                raise AssertionError(f"Unexpected command: {command}")
+
+            with (
+                mock.patch.object(dev, "ensure_migration_workspace_scaffolding"),
+                mock.patch.object(dev, "ensure_docker_daemon_available"),
+                mock.patch.object(dev, "ensure_tcp_port_bindable"),
+                mock.patch.object(dev, "resolve_supabase_command_prefix", return_value=["npx", "supabase"]),
+                mock.patch.object(dev, "run_command", side_effect=fake_run_command) as run_command,
+            ):
+                with self.assertRaises(dev.DevCliError) as raised:
+                    dev.run_supabase_stack_command(config, action="start")
+
+            run_command.assert_any_call(
+                dev.build_supabase_profile_start_command(
+                    prefix=["npx", "supabase"],
+                    profile=dev.SUPABASE_PROFILE_WEB,
+                ),
+                cwd=supabase_root,
+                check=False,
+                capture_output=True,
+                timeout_seconds=dev.SUPABASE_START_TIMEOUT_SECONDS,
+            )
+            run_command.assert_any_call(
+                ["npx", "supabase", "stop"],
+                cwd=supabase_root,
+                check=False,
+                capture_output=True,
+                timeout_seconds=dev.SUPABASE_STOP_TIMEOUT_SECONDS,
+            )
+            self.assertIn("Supabase start timed out while launching the local runtime", str(raised.exception))
+            self.assertIn("database down", str(raised.exception))
 
     def test_run_supabase_db_reset_retries_when_container_removal_is_still_in_progress(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
