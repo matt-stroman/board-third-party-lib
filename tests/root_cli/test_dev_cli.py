@@ -887,7 +887,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             )
 
         assert_github_environment_sync.assert_called_once_with(config, target="production")
-        get_cloudflare_pages_projects.assert_called_once_with(config, env=subprocess_env)
+        get_cloudflare_pages_projects.assert_called_once_with(env_values)
         assert_pages_custom_domain_prerequisites.assert_called_once_with(env_values)
         assert_worker_custom_domain_dns_prerequisites.assert_called_once_with(env_values)
         assert_supabase_publishable_access.assert_called_once_with(env_values)
@@ -895,6 +895,66 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         assert_turnstile_secret_access.assert_called_once_with(env_values)
         assert_brevo_configuration.assert_called_once_with(env_values)
         run_supabase_link.assert_called_once_with(config, env_values=env_values, subprocess_env=subprocess_env)
+
+    def test_get_cloudflare_pages_projects_raises_actionable_guidance_when_api_access_fails(self) -> None:
+        env_values = {
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+            "CLOUDFLARE_API_TOKEN": "token",
+        }
+
+        with mock.patch.object(
+            dev,
+            "request_json",
+            side_effect=dev.DevCliError(
+                "HTTP 403 Forbidden for https://api.cloudflare.com/client/v4/accounts/account-id/pages/projects: "
+                '{"success":false,"errors":[{"message":"Authentication error"}]}'
+            ),
+        ):
+            with self.assertRaises(dev.DevCliError) as raised:
+                dev.get_cloudflare_pages_projects(env_values)
+
+        message = str(raised.exception)
+        self.assertIn("Cloudflare Pages project listing failed", message)
+        self.assertIn("Pages read access", message)
+        self.assertIn("Original error", message)
+
+    def test_get_cloudflare_pages_projects_retries_once_after_timeout(self) -> None:
+        env_values = {
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+            "CLOUDFLARE_API_TOKEN": "token",
+        }
+
+        with (
+            mock.patch.object(
+                dev,
+                "request_json",
+                side_effect=[
+                    dev.DevCliError("Request timed out for https://api.cloudflare.com/client/v4/accounts/account-id/pages/projects after 30 seconds."),
+                    {"result": [{"name": "board-enthusiasts-staging"}]},
+                ],
+            ) as request_json,
+            mock.patch.object(dev, "write_step") as write_step,
+            mock.patch.object(dev.time, "sleep") as sleep,
+        ):
+            projects = dev.get_cloudflare_pages_projects(env_values)
+
+        self.assertEqual([{"name": "board-enthusiasts-staging"}], projects)
+        self.assertEqual(2, request_json.call_count)
+        write_step.assert_called_once()
+        sleep.assert_called_once_with(2)
+
+    def test_request_json_wraps_timeouts_in_cli_error(self) -> None:
+        with mock.patch.object(
+            dev.urllib.request,
+            "urlopen",
+            side_effect=TimeoutError("The read operation timed out"),
+        ):
+            with self.assertRaises(dev.DevCliError) as raised:
+                dev.request_json(url="https://api.cloudflare.com/client/v4/accounts/example/pages/projects", timeout_seconds=15)
+
+        message = str(raised.exception)
+        self.assertIn("Request timed out", message)
+        self.assertIn("15 seconds", message)
 
     def test_run_workers_deploy_smoke_preserves_smoke_secret_for_support_issue_probe(self) -> None:
         env_values = {

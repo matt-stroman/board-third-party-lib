@@ -4437,6 +4437,11 @@ def request_json(
         raise DevCliError(f"HTTP {ex.code} {ex.reason} for {url}: {detail or 'no detail'}") from ex
     except urllib.error.URLError as ex:
         raise DevCliError(f"Request failed for {url}: {ex.reason}") from ex
+    except (TimeoutError, socket.timeout) as ex:
+        raise DevCliError(
+            f"Request timed out for {url} after {timeout_seconds} seconds. "
+            "Check your network connection and verify the target service is reachable."
+        ) from ex
 
     if not body:
         return {}
@@ -4463,22 +4468,50 @@ def collect_named_entries(payload: object) -> set[str]:
     return discovered
 
 
-def get_cloudflare_pages_projects(config: DevConfig, *, env: dict[str, str]) -> list[dict[str, object]]:
-    """Return the accessible Cloudflare Pages projects for the authenticated account."""
+def get_cloudflare_pages_projects(env_values: dict[str, str]) -> list[dict[str, object]]:
+    """Return the accessible Cloudflare Pages projects for the authenticated account.
 
-    result = run_command(
-        ["npx", "wrangler", "pages", "project", "list", "--json"],
-        cwd=config.repo_root,
-        capture_output=True,
-        env=env,
+    This intentionally uses Cloudflare's direct API rather than Wrangler so deploy
+    preflight can fail with a clearer account/token error before any publish stage
+    begins.
+    """
+
+    request_url = (
+        "https://api.cloudflare.com/client/v4/accounts/"
+        f"{urllib.parse.quote(env_values['CLOUDFLARE_ACCOUNT_ID'])}/pages/projects"
     )
-    try:
-        payload = json.loads(result.stdout or "[]")
-    except json.JSONDecodeError as ex:
-        raise DevCliError("Cloudflare Pages project listing returned invalid JSON.") from ex
-    if not isinstance(payload, list):
-        raise DevCliError("Cloudflare Pages project listing returned an unexpected payload.")
-    return [entry for entry in payload if isinstance(entry, dict)]
+    last_error: DevCliError | None = None
+    for attempt in range(2):
+        try:
+            payload = request_json(
+                url=request_url,
+                headers=build_cloudflare_api_headers(env_values),
+                timeout_seconds=30,
+            )
+            return extract_cloudflare_result_list(payload, context="Pages project listing")
+        except DevCliError as ex:
+            last_error = ex
+            if "timed out" in str(ex).lower() and attempt == 0:
+                write_step("Cloudflare Pages listing timed out; retrying once")
+                time.sleep(2)
+                continue
+            break
+
+    assert last_error is not None
+    ex = last_error
+    if "timed out" in str(ex).lower():
+        raise DevCliError(
+            "Cloudflare Pages project listing timed out even after retrying. "
+            "Confirm the Cloudflare API is reachable from this machine and retry. "
+            "If this keeps happening in CI, verify the account id/token are correct and that the token has Pages read access.\n"
+            f"Original error: {ex}"
+        ) from ex
+    raise DevCliError(
+        "Cloudflare Pages project listing failed. "
+        "Confirm the configured Cloudflare account id is correct and the API token includes Pages read access "
+        "for that account.\n"
+        f"Original error: {ex}"
+    ) from ex
 
 
 def get_cloudflare_pages_project(env_values: dict[str, str], *, project_name: str) -> dict[str, object] | None:
@@ -5258,7 +5291,7 @@ def run_deploy_preflight(config: DevConfig, *, target: str, env_values: dict[str
 
     write_step(f"Running {target} deploy preflight")
     assert_github_environment_sync(config, target=target)
-    get_cloudflare_pages_projects(config, env=subprocess_env)
+    get_cloudflare_pages_projects(env_values)
     assert_pages_custom_domain_prerequisites(env_values)
     assert_worker_custom_domain_dns_prerequisites(env_values)
     assert_supabase_publishable_access(env_values)

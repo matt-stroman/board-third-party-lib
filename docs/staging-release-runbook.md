@@ -135,6 +135,16 @@ python ./scripts/dev.py deploy --staging --preflight-only
 
 This should pass before you continue.
 
+Cloudflare note:
+
+- The `CLOUDFLARE_API_TOKEN` used for deploys must be scoped to the same Cloudflare account as `CLOUDFLARE_ACCOUNT_ID`.
+- The token should include at least:
+  - `Account | Cloudflare Pages | Edit`
+  - `Account | Workers Scripts | Edit`
+  - `Zone | DNS | Edit`
+  - `Zone | Zone | Read`
+- `--preflight-only` now checks Cloudflare Pages access directly against the Cloudflare API so account/token mismatches fail before a real publish starts.
+
 ### 2. Dry Run
 
 ```bash
@@ -146,6 +156,7 @@ Use this to confirm:
 - Pages config renders correctly
 - Workers config renders correctly
 - required env values are present
+- Cloudflare account/token access is valid for Pages and Workers
 - deploy smoke prerequisites are satisfied
 
 ### 3. Real Staging Deploy
