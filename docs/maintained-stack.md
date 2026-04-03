@@ -53,7 +53,7 @@ Useful notes:
 - `web --landing-mode` switches the SPA into the landing-page-only production wave while keeping the same local backend stack running.
 - `api` and `web` automatically seed deterministic demo data when the local Supabase stack has no catalog rows yet.
 - `seed-data` refreshes the full checked-in local demo catalog fixture set, including the broader browse/studio sample surface.
-- the maintained seed roster includes 24 local users, including player-heavy coverage plus developer, moderator, admin, and super-admin accounts.
+- the maintained seed roster includes 27 local users, including player-heavy coverage plus developer, moderator, admin, and super-admin accounts.
 - `api down` and `web down` stop only the named service by default; add `--include-dependencies` to stop lower-level services as well.
 - `api status` and `web status` report only the named service by default; add `--include-dependencies` to include dependencies.
 - Root-managed environment files live under [`config/`](../config). Use [`python ./scripts/dev.py env ...`](../scripts/dev.py) to inspect or bootstrap `config/.env.local`, `config/.env.staging`, and `config/.env`.

@@ -229,10 +229,10 @@ python ./scripts/dev.py seed-data
 This refreshes the running local Supabase stack with the full checked-in demo catalog fixture set, including the broader browse/studio seed data used by the maintained UI.
 Use it when you intentionally want to refresh demo rows after changing seed definitions or media; you should not need it just to pick up newly pulled local migrations when starting `api` or `web`.
 
-The maintained local seed roster currently includes 24 users:
+The maintained local seed roster currently includes 27 users:
 - player coverage across the full roster
-- 6 developer-capable users
-- 2 moderators
+- 7 developer-capable users
+- 3 moderators
 - 1 admin
 - 1 super admin
 

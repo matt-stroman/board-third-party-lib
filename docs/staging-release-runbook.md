@@ -86,6 +86,22 @@ Confirm `config/.env.staging` contains the real hosted values for:
 - `DEPLOY_SMOKE_MODERATOR_EMAIL`
 - `VITE_LANDING_MODE=false`
 
+### Staging Demo Seed and Smoke Accounts
+
+The maintained staging deploy now seeds the hosted demo catalog additively as part of the deploy flow:
+
+- `staging` is seeded with the checked-in demo studios, titles, media, reports, and helper users
+- `production` is not seeded
+- rerunning the staging deploy adds any missing maintained fixtures without clearing existing staging data
+
+Keep the staging smoke users pointed at the seeded staging accounts:
+
+- `DEPLOY_SMOKE_PLAYER_EMAIL=testing+staging-player@boardenthusiasts.com`
+- `DEPLOY_SMOKE_DEVELOPER_EMAIL=testing+staging-developer@boardenthusiasts.com`
+- `DEPLOY_SMOKE_MODERATOR_EMAIL=testing+staging-moderator@boardenthusiasts.com`
+
+Set `DEPLOY_SMOKE_USER_PASSWORD` to the shared password you want the deploy to assign to those seeded staging auth users.
+
 ### OAuth Preparation
 
 Confirm the staging Supabase project has:
@@ -142,6 +158,7 @@ This should:
 
 - provision or validate hosted Supabase schema state
 - provision or validate typed storage buckets
+- seed the hosted staging demo catalog additively when deploying `staging`
 - deploy the Workers API
 - deploy the Pages frontend
 - run the configured hosted smoke checks

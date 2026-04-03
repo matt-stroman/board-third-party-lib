@@ -2736,6 +2736,82 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         stop_frontend_service.assert_not_called()
         stop_backend_service.assert_not_called()
 
+    def test_run_supabase_hosted_demo_seeding_runs_additive_seed_for_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            config = dev.config_from_args(self.create_args(), repo_root)
+            asset_root = repo_root / "frontend" / "public" / "seed-catalog"
+            asset_root.mkdir(parents=True, exist_ok=True)
+
+            env_values = {
+                "SUPABASE_URL": "https://example.supabase.co",
+                "SUPABASE_SECRET_KEY": "service-role-key",
+                "DEPLOY_SMOKE_USER_PASSWORD": "SeedPassword!123",
+                "SUPABASE_AVATARS_BUCKET": "avatars",
+                "SUPABASE_CARD_IMAGES_BUCKET": "card-images",
+                "SUPABASE_HERO_IMAGES_BUCKET": "hero-images",
+                "SUPABASE_LOGO_IMAGES_BUCKET": "logo-images",
+            }
+
+            with mock.patch.object(dev, "run_command") as run_command:
+                dev.run_supabase_hosted_demo_seeding(
+                    config,
+                    target="staging",
+                    env_values=env_values,
+                    subprocess_env={"PATH": os.environ.get("PATH", "")},
+                )
+
+            run_command.assert_called_once_with(
+                [
+                    "npm",
+                    "run",
+                    "seed:migration",
+                    "--",
+                    "--additive",
+                    "--supabase-url",
+                    "https://example.supabase.co",
+                    "--secret-key",
+                    "service-role-key",
+                    "--password",
+                    "SeedPassword!123",
+                    "--asset-root",
+                    str(asset_root.resolve()),
+                    "--avatars-bucket",
+                    "avatars",
+                    "--card-images-bucket",
+                    "card-images",
+                    "--hero-images-bucket",
+                    "hero-images",
+                    "--logo-images-bucket",
+                    "logo-images",
+                ],
+                cwd=repo_root,
+                env=mock.ANY,
+            )
+
+    def test_run_supabase_hosted_demo_seeding_skips_production(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            config = dev.config_from_args(self.create_args(), repo_root)
+
+            with mock.patch.object(dev, "run_command") as run_command:
+                dev.run_supabase_hosted_demo_seeding(
+                    config,
+                    target="production",
+                    env_values={
+                        "SUPABASE_URL": "https://example.supabase.co",
+                        "SUPABASE_SECRET_KEY": "service-role-key",
+                        "DEPLOY_SMOKE_USER_PASSWORD": "SeedPassword!123",
+                        "SUPABASE_AVATARS_BUCKET": "avatars",
+                        "SUPABASE_CARD_IMAGES_BUCKET": "card-images",
+                        "SUPABASE_HERO_IMAGES_BUCKET": "hero-images",
+                        "SUPABASE_LOGO_IMAGES_BUCKET": "logo-images",
+                    },
+                    subprocess_env={},
+                )
+
+            run_command.assert_not_called()
+
     def test_removed_legacy_runtime_commands_are_rejected(self) -> None:
         parser = dev.build_parser()
 
