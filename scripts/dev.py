@@ -2634,6 +2634,7 @@ def build_migration_frontend_environment(
 
     return build_subprocess_env(
         extra={
+            "VITE_APP_ENV": os.environ.get("BOARD_ENTHUSIASTS_APP_ENV", "local"),
             "VITE_API_BASE_URL": config.migration_workers_base_url,
             "VITE_SUPABASE_URL": runtime_env["SUPABASE_URL"],
             "VITE_SUPABASE_PUBLISHABLE_KEY": runtime_env["SUPABASE_PUBLISHABLE_KEY"],
@@ -4345,6 +4346,7 @@ def build_deploy_frontend_environment(env_values: dict[str, str]) -> dict[str, s
 
     return build_subprocess_env(
         extra={
+            "VITE_APP_ENV": env_values["BOARD_ENTHUSIASTS_APP_ENV"],
             "VITE_API_BASE_URL": env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"],
             "VITE_SUPABASE_URL": env_values["SUPABASE_URL"],
             "VITE_SUPABASE_PUBLISHABLE_KEY": env_values["SUPABASE_PUBLISHABLE_KEY"],
