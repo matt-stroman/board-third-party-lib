@@ -282,6 +282,7 @@ LEGACY_WORKERS_DRY_RUN_REQUIRED_ENV_NAMES = (
 DEPLOY_TRANSACTIONAL_STAGES = (
     "supabase_schema",
     "supabase_storage",
+    "supabase_demo_seed",
     "pages_project",
     "workers_deploy",
     "pages_deploy",
@@ -5024,6 +5025,53 @@ def run_supabase_bucket_provisioning(config: DevConfig, *, env_values: dict[str,
     )
 
 
+def run_supabase_hosted_demo_seeding(
+    config: DevConfig,
+    *,
+    target: str,
+    env_values: dict[str, str],
+    subprocess_env: dict[str, str],
+) -> None:
+    """Seed additive hosted demo data for staging without overwriting existing rows."""
+
+    if target != "staging":
+        write_step(f"Skipping hosted demo seeding for {target}")
+        return
+
+    asset_root = (config.repo_root / "frontend" / "public" / "seed-catalog").resolve()
+    if not asset_root.exists():
+        raise DevCliError(f"Migration seed asset root was not found: {asset_root}")
+
+    write_step("Seeding hosted staging demo catalog and smoke users")
+    run_command(
+        [
+            "npm",
+            "run",
+            "seed:migration",
+            "--",
+            "--additive",
+            "--supabase-url",
+            env_values["SUPABASE_URL"],
+            "--secret-key",
+            env_values["SUPABASE_SECRET_KEY"],
+            "--password",
+            env_values["DEPLOY_SMOKE_USER_PASSWORD"],
+            "--asset-root",
+            str(asset_root),
+            "--avatars-bucket",
+            env_values["SUPABASE_AVATARS_BUCKET"],
+            "--card-images-bucket",
+            env_values["SUPABASE_CARD_IMAGES_BUCKET"],
+            "--hero-images-bucket",
+            env_values["SUPABASE_HERO_IMAGES_BUCKET"],
+            "--logo-images-bucket",
+            env_values["SUPABASE_LOGO_IMAGES_BUCKET"],
+        ],
+        cwd=config.repo_root,
+        env=subprocess_env,
+    )
+
+
 def build_deploy_stage_state(
     *,
     target: str,
@@ -5111,6 +5159,10 @@ def get_deploy_stage_failure_guidance(*, stage_name: str, target: str) -> str:
         "supabase_storage": (
             "Bucket provisioning is idempotent and safe to leave in place.\n"
             "You can rerun deploy after fixing the underlying error."
+        ),
+        "supabase_demo_seed": (
+            "Hosted staging demo seeding is additive and rerun-safe for the maintained fixtures.\n"
+            "Fix the seed/auth issue, then rerun deploy; existing staging user data will be preserved."
         ),
         "pages_project": (
             "Cloudflare Pages project creation is safe to leave in place.\n"
@@ -6253,6 +6305,13 @@ def deploy_migration_target(
                 run_supabase_remote_push(config, subprocess_env=subprocess_env)
             elif stage_name == "supabase_storage":
                 run_supabase_bucket_provisioning(config, env_values=env_values, subprocess_env=subprocess_env)
+            elif stage_name == "supabase_demo_seed":
+                run_supabase_hosted_demo_seeding(
+                    config,
+                    target=target,
+                    env_values=env_values,
+                    subprocess_env=subprocess_env,
+                )
             elif stage_name == "pages_project":
                 ensure_cloudflare_pages_project(config, target=target, env=subprocess_env)
             elif stage_name == "workers_deploy":

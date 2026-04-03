@@ -838,6 +838,30 @@ export const migrationSeedUsers: ReadonlyArray<MigrationSeedUserFixture> = [
     boardAvatarUrl: "https://cdn.board.fun/avatars/board_emma_torres.png"
   },
   {
+    userName: "staging.player",
+    email: "testing+staging-player@boardenthusiasts.com",
+    displayName: "Staging Player",
+    firstName: "Staging",
+    lastName: "Player",
+    roles: ["player"]
+  },
+  {
+    userName: "staging.developer",
+    email: "testing+staging-developer@boardenthusiasts.com",
+    displayName: "Staging Developer",
+    firstName: "Staging",
+    lastName: "Developer",
+    roles: ["player", "developer"]
+  },
+  {
+    userName: "staging.moderator",
+    email: "testing+staging-moderator@boardenthusiasts.com",
+    displayName: "Staging Moderator",
+    firstName: "Staging",
+    lastName: "Moderator",
+    roles: ["player", "moderator"]
+  },
+  {
     userName: "olivia.bennett",
     email: "olivia.bennett@boardtpl.local",
     displayName: "Olivia Bennett",
