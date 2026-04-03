@@ -167,6 +167,7 @@ python ./scripts/dev.py deploy --staging
 
 This should:
 
+- push the hosted Supabase auth/provider configuration for staging
 - provision or validate hosted Supabase schema state
 - provision or validate typed storage buckets
 - seed the hosted staging demo catalog additively when deploying `staging`
