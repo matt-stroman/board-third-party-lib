@@ -288,6 +288,24 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertEqual("google-client-id", environment["SUPABASE_AUTH_GOOGLE_CLIENT_ID"])
         self.assertEqual("google-client-secret", environment["SUPABASE_AUTH_GOOGLE_CLIENT_SECRET"])
 
+    def test_build_deploy_frontend_environment_infers_staging_when_explicit_app_env_is_missing(self) -> None:
+        environment = dev.build_deploy_frontend_environment(
+            {
+                "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+                "SUPABASE_URL": "https://example-project.supabase.co",
+                "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
+                "VITE_TURNSTILE_SITE_KEY": "turnstile-site-key",
+                "VITE_LANDING_MODE": "true",
+            }
+        )
+
+        self.assertEqual("staging", environment["VITE_APP_ENV"])
+        self.assertEqual("https://api.staging.boardenthusiasts.com", environment["VITE_API_BASE_URL"])
+        self.assertEqual("https://example-project.supabase.co", environment["VITE_SUPABASE_URL"])
+        self.assertEqual("publishable-key", environment["VITE_SUPABASE_PUBLISHABLE_KEY"])
+        self.assertEqual("turnstile-site-key", environment["VITE_TURNSTILE_SITE_KEY"])
+        self.assertEqual("true", environment["VITE_LANDING_MODE"])
+
     def test_render_supabase_deploy_config_uses_target_auth_urls_and_provider_flags(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = pathlib.Path(temp_dir)

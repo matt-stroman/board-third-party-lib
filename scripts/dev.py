@@ -4344,9 +4344,23 @@ def get_deploy_worker_config_path(config: DevConfig, *, target: str, env_values:
 def build_deploy_frontend_environment(env_values: dict[str, str]) -> dict[str, str]:
     """Build the public frontend runtime environment for deployment builds."""
 
+    resolved_app_env = env_values.get("BOARD_ENTHUSIASTS_APP_ENV", "").strip().lower()
+    if not resolved_app_env:
+        base_url = (
+            env_values.get("BOARD_ENTHUSIASTS_SPA_BASE_URL", "").strip()
+            or env_values.get("BOARD_ENTHUSIASTS_WORKERS_BASE_URL", "").strip()
+        )
+        hostname = urllib.parse.urlparse(base_url).hostname or ""
+        if hostname in {"127.0.0.1", "localhost", "::1"}:
+            resolved_app_env = "local"
+        elif hostname.startswith("staging.") or ".staging." in hostname:
+            resolved_app_env = "staging"
+        else:
+            resolved_app_env = "production"
+
     return build_subprocess_env(
         extra={
-            "VITE_APP_ENV": env_values["BOARD_ENTHUSIASTS_APP_ENV"],
+            "VITE_APP_ENV": resolved_app_env,
             "VITE_API_BASE_URL": env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"],
             "VITE_SUPABASE_URL": env_values["SUPABASE_URL"],
             "VITE_SUPABASE_PUBLISHABLE_KEY": env_values["SUPABASE_PUBLISHABLE_KEY"],
