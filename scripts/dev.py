@@ -257,6 +257,17 @@ FULL_MVP_DEPLOY_SMOKE_REQUIRED_ENV_NAMES = (
     "DEPLOY_SMOKE_MODERATOR_EMAIL",
     "DEPLOY_SMOKE_USER_PASSWORD",
 )
+OPTIONAL_DEPLOY_ENV_NAMES = (
+    "SUPABASE_AUTH_DISCORD_CLIENT_ID",
+    "SUPABASE_AUTH_DISCORD_CLIENT_SECRET",
+    "SUPABASE_AUTH_GITHUB_CLIENT_ID",
+    "SUPABASE_AUTH_GITHUB_CLIENT_SECRET",
+    "SUPABASE_AUTH_GOOGLE_CLIENT_ID",
+    "SUPABASE_AUTH_GOOGLE_CLIENT_SECRET",
+    "VITE_SUPABASE_AUTH_DISCORD_ENABLED",
+    "VITE_SUPABASE_AUTH_GITHUB_ENABLED",
+    "VITE_SUPABASE_AUTH_GOOGLE_ENABLED",
+)
 LEGACY_PAGES_DRY_RUN_REQUIRED_ENV_NAMES = (
     "BOARD_ENTHUSIASTS_WORKERS_BASE_URL",
     "SUPABASE_URL",
@@ -760,7 +771,7 @@ def auto_load_command_environment(
 def require_environment_values(*names: str, context: str) -> dict[str, str]:
     """Resolve required environment variables or raise a user-friendly error."""
 
-    def normalize_required_value(value: str) -> str:
+    def normalize_environment_value(value: str) -> str:
         trimmed = value.strip()
         normalized = trimmed.lower()
         if normalized.startswith("optional-for-") or normalized == "replace-me" or normalized.startswith("replace-with-"):
@@ -770,7 +781,7 @@ def require_environment_values(*names: str, context: str) -> dict[str, str]:
     resolved: dict[str, str] = {}
     missing: list[str] = []
     for name in names:
-        value = normalize_required_value(os.environ.get(name, ""))
+        value = normalize_environment_value(os.environ.get(name, ""))
         if not value:
             missing.append(name)
             continue
@@ -782,6 +793,19 @@ def require_environment_values(*names: str, context: str) -> dict[str, str]:
         )
 
     return resolved
+
+
+def collect_present_environment_values(*names: str) -> dict[str, str]:
+    """Collect optional non-placeholder environment values for the current process."""
+
+    collected: dict[str, str] = {}
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        normalized = value.lower()
+        if not value or normalized == "replace-me" or normalized.startswith("replace-with-") or normalized.startswith("optional-for-"):
+            continue
+        collected[name] = value
+    return collected
 
 
 def get_frontend_oauth_enabled_value(
@@ -5457,10 +5481,13 @@ def run_legacy_staging_dry_run(
         raise DevCliError("Legacy staging dry run requires exactly one of --pages-only or --workers-only.")
 
     if pages_only:
-        env_values = require_environment_values(
-            *LEGACY_PAGES_DRY_RUN_REQUIRED_ENV_NAMES,
-            context="Legacy Pages staging dry run",
-        )
+        env_values = {
+            **collect_present_environment_values(*OPTIONAL_DEPLOY_ENV_NAMES),
+            **require_environment_values(
+                *LEGACY_PAGES_DRY_RUN_REQUIRED_ENV_NAMES,
+                context="Legacy Pages staging dry run",
+            ),
+        }
         write_step("Running legacy Pages staging dry run")
         write_step("Building SPA for Cloudflare Pages")
         run_command(
@@ -5470,10 +5497,13 @@ def run_legacy_staging_dry_run(
         )
         return
 
-    env_values = require_environment_values(
-        *LEGACY_WORKERS_DRY_RUN_REQUIRED_ENV_NAMES,
-        context="Legacy Workers staging dry run",
-    )
+    env_values = {
+        **collect_present_environment_values(*OPTIONAL_DEPLOY_ENV_NAMES),
+        **require_environment_values(
+            *LEGACY_WORKERS_DRY_RUN_REQUIRED_ENV_NAMES,
+            context="Legacy Workers staging dry run",
+        ),
+    }
     subprocess_env = build_subprocess_env(
         extra={
             "CLOUDFLARE_API_TOKEN": env_values["CLOUDFLARE_API_TOKEN"],
@@ -6446,7 +6476,10 @@ def deploy_migration_target(
     ensure_migration_workspace_scaffolding(config)
     install_migration_workspace_dependencies(config)
 
-    env_values = require_environment_values(*DEPLOY_REQUIRED_ENV_NAMES, context=f"{target.title()} deployment")
+    env_values = {
+        **collect_present_environment_values(*OPTIONAL_DEPLOY_ENV_NAMES),
+        **require_environment_values(*DEPLOY_REQUIRED_ENV_NAMES, context=f"{target.title()} deployment"),
+    }
     subprocess_env = build_deploy_subprocess_environment(env_values)
     resolved_source_branch = resolve_deploy_source_branch(config, explicit_source_branch=source_branch)
 

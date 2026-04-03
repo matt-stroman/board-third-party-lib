@@ -225,6 +225,28 @@ class DevCliMigrationHelperTests(unittest.TestCase):
     def test_deploy_required_env_names_include_smoke_password(self) -> None:
         self.assertIn("DEPLOY_SMOKE_USER_PASSWORD", dev.DEPLOY_REQUIRED_ENV_NAMES)
 
+    def test_collect_present_environment_values_ignores_placeholders_and_keeps_oauth_values(self) -> None:
+        with mock.patch.dict(
+            dev.os.environ,
+            {
+                "SUPABASE_AUTH_DISCORD_CLIENT_ID": "discord-client-id",
+                "SUPABASE_AUTH_DISCORD_CLIENT_SECRET": "discord-client-secret",
+                "SUPABASE_AUTH_GITHUB_CLIENT_ID": "github-client-id",
+                "SUPABASE_AUTH_GITHUB_CLIENT_SECRET": "github-client-secret",
+                "VITE_SUPABASE_AUTH_DISCORD_ENABLED": "true",
+                "SUPABASE_AUTH_GOOGLE_CLIENT_ID": "replace-me",
+            },
+            clear=True,
+        ):
+            collected = dev.collect_present_environment_values(*dev.OPTIONAL_DEPLOY_ENV_NAMES)
+
+        self.assertEqual("discord-client-id", collected["SUPABASE_AUTH_DISCORD_CLIENT_ID"])
+        self.assertEqual("discord-client-secret", collected["SUPABASE_AUTH_DISCORD_CLIENT_SECRET"])
+        self.assertEqual("github-client-id", collected["SUPABASE_AUTH_GITHUB_CLIENT_ID"])
+        self.assertEqual("github-client-secret", collected["SUPABASE_AUTH_GITHUB_CLIENT_SECRET"])
+        self.assertEqual("true", collected["VITE_SUPABASE_AUTH_DISCORD_ENABLED"])
+        self.assertNotIn("SUPABASE_AUTH_GOOGLE_CLIENT_ID", collected)
+
     def test_manual_deploy_workflow_exports_and_writes_smoke_credentials(self) -> None:
         workflow_path = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "manual-deploy.yml"
         workflow = workflow_path.read_text(encoding="utf-8")
@@ -324,6 +346,52 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             dev.DEPLOY_TRANSACTIONAL_STAGES.index("supabase_config"),
             dev.DEPLOY_TRANSACTIONAL_STAGES.index("supabase_schema"),
         )
+
+    def test_deploy_env_resolution_keeps_optional_oauth_values(self) -> None:
+        with mock.patch.dict(
+            dev.os.environ,
+            {
+                "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
+                "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+                "SUPABASE_PROJECT_REF": "project-ref",
+                "SUPABASE_URL": "https://project-ref.supabase.co",
+                "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
+                "SUPABASE_SECRET_KEY": "secret-key",
+                "SUPABASE_DB_PASSWORD": "db-password",
+                "SUPABASE_ACCESS_TOKEN": "supabase-access-token",
+                "SUPABASE_AVATARS_BUCKET": "avatars",
+                "SUPABASE_CARD_IMAGES_BUCKET": "cards",
+                "SUPABASE_HERO_IMAGES_BUCKET": "heroes",
+                "SUPABASE_LOGO_IMAGES_BUCKET": "logos",
+                "CLOUDFLARE_ACCOUNT_ID": "account-id",
+                "CLOUDFLARE_API_TOKEN": "cloudflare-token",
+                "VITE_TURNSTILE_SITE_KEY": "turnstile-site-key",
+                "TURNSTILE_SECRET_KEY": "turnstile-secret-key",
+                "BREVO_API_KEY": "brevo-api-key",
+                "BREVO_SIGNUPS_LIST_ID": "list-id",
+                "ALLOWED_WEB_ORIGINS": "https://staging.boardenthusiasts.com",
+                "SUPPORT_REPORT_RECIPIENT": "support@boardenthusiasts.com",
+                "SUPPORT_REPORT_SENDER_EMAIL": "noreply@boardenthusiasts.com",
+                "SUPPORT_REPORT_SENDER_NAME": "Board Enthusiasts",
+                "DEPLOY_SMOKE_SECRET": "deploy-smoke-secret",
+                "DEPLOY_SMOKE_USER_PASSWORD": "deploy-smoke-password",
+                "VITE_LANDING_MODE": "false",
+                "SUPABASE_AUTH_DISCORD_CLIENT_ID": "discord-client-id",
+                "SUPABASE_AUTH_DISCORD_CLIENT_SECRET": "discord-client-secret",
+                "SUPABASE_AUTH_GITHUB_CLIENT_ID": "github-client-id",
+                "SUPABASE_AUTH_GITHUB_CLIENT_SECRET": "github-client-secret",
+            },
+            clear=True,
+        ):
+            env_values = {
+                **dev.collect_present_environment_values(*dev.OPTIONAL_DEPLOY_ENV_NAMES),
+                **dev.require_environment_values(*dev.DEPLOY_REQUIRED_ENV_NAMES, context="Staging deployment"),
+            }
+
+        self.assertEqual("discord-client-id", env_values["SUPABASE_AUTH_DISCORD_CLIENT_ID"])
+        self.assertEqual("discord-client-secret", env_values["SUPABASE_AUTH_DISCORD_CLIENT_SECRET"])
+        self.assertEqual("github-client-id", env_values["SUPABASE_AUTH_GITHUB_CLIENT_ID"])
+        self.assertEqual("github-client-secret", env_values["SUPABASE_AUTH_GITHUB_CLIENT_SECRET"])
 
     def test_infer_supabase_url_from_project_ref_for_hosted_env(self) -> None:
         with mock.patch.dict(
@@ -2284,11 +2352,20 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             "VITE_TURNSTILE_SITE_KEY": "turnstile-site-key",
             "VITE_LANDING_MODE": "true",
         }
+        optional_env_values = {
+            "SUPABASE_AUTH_DISCORD_CLIENT_ID": "discord-client-id",
+            "SUPABASE_AUTH_GITHUB_CLIENT_ID": "github-client-id",
+        }
+        expected_env_values = {**optional_env_values, **env_values}
 
         with mock.patch.object(
             dev,
             "require_environment_values",
             return_value=env_values,
+        ), mock.patch.object(
+            dev,
+            "collect_present_environment_values",
+            return_value=optional_env_values,
         ), mock.patch.object(
             dev,
             "build_workspace_npm_command",
@@ -2304,7 +2381,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             script_name="build",
             workspace_name=config.migration_spa_workspace_name,
         )
-        build_deploy_frontend_environment.assert_called_once_with(env_values)
+        build_deploy_frontend_environment.assert_called_once_with(expected_env_values)
         run_command.assert_called_once_with(
             ["npm", "run", "build", "--workspace", "@board-enthusiasts/spa"],
             cwd=config.repo_root,
@@ -2329,11 +2406,22 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             "SUPPORT_REPORT_SENDER_EMAIL": "noreply@boardenthusiasts.com",
             "SUPPORT_REPORT_SENDER_NAME": "Board Enthusiasts",
         }
+        optional_env_values = {
+            "SUPABASE_AUTH_DISCORD_CLIENT_ID": "discord-client-id",
+            "SUPABASE_AUTH_DISCORD_CLIENT_SECRET": "discord-client-secret",
+            "SUPABASE_AUTH_GITHUB_CLIENT_ID": "github-client-id",
+            "SUPABASE_AUTH_GITHUB_CLIENT_SECRET": "github-client-secret",
+        }
+        expected_env_values = {**optional_env_values, **env_values}
 
         with mock.patch.object(
             dev,
             "require_environment_values",
             return_value=env_values,
+        ), mock.patch.object(
+            dev,
+            "collect_present_environment_values",
+            return_value=optional_env_values,
         ), mock.patch.object(
             dev,
             "build_subprocess_env",
@@ -2346,7 +2434,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             dev.run_legacy_staging_dry_run(config, pages_only=False, workers_only=True)
 
         build_subprocess_env.assert_called_once()
-        get_deploy_worker_config_path.assert_called_once_with(config, target="staging", env_values=env_values)
+        get_deploy_worker_config_path.assert_called_once_with(config, target="staging", env_values=expected_env_values)
         run_command.assert_called_once_with(
             ["npx", "wrangler", "deploy", "--dry-run", "--config", "generated-wrangler.jsonc"],
             cwd=config.repo_root,
