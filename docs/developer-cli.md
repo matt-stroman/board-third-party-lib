@@ -423,12 +423,17 @@ Typical Environment `secrets`:
 
 Hosted social-auth values can also be provided there when needed:
 
+- `SUPABASE_AUTH_DISCORD_CLIENT_ID`
+- `SUPABASE_AUTH_DISCORD_CLIENT_SECRET`
 - `SUPABASE_AUTH_GITHUB_CLIENT_ID`
 - `SUPABASE_AUTH_GITHUB_CLIENT_SECRET`
 - `SUPABASE_AUTH_GOOGLE_CLIENT_ID`
 - `SUPABASE_AUTH_GOOGLE_CLIENT_SECRET`
 
-When the root env file includes either provider client ID, the maintained CLI now passes matching frontend runtime flags into the SPA build so the sign-in page shows only the enabled Google and GitHub buttons.
+When the root env file includes a provider client ID, the maintained CLI now:
+
+- passes the matching frontend runtime flag into the SPA build so the sign-in page shows only the enabled provider buttons
+- pushes the hosted Supabase auth/provider configuration for the target so redirect URLs and enabled social providers stay aligned with the checked-in deploy env file
 
 ### Check local tool and environment status
 

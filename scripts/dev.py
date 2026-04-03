@@ -33,6 +33,7 @@ import ssl
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -280,6 +281,7 @@ LEGACY_WORKERS_DRY_RUN_REQUIRED_ENV_NAMES = (
     "SUPPORT_REPORT_SENDER_NAME",
 )
 DEPLOY_TRANSACTIONAL_STAGES = (
+    "supabase_config",
     "supabase_schema",
     "supabase_storage",
     "supabase_demo_seed",
@@ -4337,10 +4339,90 @@ def build_deploy_subprocess_environment(env_values: dict[str, str]) -> dict[str,
     return build_subprocess_env(
         extra={
             "SUPABASE_ACCESS_TOKEN": env_values["SUPABASE_ACCESS_TOKEN"],
+            "SUPABASE_AUTH_DISCORD_CLIENT_ID": env_values.get("SUPABASE_AUTH_DISCORD_CLIENT_ID", ""),
+            "SUPABASE_AUTH_DISCORD_CLIENT_SECRET": env_values.get("SUPABASE_AUTH_DISCORD_CLIENT_SECRET", ""),
+            "SUPABASE_AUTH_GITHUB_CLIENT_ID": env_values.get("SUPABASE_AUTH_GITHUB_CLIENT_ID", ""),
+            "SUPABASE_AUTH_GITHUB_CLIENT_SECRET": env_values.get("SUPABASE_AUTH_GITHUB_CLIENT_SECRET", ""),
+            "SUPABASE_AUTH_GOOGLE_CLIENT_ID": env_values.get("SUPABASE_AUTH_GOOGLE_CLIENT_ID", ""),
+            "SUPABASE_AUTH_GOOGLE_CLIENT_SECRET": env_values.get("SUPABASE_AUTH_GOOGLE_CLIENT_SECRET", ""),
             "CLOUDFLARE_API_TOKEN": env_values["CLOUDFLARE_API_TOKEN"],
             "CLOUDFLARE_ACCOUNT_ID": env_values["CLOUDFLARE_ACCOUNT_ID"],
         }
     )
+
+
+def build_supabase_auth_redirect_urls(env_values: dict[str, str]) -> list[str]:
+    """Build the hosted auth redirect URLs allowed for the current deploy target."""
+
+    urls: list[str] = []
+
+    def append_redirects(origin: str) -> None:
+        normalized = origin.strip().rstrip("/")
+        if not normalized:
+            return
+
+        parsed = urllib.parse.urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.path not in {"", "/"}:
+            return
+
+        for candidate in (
+            normalized,
+            f"{normalized}/auth/signin",
+            f"{normalized}/auth/signin?mode=recovery",
+        ):
+            if candidate not in urls:
+                urls.append(candidate)
+
+    append_redirects(env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"])
+    for origin in env_values.get("ALLOWED_WEB_ORIGINS", "").split(","):
+        append_redirects(origin)
+
+    return urls
+
+
+def render_supabase_deploy_config(config: DevConfig, *, env_values: dict[str, str]) -> str:
+    """Render a target-specific Supabase config for hosted auth/provider deployment."""
+
+    config_path = config.repo_root / config.supabase_root / "config.toml"
+    if not config_path.exists():
+        raise DevCliError(f"Supabase config was not found: {config_path}")
+
+    rendered = config_path.read_text(encoding="utf-8")
+    site_url = env_values["BOARD_ENTHUSIASTS_SPA_BASE_URL"].strip().rstrip("/")
+    redirect_urls = build_supabase_auth_redirect_urls(env_values)
+    redirect_block = "additional_redirect_urls = [\n" + "".join(f'  "{url}",\n' for url in redirect_urls) + "]"
+
+    rendered, site_url_count = re.subn(
+        r'(?m)^site_url = ".*"$',
+        f'site_url = "{site_url}"',
+        rendered,
+        count=1,
+    )
+    if site_url_count != 1:
+        raise DevCliError(f"Unable to render hosted Supabase site_url from {config_path}.")
+
+    rendered, redirect_count = re.subn(
+        r"(?ms)^additional_redirect_urls = \[[^\]]*\]",
+        redirect_block,
+        rendered,
+        count=1,
+    )
+    if redirect_count != 1:
+        raise DevCliError(f"Unable to render hosted Supabase additional_redirect_urls from {config_path}.")
+
+    for provider in ("github", "discord", "google"):
+        enabled_value = "true" if env_values.get(f"SUPABASE_AUTH_{provider.upper()}_CLIENT_ID", "").strip() else "false"
+        rendered, provider_count = re.subn(
+            rf"(\[auth\.external\.{provider}\]\s+enabled = )(?:true|false)",
+            rf"\1{enabled_value}",
+            rendered,
+            count=1,
+            flags=re.DOTALL,
+        )
+        if provider_count != 1:
+            raise DevCliError(f"Unable to render hosted Supabase {provider} provider configuration from {config_path}.")
+
+    return rendered
 
 
 def get_git_repository_fingerprint(repo_root: Path) -> dict[str, object]:
@@ -5029,6 +5111,34 @@ def run_supabase_remote_push(config: DevConfig, *, subprocess_env: dict[str, str
     )
 
 
+def run_supabase_remote_config_push(config: DevConfig, *, env_values: dict[str, str], subprocess_env: dict[str, str]) -> None:
+    """Push the hosted Supabase auth/provider configuration for the current target."""
+
+    write_step("Pushing Supabase hosted auth configuration")
+    rendered_config = render_supabase_deploy_config(config, env_values=env_values)
+
+    with tempfile.TemporaryDirectory(prefix="board-enthusiasts-supabase-config-") as temp_dir:
+        temp_root = Path(temp_dir)
+        shutil.copytree(config.repo_root / config.supabase_root, temp_root / "supabase")
+        (temp_root / "supabase" / "config.toml").write_text(rendered_config, encoding="utf-8")
+
+        run_command(
+            [
+                "npx",
+                "supabase",
+                "config",
+                "push",
+                "--project-ref",
+                env_values["SUPABASE_PROJECT_REF"],
+                "--workdir",
+                str(temp_root),
+                "--yes",
+            ],
+            cwd=temp_root,
+            env=subprocess_env,
+        )
+
+
 def run_supabase_bucket_provisioning(config: DevConfig, *, env_values: dict[str, str], subprocess_env: dict[str, str]) -> None:
     """Provision hosted Supabase storage buckets without seeding demo data."""
 
@@ -5185,6 +5295,10 @@ def get_deploy_stage_failure_guidance(*, stage_name: str, target: str) -> str:
     """Return guidance for a failed deployment stage."""
 
     stage_guidance = {
+        "supabase_config": (
+            "Hosted Supabase auth/provider configuration is rerun-safe.\n"
+            "After fixing the missing credentials or redirect settings, rerun deploy to push the updated config."
+        ),
         "supabase_schema": (
             "Hosted Supabase migrations are not automatically rolled back.\n"
             "If this stage failed after partially applying migrations, inspect the remote migration history in Supabase before rerunning."
@@ -5884,7 +5998,8 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
     created_title_id = ""
     created_report_id = ""
     second_created_report_id = ""
-    created_release_id = ""
+    rollback_release_id = ""
+    release_under_test_id = ""
     try:
         created_studio_payload = request_json(
             url=f"{base_url}/studios",
@@ -5942,10 +6057,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
             method="POST",
             headers=developer_headers,
             payload={
-                "slug": f"deploy-smoke-title-{unique_suffix}",
                 "contentKind": "game",
-                "lifecycleStatus": "testing",
-                "visibility": "listed",
                 "metadata": {
                     "displayName": "Deploy Smoke Title",
                     "shortDescription": "Temporary hosted deploy-smoke title.",
@@ -5971,10 +6083,8 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
             method="PUT",
             headers=developer_headers,
             payload={
-                "slug": f"deploy-smoke-title-{unique_suffix}",
                 "contentKind": "game",
-                "lifecycleStatus": "testing",
-                "visibility": "listed",
+                "visibility": "unlisted",
             },
         )
         revised_title_payload = request_json(
@@ -6025,37 +6135,73 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
             headers=developer_headers,
             payload={
                 "version": "0.1.0-smoke",
-                "metadataRevisionNumber": current_metadata_revision,
+                "status": "testing",
                 "acquisitionUrl": "https://example.invalid/releases/0.1.0-smoke",
             },
         )
         if not isinstance(created_release_payload, dict) or not isinstance(created_release_payload.get("release"), dict):
             raise DevCliError("Workers smoke failed: title release create did not return a release payload.")
-        created_release_id = str(created_release_payload["release"].get("id", "")).strip()
-        if not created_release_id:
+        rollback_release_id = str(created_release_payload["release"].get("id", "")).strip()
+        if not rollback_release_id:
             raise DevCliError("Workers smoke failed: title release create did not return a release id.")
+
+        second_release_payload = request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases",
+            method="POST",
+            headers=developer_headers,
+            payload={
+                "version": "0.1.1-smoke",
+                "status": "production",
+                "acquisitionUrl": "https://example.invalid/releases/0.1.1-smoke",
+            },
+        )
+        if not isinstance(second_release_payload, dict) or not isinstance(second_release_payload.get("release"), dict):
+            raise DevCliError("Workers smoke failed: second title release create did not return a release payload.")
+        release_under_test_id = str(second_release_payload["release"].get("id", "")).strip()
+        if not release_under_test_id:
+            raise DevCliError("Workers smoke failed: second title release create did not return a release id.")
+
+        release_list_payload = request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases",
+            headers=developer_headers,
+        )
+        if not isinstance(release_list_payload, dict) or not isinstance(release_list_payload.get("releases"), list):
+            raise DevCliError("Workers smoke failed: title releases list did not return a release list.")
+        release_versions = {
+            str(entry.get("version", "")).strip()
+            for entry in release_list_payload["releases"]
+            if isinstance(entry, dict)
+        }
+        if "0.1.0-smoke" not in release_versions or "0.1.1-smoke" not in release_versions:
+            raise DevCliError("Workers smoke failed: title releases list did not preserve both release versions.")
+
         request_json(
-            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(created_release_id)}",
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(release_under_test_id)}",
             method="PUT",
             headers=developer_headers,
             payload={
                 "version": "0.1.1-smoke",
-                "metadataRevisionNumber": current_metadata_revision,
+                "status": "production",
                 "acquisitionUrl": "https://example.invalid/releases/0.1.1-smoke",
             },
         )
         request_json(
-            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(created_release_id)}/publish",
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(rollback_release_id)}/activate",
             method="POST",
             headers=developer_headers,
         )
         request_json(
-            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(created_release_id)}/activate",
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/activate",
             method="POST",
             headers=developer_headers,
         )
         request_json(
-            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(created_release_id)}/withdraw",
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/archive",
+            method="POST",
+            headers=developer_headers,
+        )
+        request_json(
+            url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/unarchive",
             method="POST",
             headers=developer_headers,
         )
@@ -6333,7 +6479,9 @@ def deploy_migration_target(
             continue
 
         try:
-            if stage_name == "supabase_schema":
+            if stage_name == "supabase_config":
+                run_supabase_remote_config_push(config, env_values=env_values, subprocess_env=subprocess_env)
+            elif stage_name == "supabase_schema":
                 run_supabase_link(config, env_values=env_values, subprocess_env=subprocess_env)
                 run_supabase_remote_push(config, subprocess_env=subprocess_env)
             elif stage_name == "supabase_storage":

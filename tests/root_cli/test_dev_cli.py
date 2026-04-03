@@ -229,6 +229,10 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         workflow_path = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "manual-deploy.yml"
         workflow = workflow_path.read_text(encoding="utf-8")
 
+        self.assertIn("SUPABASE_AUTH_DISCORD_CLIENT_ID: ${{ vars.SUPABASE_AUTH_DISCORD_CLIENT_ID }}", workflow)
+        self.assertIn("SUPABASE_AUTH_DISCORD_CLIENT_SECRET: ${{ secrets.SUPABASE_AUTH_DISCORD_CLIENT_SECRET }}", workflow)
+        self.assertIn('"SUPABASE_AUTH_DISCORD_CLIENT_ID",', workflow)
+        self.assertIn('"SUPABASE_AUTH_DISCORD_CLIENT_SECRET",', workflow)
         self.assertIn("DEPLOY_SMOKE_PLAYER_EMAIL: ${{ vars.DEPLOY_SMOKE_PLAYER_EMAIL }}", workflow)
         self.assertIn("DEPLOY_SMOKE_DEVELOPER_EMAIL: ${{ vars.DEPLOY_SMOKE_DEVELOPER_EMAIL }}", workflow)
         self.assertIn("DEPLOY_SMOKE_MODERATOR_EMAIL: ${{ vars.DEPLOY_SMOKE_MODERATOR_EMAIL }}", workflow)
@@ -239,6 +243,87 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertIn('"DEPLOY_SMOKE_MODERATOR_EMAIL",', workflow)
         self.assertIn('"DEPLOY_SMOKE_SECRET",', workflow)
         self.assertIn('"DEPLOY_SMOKE_USER_PASSWORD",', workflow)
+
+    def test_build_deploy_subprocess_environment_includes_supabase_oauth_credentials(self) -> None:
+        environment = dev.build_deploy_subprocess_environment(
+            {
+                "SUPABASE_ACCESS_TOKEN": "supabase-access-token",
+                "SUPABASE_AUTH_DISCORD_CLIENT_ID": "discord-client-id",
+                "SUPABASE_AUTH_DISCORD_CLIENT_SECRET": "discord-client-secret",
+                "SUPABASE_AUTH_GITHUB_CLIENT_ID": "github-client-id",
+                "SUPABASE_AUTH_GITHUB_CLIENT_SECRET": "github-client-secret",
+                "SUPABASE_AUTH_GOOGLE_CLIENT_ID": "google-client-id",
+                "SUPABASE_AUTH_GOOGLE_CLIENT_SECRET": "google-client-secret",
+                "CLOUDFLARE_API_TOKEN": "cloudflare-api-token",
+                "CLOUDFLARE_ACCOUNT_ID": "cloudflare-account-id",
+            }
+        )
+
+        self.assertEqual("discord-client-id", environment["SUPABASE_AUTH_DISCORD_CLIENT_ID"])
+        self.assertEqual("discord-client-secret", environment["SUPABASE_AUTH_DISCORD_CLIENT_SECRET"])
+        self.assertEqual("github-client-id", environment["SUPABASE_AUTH_GITHUB_CLIENT_ID"])
+        self.assertEqual("github-client-secret", environment["SUPABASE_AUTH_GITHUB_CLIENT_SECRET"])
+        self.assertEqual("google-client-id", environment["SUPABASE_AUTH_GOOGLE_CLIENT_ID"])
+        self.assertEqual("google-client-secret", environment["SUPABASE_AUTH_GOOGLE_CLIENT_SECRET"])
+
+    def test_render_supabase_deploy_config_uses_target_auth_urls_and_provider_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            config = dev.config_from_args(self.create_args(), repo_root)
+            supabase_root = repo_root / config.supabase_root
+            supabase_root.mkdir(parents=True, exist_ok=True)
+            (supabase_root / "config.toml").write_text(
+                "\n".join(
+                    [
+                        "[auth]",
+                        'site_url = "http://127.0.0.1:4173"',
+                        "additional_redirect_urls = [",
+                        '  "http://127.0.0.1:4173",',
+                        "]",
+                        "",
+                        "[auth.external.github]",
+                        "enabled = true",
+                        'client_id = "env(SUPABASE_AUTH_GITHUB_CLIENT_ID)"',
+                        'secret = "env(SUPABASE_AUTH_GITHUB_CLIENT_SECRET)"',
+                        "",
+                        "[auth.external.discord]",
+                        "enabled = true",
+                        'client_id = "env(SUPABASE_AUTH_DISCORD_CLIENT_ID)"',
+                        'secret = "env(SUPABASE_AUTH_DISCORD_CLIENT_SECRET)"',
+                        "",
+                        "[auth.external.google]",
+                        "enabled = false",
+                        'client_id = "env(SUPABASE_AUTH_GOOGLE_CLIENT_ID)"',
+                        'secret = "env(SUPABASE_AUTH_GOOGLE_CLIENT_SECRET)"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            rendered = dev.render_supabase_deploy_config(
+                config,
+                env_values={
+                    "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
+                    "ALLOWED_WEB_ORIGINS": "http://localhost:4173,https://staging.boardenthusiasts.com,https://www.boardenthusiasts.com",
+                    "SUPABASE_AUTH_DISCORD_CLIENT_ID": "discord-client-id",
+                    "SUPABASE_AUTH_GITHUB_CLIENT_ID": "github-client-id",
+                    "SUPABASE_AUTH_GOOGLE_CLIENT_ID": "",
+                },
+            )
+
+        self.assertIn('site_url = "https://staging.boardenthusiasts.com"', rendered)
+        self.assertIn('"https://staging.boardenthusiasts.com/auth/signin"', rendered)
+        self.assertIn('"https://www.boardenthusiasts.com/auth/signin?mode=recovery"', rendered)
+        self.assertIn("[auth.external.github]\nenabled = true", rendered)
+        self.assertIn("[auth.external.discord]\nenabled = true", rendered)
+        self.assertIn("[auth.external.google]\nenabled = false", rendered)
+
+    def test_deploy_stage_list_includes_supabase_config_before_schema(self) -> None:
+        self.assertIn("supabase_config", dev.DEPLOY_TRANSACTIONAL_STAGES)
+        self.assertLess(
+            dev.DEPLOY_TRANSACTIONAL_STAGES.index("supabase_config"),
+            dev.DEPLOY_TRANSACTIONAL_STAGES.index("supabase_schema"),
+        )
 
     def test_infer_supabase_url_from_project_ref_for_hosted_env(self) -> None:
         with mock.patch.dict(
@@ -1092,6 +1177,100 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             ],
             wait_for_pages_shell.call_args_list,
         )
+
+    def test_run_full_mvp_workers_deploy_smoke_uses_current_title_and_release_routes(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
+            "DEPLOY_SMOKE_PLAYER_EMAIL": "testing+staging-player@boardenthusiasts.com",
+            "DEPLOY_SMOKE_DEVELOPER_EMAIL": "testing+staging-developer@boardenthusiasts.com",
+            "DEPLOY_SMOKE_MODERATOR_EMAIL": "testing+staging-moderator@boardenthusiasts.com",
+            "DEPLOY_SMOKE_USER_PASSWORD": "shared-password",
+        }
+        request_calls: list[dict[str, object | None]] = []
+        release_create_count = 0
+        report_create_count = 0
+
+        def fake_request_json(*, url: str, method: str = "GET", headers: dict[str, str] | None = None, payload: object = None, **_: object) -> object:
+            nonlocal release_create_count, report_create_count
+            request_calls.append({"url": url, "method": method, "headers": headers, "payload": payload})
+
+            if url.endswith("/health/ready"):
+                return {"status": "ready"}
+            if url == "https://api.staging.boardenthusiasts.com/":
+                return {"service": "board-enthusiasts-workers-api"}
+            if url.endswith("/genres"):
+                return {"genres": [{"slug": "utility"}]}
+            if url.endswith("/age-rating-authorities"):
+                return {"ageRatingAuthorities": [{"code": "ESRB"}]}
+            if "/catalog?pageNumber=1&pageSize=4&sort=title-asc" in url:
+                return {"titles": [{"id": "public-title", "slug": "lantern-drift", "studioSlug": "blue-harbor-games"}]}
+            if url.endswith("/identity/me/notifications"):
+                return {"notifications": [{"id": "notification-1"}]}
+            if url.endswith("/developer/studios"):
+                return {"studios": []}
+            if url.endswith("/studios") and method == "POST":
+                return {"studio": {"id": "studio-1"}}
+            if url.endswith("/links") and method == "POST":
+                return {"link": {"id": "link-1"}}
+            if url.endswith("/developer/studios/studio-1/titles") and method == "POST":
+                return {"title": {"id": "title-1"}}
+            if url.endswith("/metadata/current") and method == "PUT":
+                return {"title": {"currentMetadataRevision": 2}}
+            if url.endswith("/releases") and method == "POST":
+                release_create_count += 1
+                return {"release": {"id": f"release-{release_create_count}"}}
+            if url.endswith("/releases") and method == "GET":
+                return {"releases": [{"version": "0.1.0-smoke"}, {"version": "0.1.1-smoke"}]}
+            if url.endswith("/player/reports") and method == "POST":
+                report_create_count += 1
+                return {"report": {"id": f"report-{report_create_count}"}}
+            if "/moderation/developers?search=" in url:
+                return {
+                    "developers": [
+                        {
+                            "email": "testing+staging-developer@boardenthusiasts.com",
+                            "developerSubject": "developer-subject-1",
+                        }
+                    ]
+                }
+            return {}
+
+        with (
+            mock.patch.object(dev, "wait_for_workers_deploy_smoke_base_url"),
+            mock.patch.object(
+                dev,
+                "fetch_supabase_access_token",
+                side_effect=["player-token", "developer-token", "moderator-token"],
+            ),
+            mock.patch.object(dev, "request_json", side_effect=fake_request_json),
+            mock.patch.object(dev.time, "time", return_value=1773474581),
+        ):
+            dev.run_full_mvp_workers_deploy_smoke(target="staging", env_values=env_values)
+
+        title_update_call = next(
+            call
+            for call in request_calls
+            if call["url"] == "https://api.staging.boardenthusiasts.com/developer/titles/title-1" and call["method"] == "PUT"
+        )
+        self.assertEqual({"contentKind": "game", "visibility": "unlisted"}, title_update_call["payload"])
+
+        title_create_call = next(
+            call
+            for call in request_calls
+            if call["url"] == "https://api.staging.boardenthusiasts.com/developer/studios/studio-1/titles" and call["method"] == "POST"
+        )
+        self.assertNotIn("visibility", title_create_call["payload"])
+        self.assertNotIn("lifecycleStatus", title_create_call["payload"])
+
+        requested_urls = [str(call["url"]) for call in request_calls]
+        self.assertIn("https://api.staging.boardenthusiasts.com/developer/titles/title-1/activate", requested_urls)
+        self.assertIn("https://api.staging.boardenthusiasts.com/developer/titles/title-1/archive", requested_urls)
+        self.assertIn("https://api.staging.boardenthusiasts.com/developer/titles/title-1/unarchive", requested_urls)
+        self.assertNotIn("https://api.staging.boardenthusiasts.com/developer/titles/title-1/releases/release-1/publish", requested_urls)
+        self.assertNotIn("https://api.staging.boardenthusiasts.com/developer/titles/title-1/releases/release-1/withdraw", requested_urls)
 
     def test_has_local_required_schema_includes_marketing_contacts(self) -> None:
         runtime_env = {
