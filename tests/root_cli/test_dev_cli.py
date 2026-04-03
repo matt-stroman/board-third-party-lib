@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -965,7 +966,50 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 env_values=env_values,
             )
 
-        self.assertIn("Full-MVP deploy smoke requires smoke-account credentials", str(raised.exception))
+        self.assertIn("Full-MVP deploy smoke requires the following environment values", str(raised.exception))
+
+    def test_run_workers_deploy_smoke_loads_full_mvp_smoke_accounts_from_process_environment(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
+            "DEPLOY_SMOKE_USER_PASSWORD": "shared-password",
+            "VITE_LANDING_MODE": "false",
+        }
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "DEPLOY_SMOKE_PLAYER_EMAIL": "testing+staging-player@boardenthusiasts.com",
+                    "DEPLOY_SMOKE_DEVELOPER_EMAIL": "testing+staging-developer@boardenthusiasts.com",
+                    "DEPLOY_SMOKE_MODERATOR_EMAIL": "testing+staging-moderator@boardenthusiasts.com",
+                    "DEPLOY_SMOKE_USER_PASSWORD": "shared-password",
+                },
+                clear=False,
+            ),
+            mock.patch.object(dev, "run_full_mvp_workers_deploy_smoke") as run_full_mvp_workers_deploy_smoke,
+        ):
+            dev.run_workers_deploy_smoke(
+                dev.config_from_args(self.create_args(), pathlib.Path.cwd()),
+                target="staging",
+                env_values=env_values,
+            )
+
+        forwarded_env_values = run_full_mvp_workers_deploy_smoke.call_args.kwargs["env_values"]
+        self.assertEqual(
+            "testing+staging-player@boardenthusiasts.com",
+            forwarded_env_values["DEPLOY_SMOKE_PLAYER_EMAIL"],
+        )
+        self.assertEqual(
+            "testing+staging-developer@boardenthusiasts.com",
+            forwarded_env_values["DEPLOY_SMOKE_DEVELOPER_EMAIL"],
+        )
+        self.assertEqual(
+            "testing+staging-moderator@boardenthusiasts.com",
+            forwarded_env_values["DEPLOY_SMOKE_MODERATOR_EMAIL"],
+        )
 
     def test_run_pages_deploy_smoke_checks_full_mvp_routes_when_landing_disabled(self) -> None:
         env_values = {

@@ -5541,6 +5541,26 @@ def require_full_mvp_deploy_smoke_values(env_values: dict[str, str]) -> dict[str
     return resolved
 
 
+def build_workers_deploy_smoke_environment(env_values: dict[str, str]) -> dict[str, str]:
+    """Return the environment mapping required for the post-deploy Workers smoke.
+
+    Landing-mode smoke uses only the values already present in the deploy environment.
+    Full-MVP smoke additionally needs the staged smoke-account credentials, which are
+    intentionally kept outside the main deploy fingerprint and resolved on demand.
+    """
+
+    if is_landing_mode_enabled(env_values):
+        return dict(env_values)
+
+    return {
+        **env_values,
+        **require_environment_values(
+            *FULL_MVP_DEPLOY_SMOKE_REQUIRED_ENV_NAMES,
+            context="Full-MVP deploy smoke",
+        ),
+    }
+
+
 def run_landing_workers_deploy_smoke(*, target: str, env_values: dict[str, str]) -> None:
     """Exercise the hosted landing-page Worker routes and external integrations."""
 
@@ -6072,12 +6092,13 @@ def run_workers_deploy_smoke(config: DevConfig, *, target: str, env_values: dict
     """Exercise the hosted Worker directly after deploy and verify the active product mode."""
 
     del config
+    smoke_env_values = build_workers_deploy_smoke_environment(env_values)
     write_step("Running post-deploy Workers smoke")
-    if is_landing_mode_enabled(env_values):
-        run_landing_workers_deploy_smoke(target=target, env_values=env_values)
+    if is_landing_mode_enabled(smoke_env_values):
+        run_landing_workers_deploy_smoke(target=target, env_values=smoke_env_values)
         return
 
-    run_full_mvp_workers_deploy_smoke(target=target, env_values=env_values)
+    run_full_mvp_workers_deploy_smoke(target=target, env_values=smoke_env_values)
 
 
 def is_expected_pages_shell_html(html: str) -> bool:
