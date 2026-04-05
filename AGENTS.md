@@ -1,6 +1,6 @@
 # Board Enthusiasts
 
-This repository is intended to house a full solution (database, business logic, web API, and front end user interface) for an index which exposes third party games and apps for the [Board](https://board.fun/) ecosystem to players.
+This repository is intended to house a full solution (database, business logic, web API, and front end user interfaces) for an index which exposes third party games and apps for the [Board](https://board.fun/) ecosystem to players.
 
 ## Background
 
@@ -33,7 +33,7 @@ Board has also not yet provided a monetization solution for third party develope
 
 ## Repository Structure
 
-This repository houses the API, backend, and frontend for the Board Enthusiasts index as git submodules:
+This repository houses the API, backend, and frontend surfaces for the Board Enthusiasts index as git submodules:
 
 ### API
 
@@ -52,6 +52,12 @@ A Cloudflare Workers API with Supabase-backed auth, database, and storage.
 Path `frontend/`
 
 A React + TypeScript SPA built with Vite.
+
+### BE Home
+
+Path: `be-home/`
+
+A Unity-based on-Board app that consumes the BE API so players can browse titles directly on Board.
 
 ## Technologies, Documentation, and Planning
 
@@ -74,7 +80,7 @@ A React + TypeScript SPA built with Vite.
 - New backend behavior must start with failing unit/integration tests before production code is added.
 - When refactoring, do not leave commented out code or stale/unused code. That can always be recovered via version history. Prefer keeping the codebase current and clean.
 - Root developer automation must be exposed through `python ./scripts/dev.py ...`; do not require contributors to use ad hoc submodule-local entrypoints for routine setup, test, or sync workflows.
-- Keep the maintained stack rooted in the active workspace and submodule layout: backend-owned runtime code in `backend/`, frontend-owned runtime code in `frontend/`, and shared root orchestration in `python ./scripts/dev.py ...`.
+- Keep the maintained stack rooted in the active workspace and submodule layout: backend-owned runtime code in `backend/`, web frontend runtime code in `frontend/`, on-Board frontend runtime code in `be-home/`, and shared root orchestration in `python ./scripts/dev.py ...`.
 - Avoid divergent code paths for different environments whenever reasonably possible. Prefer configuring local and other non-production environments to emulate production behavior closely. Add environment-specific code only when there is no practical way to align the environment itself with production expectations.
 - Frontend workflows must survive routine auth/session refresh and browser tab focus changes without unmounting the active page or discarding in-progress UI state. When implementing protected-page flows, explicitly verify that auth refresh does not trigger loading gates that tear down the page, and preserve non-secret draft/modal state accordingly. Never persist secrets such as passwords or one-time codes in client storage.
 - Frontend workflows should present each user action in one clear place unless the product explicitly calls for duplication. Avoid redundant buttons, duplicate panels, repeated helper text, and multiple entry points for the same action.

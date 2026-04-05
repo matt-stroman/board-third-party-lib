@@ -1003,6 +1003,24 @@ def test_submodule_initialized(path: Path) -> bool:
     return (path / ".git").exists()
 
 
+def get_maintained_submodule_paths(config: DevConfig) -> tuple[tuple[str, Path], ...]:
+    """Return the maintained top-level submodule paths tracked by the repository.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        Stable `(label, path)` pairs for each maintained submodule.
+    """
+
+    return (
+        ("API", config.repo_root / "api"),
+        ("Backend", config.repo_root / "backend"),
+        ("Frontend", config.repo_root / "frontend"),
+        ("BE Home", config.repo_root / "be-home"),
+    )
+
+
 def find_docker_desktop_executable() -> Path | None:
     """Return the expected Docker Desktop executable path on Windows when available.
 
@@ -1765,7 +1783,7 @@ def ensure_api_base_url_reachable(base_url: str) -> None:
 
 
 def ensure_submodules(config: DevConfig) -> None:
-    """Initialize backend/frontend submodules when needed.
+    """Initialize maintained top-level submodules when needed.
 
     Args:
         config: CLI configuration containing the repository root.
@@ -1778,9 +1796,7 @@ def ensure_submodules(config: DevConfig) -> None:
     """
 
     assert_command_available("git")
-    backend_path = config.repo_root / "backend"
-    frontend_path = config.repo_root / "frontend"
-    if test_submodule_initialized(backend_path) and test_submodule_initialized(frontend_path):
+    if all(test_submodule_initialized(path) for _, path in get_maintained_submodule_paths(config)):
         print("Submodules appear initialized.")
         return
 
@@ -7256,12 +7272,9 @@ def run_doctor(config: DevConfig) -> None:
             "Optional stack workflow command missing from PATH: wrangler (run `python ./scripts/dev.py bootstrap` to install workspace tooling)"
         )
 
-    backend_path = config.repo_root / "backend"
-    frontend_path = config.repo_root / "frontend"
-    if not test_submodule_initialized(backend_path):
-        issues.append("Backend submodule is not initialized (run: git submodule update --init --recursive)")
-    if not test_submodule_initialized(frontend_path):
-        issues.append("Frontend submodule is not initialized (run: git submodule update --init --recursive)")
+    for label, path in get_maintained_submodule_paths(config):
+        if not test_submodule_initialized(path):
+            issues.append(f"{label} submodule is not initialized (run: git submodule update --init --recursive)")
 
     if shutil.which("git"):
         write_step("Submodule status")

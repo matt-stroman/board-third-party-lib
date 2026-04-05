@@ -7,6 +7,7 @@ Current implementation status:
 - the maintained backend runtime now lives in the [`backend`](backend) submodule as Supabase + Cloudflare Workers
 - the maintained executable API contract now lives in the [`api`](api) submodule and targets the Workers/Supabase surface only
 - the maintained frontend runtime now lives in the [`frontend`](frontend) submodule as a React + TypeScript SPA
+- the maintained on-Board frontend now lives in the [`be-home`](be-home) submodule as a Unity app that consumes the BE API on Board itself
 
 ## Table of Contents
 
@@ -17,7 +18,7 @@ Current implementation status:
 
 ## Getting started in this repository
 
-This repository currently tracks backend and frontend as git submodules.
+This repository currently tracks `api`, `backend`, `frontend`, and `be-home` as top-level git submodules.
 
 Quick start (maintained local stack from the repository root):
 
