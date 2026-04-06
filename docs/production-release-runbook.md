@@ -40,10 +40,10 @@ Production is intentionally different from staging:
 
 The recommended initial operator bootstrap is:
 
-- email: `super-admin@example.com`
-- password: `LocalDevOnly!234`
+- the real operator-owned email address
+- a strong operator-owned password entered only at the secure prompt during bootstrap
 
-These are placeholder defaults only. Override them with the real operator-owned values before any hosted bootstrap.
+The maintained bootstrap flow no longer accepts the password on the command line or in committed docs/examples.
 
 ## Pre-Deployment Checks
 
@@ -181,7 +181,7 @@ After the operator account is bootstrapped, verify:
 Run this once against production after the first successful deploy:
 
 ```bash
-python ./scripts/dev.py bootstrap-super-admin
+python ./scripts/dev.py bootstrap-super-admin --email "operator@your-domain.com"
 ```
 
 This command is idempotent. It creates or repairs:
@@ -189,6 +189,8 @@ This command is idempotent. It creates or repairs:
 - the Supabase Auth user
 - the BE `app_users` projection
 - the full elevated role set needed for end-to-end access
+
+The command will securely prompt for the password and confirmation at runtime.
 
 ## If Staging Data Must Be Promoted
 

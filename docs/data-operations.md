@@ -450,15 +450,10 @@ For production specifically:
 Recommended first-production bootstrap command:
 
 ```bash
-python ./scripts/dev.py bootstrap-super-admin
+python ./scripts/dev.py bootstrap-super-admin --email "operator@your-domain.com"
 ```
 
-Default bootstrap identity:
-
-- email: `super-admin@example.com`
-- password: `LocalDevOnly!234`
-
-These are placeholder defaults only. Supply the real operator-owned values before running a hosted bootstrap.
+The command prompts securely for the operator password and confirmation at runtime instead of accepting the password on the command line.
 
 Why this is better than production seeding:
 

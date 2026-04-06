@@ -255,6 +255,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         with (
             mock.patch.object(dev, "ensure_migration_workspace_scaffolding"),
             mock.patch.object(dev, "install_migration_workspace_dependencies"),
+            mock.patch.object(dev, "prompt_bootstrap_super_admin_password", return_value="StrongPassword!234"),
             mock.patch.object(
                 dev,
                 "require_environment_values",
@@ -269,7 +270,6 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 config,
                 target="production",
                 email="super-admin@example.com",
-                password="LocalDevOnly!234",
                 user_name="bootstrap-admin",
                 display_name="Bootstrap Admin",
                 first_name="Bootstrap",
@@ -287,8 +287,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 "service-role-key",
                 "--email",
                 "super-admin@example.com",
-                "--password",
-                "LocalDevOnly!234",
+                "--password-stdin",
                 "--user-name",
                 "bootstrap-admin",
                 "--display-name",
@@ -300,7 +299,33 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             ],
             cwd=config.repo_root,
             env=mock.ANY,
+            input_data="StrongPassword!234",
         )
+
+    def test_resolve_bootstrap_super_admin_email_prompts_when_omitted(self) -> None:
+        with (
+            mock.patch.object(dev.sys.stdin, "isatty", return_value=True),
+            mock.patch.object(dev, "input", side_effect=["", "operator@boardenthusiasts.com"]),
+        ):
+            email = dev.resolve_bootstrap_super_admin_email(email=None, target="production")
+
+        self.assertEqual("operator@boardenthusiasts.com", email)
+
+    def test_prompt_bootstrap_super_admin_password_retries_until_confirmation_matches(self) -> None:
+        with (
+            mock.patch.object(dev.sys.stdin, "isatty", return_value=True),
+            mock.patch.object(
+                dev.getpass,
+                "getpass",
+                side_effect=["", "StrongPassword!234", "WrongPassword!234", "StrongPassword!234", "StrongPassword!234"],
+            ),
+        ):
+            password = dev.prompt_bootstrap_super_admin_password(
+                target="production",
+                email="operator@boardenthusiasts.com",
+            )
+
+        self.assertEqual("StrongPassword!234", password)
 
     def test_manual_deploy_workflow_exports_and_writes_smoke_credentials(self) -> None:
         workflow_path = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "manual-deploy.yml"
@@ -2462,6 +2487,17 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertTrue(legacy_pages_args.pages_only)
         self.assertTrue(legacy_workers_args.dry_run_only)
         self.assertTrue(legacy_workers_args.workers_only)
+
+    def test_bootstrap_super_admin_parser_uses_secure_prompt_flow(self) -> None:
+        parser = dev.build_parser()
+
+        bootstrap_args = parser.parse_args(["bootstrap-super-admin"])
+
+        self.assertEqual("production", bootstrap_args.target)
+        self.assertIsNone(bootstrap_args.email)
+
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["bootstrap-super-admin", "--password", "unsafe"])
 
     def test_run_legacy_staging_dry_run_pages_only_builds_spa(self) -> None:
         config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
