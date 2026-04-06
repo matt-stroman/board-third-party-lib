@@ -300,6 +300,7 @@ python ./scripts/dev.py deploy --staging --dry-run-only
 python ./scripts/dev.py deploy --staging
 python ./scripts/dev.py deploy
 python ./scripts/dev.py deploy --staging --source-branch staging
+python ./scripts/dev.py deploy-fallback-pages --project-name board-enthusiasts-fallback
 ```
 
 `deploy` automatically loads the target environment file before running the hosted deploy flow:
@@ -359,6 +360,23 @@ Use these flags when needed:
 - `--source-branch <name>`: override the Git branch name attached to the hosted Pages deploy metadata
 
 When `deploy` runs a real Workers deployment, it also syncs the Cloudflare Worker secrets from that same root environment file before deploying the Worker bundle, including `DEPLOY_SMOKE_SECRET` for the post-deploy signup smoke.
+
+### Deploy the standalone Cloudflare fallback pages
+
+```bash
+python ./scripts/dev.py deploy-fallback-pages --project-name board-enthusiasts-fallback
+python ./scripts/dev.py deploy-fallback-pages --project-name board-enthusiasts-fallback --source-branch main
+python ./scripts/dev.py deploy-fallback-pages --staging --project-name board-enthusiasts-fallback
+```
+
+This command publishes the static outage / custom-error pages under [`cloudflare/fallback-pages`](../cloudflare/fallback-pages/README.md) to a dedicated Cloudflare Pages project.
+
+It uses the selected root environment file only for Cloudflare credentials:
+
+- `python ./scripts/dev.py deploy-fallback-pages` uses `config/.env`
+- `python ./scripts/dev.py deploy-fallback-pages --staging` uses `config/.env.staging`
+
+The command prints the deployed base URL plus the maintained `5xx` and `1xxx` page URLs you can wire into Cloudflare Error Pages or a manual maintenance redirect.
 
 Hosted smoke behavior differs by environment when `VITE_LANDING_MODE=false`:
 

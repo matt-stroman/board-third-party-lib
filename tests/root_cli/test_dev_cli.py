@@ -61,6 +61,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             self.assertEqual("config/.env.local", config.local_env_file)
             self.assertEqual("config/.env.staging", config.staging_env_file)
             self.assertEqual("config/.env", config.production_env_file)
+            self.assertEqual("cloudflare/fallback-pages", config.cloudflare_fallback_pages_root)
 
     def test_apply_runtime_base_url_overrides_respects_local_port_env(self) -> None:
         args = self.create_args()
@@ -843,6 +844,40 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         get_project.assert_called_once_with(env_values, project_name="board-enthusiasts-staging")
         request_json.assert_not_called()
 
+    def test_ensure_named_cloudflare_pages_project_creates_missing_project(self) -> None:
+        env_values = {
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+            "CLOUDFLARE_API_TOKEN": "token",
+        }
+
+        with mock.patch.object(
+            dev,
+            "get_cloudflare_pages_project",
+            return_value=None,
+        ), mock.patch.object(
+            dev,
+            "request_json",
+            return_value={"success": True},
+        ) as request_json:
+            dev.ensure_named_cloudflare_pages_project(
+                env_values,
+                project_name="board-enthusiasts-fallback",
+                production_branch="main",
+            )
+
+        request_json.assert_called_once_with(
+            url="https://api.cloudflare.com/client/v4/accounts/account-id/pages/projects",
+            method="POST",
+            headers={
+                "Authorization": "Bearer token",
+                "Content-Type": "application/json",
+            },
+            payload={
+                "name": "board-enthusiasts-fallback",
+                "production_branch": "main",
+            },
+        )
+
     def test_ensure_cloudflare_pages_project_treats_already_exists_as_success(self) -> None:
         config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
         env_values = {
@@ -863,6 +898,51 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             ),
         ):
             dev.ensure_cloudflare_pages_project(config, target="staging", env=env_values)
+
+    def test_deploy_fallback_pages_prints_maintained_urls(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+        env_values = {
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+            "CLOUDFLARE_API_TOKEN": "token",
+        }
+
+        with mock.patch.object(
+            dev,
+            "require_environment_values",
+            return_value=env_values,
+        ), mock.patch.object(
+            dev,
+            "get_cloudflare_pages_projects",
+        ) as get_cloudflare_pages_projects, mock.patch.object(
+            dev,
+            "ensure_named_cloudflare_pages_project",
+        ) as ensure_named_cloudflare_pages_project, mock.patch.object(
+            dev,
+            "run_named_pages_deploy",
+            return_value="preview.board-enthusiasts-fallback.pages.dev",
+        ) as run_named_pages_deploy, mock.patch.object(
+            dev,
+            "write_step",
+        ), mock.patch("builtins.print") as print_mock:
+            alias = dev.deploy_fallback_pages(
+                config,
+                project_name="board-enthusiasts-fallback",
+                source_branch="feature/fallback-pages",
+            )
+
+        self.assertEqual("preview.board-enthusiasts-fallback.pages.dev", alias)
+        get_cloudflare_pages_projects.assert_called_once_with(env_values)
+        ensure_named_cloudflare_pages_project.assert_called_once_with(
+            env_values,
+            project_name="board-enthusiasts-fallback",
+        )
+        run_named_pages_deploy.assert_called_once()
+        printed_lines = [" ".join(str(arg) for arg in call.args) for call in print_mock.call_args_list]
+        self.assertIn("- Base page: https://preview.board-enthusiasts-fallback.pages.dev/", printed_lines)
+        self.assertIn(
+            "- Cloudflare 5xx page: https://preview.board-enthusiasts-fallback.pages.dev/cloudflare/5xx.html",
+            printed_lines,
+        )
 
     def test_sync_cloudflare_pages_domain_dns_updates_existing_record_target(self) -> None:
         env_values = {

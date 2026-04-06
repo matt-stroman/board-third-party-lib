@@ -106,6 +106,7 @@ python ./scripts/dev.py workers-smoke --start-stack
 python ./scripts/dev.py parity-test
 python ./scripts/dev.py deploy --staging --dry-run-only
 python ./scripts/dev.py deploy --staging
+python ./scripts/dev.py deploy-fallback-pages --project-name board-enthusiasts-fallback
 python ./scripts/dev.py env staging --copy-example
 python ./scripts/dev.py env staging --open
 python ./scripts/dev.py env staging --sync-github-environment

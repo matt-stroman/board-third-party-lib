@@ -15,6 +15,9 @@ Use it together with:
 - [Production Data Policy](#production-data-policy)
 - [Pre-Deployment Checks](#pre-deployment-checks)
 - [Production Environment Preparation](#production-environment-preparation)
+- [Fallback Pages Preparation](#fallback-pages-preparation)
+- [Cloudflare Branded Error Pages](#cloudflare-branded-error-pages)
+- [Manual Maintenance Fallback](#manual-maintenance-fallback)
 - [Deploy Steps](#deploy-steps)
 - [Post-Deploy Validation](#post-deploy-validation)
 - [First-Run Admin Bootstrap](#first-run-admin-bootstrap)
@@ -114,6 +117,74 @@ Publish the current production env file into the matching GitHub Environment:
 ```bash
 python ./scripts/dev.py env production --sync-github-environment
 ```
+
+## Fallback Pages Preparation
+
+The repository now includes a standalone fallback site under [`cloudflare/fallback-pages`](../cloudflare/fallback-pages/README.md).
+
+Use that site for two separate protections:
+
+- a manual maintenance / placeholder page
+- branded Cloudflare custom error pages for `500` and `1000` class failures
+
+Preview the fallback site from your current branch:
+
+```bash
+python ./scripts/dev.py deploy-fallback-pages --project-name board-enthusiasts-fallback
+```
+
+After you review the preview alias and merge to `main`, publish the production fallback site:
+
+```bash
+python ./scripts/dev.py deploy-fallback-pages --project-name board-enthusiasts-fallback --source-branch main
+```
+
+The maintained production URLs are then:
+
+- `https://board-enthusiasts-fallback.pages.dev/`
+- `https://board-enthusiasts-fallback.pages.dev/cloudflare/5xx.html`
+- `https://board-enthusiasts-fallback.pages.dev/cloudflare/1xxx.html`
+
+Optional but recommended:
+
+- attach a dedicated custom domain such as `status.boardenthusiasts.com` to the fallback Pages project after the first publish
+- if you do that, substitute the custom-domain URLs below in place of `board-enthusiasts-fallback.pages.dev`
+
+## Cloudflare Branded Error Pages
+
+In the Cloudflare dashboard for the production zone:
+
+1. Open `Error Pages`.
+2. Set `500 class errors` to the deployed BE fallback page:
+   `https://board-enthusiasts-fallback.pages.dev/cloudflare/5xx.html`
+3. Set `1000 class errors` to the deployed BE fallback page:
+   `https://board-enthusiasts-fallback.pages.dev/cloudflare/1xxx.html`
+4. Confirm the pages render correctly in Cloudflare's preview.
+
+Important:
+
+- these pages are fetched and cached by Cloudflare
+- whenever you update either error-page HTML, use Cloudflare's `Fetch custom page again` action so the new version is picked up
+
+## Manual Maintenance Fallback
+
+For a release that needs extra repair time, keep a disabled temporary redirect rule ready in Cloudflare.
+
+Recommended setup:
+
+1. In the production zone, open `Rules` and create a redirect rule that targets the BE hostnames you want to pause.
+2. Use a temporary redirect so the fallback can be enabled and disabled cleanly during an incident.
+3. Point the redirect destination at:
+   `https://board-enthusiasts-fallback.pages.dev/`
+4. Leave the rule disabled during normal operation.
+5. If a production release goes sideways, enable the rule to move visitors onto the branded fallback page immediately.
+6. Disable the rule again once production traffic is healthy.
+
+Notes:
+
+- the maintained fallback pages include the same footer and independence disclaimer language as the live site
+- the fallback site is static and Cloudflare-hosted, so it does not depend on the BE SPA, Workers API, or Supabase runtime to render
+- this redirect-based maintenance mode changes the visitor URL to the fallback hostname; if we later want same-URL maintenance handling, we can add a small Cloudflare Worker or Snippet in front of the zone
 
 ## Deploy Steps
 

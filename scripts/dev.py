@@ -80,6 +80,7 @@ class DevConfig:
         production_env_file: Relative path to the production env file.
         cloudflare_pages_template: Relative path to the Cloudflare Pages config template.
         cloudflare_workers_template: Relative path to the Cloudflare Workers config template.
+        cloudflare_fallback_pages_root: Relative path to the standalone fallback Pages content root.
         migration_spa_base_url: Default local React SPA URL.
         migration_workers_base_url: Default local Workers API URL.
     """
@@ -111,6 +112,7 @@ class DevConfig:
     production_env_file: str
     cloudflare_pages_template: str
     cloudflare_workers_template: str
+    cloudflare_fallback_pages_root: str
     migration_spa_base_url: str
     migration_workers_base_url: str
 
@@ -199,6 +201,7 @@ SUPABASE_START_TIMEOUT_SECONDS = 300
 PROCESS_STOP_TIMEOUT_SECONDS = 15
 PROCESS_STATUS_TIMEOUT_SECONDS = 5
 SUPPORTED_ENVIRONMENT_TARGETS = ("local", "staging", "production")
+DEFAULT_CLOUDFLARE_FALLBACK_PAGES_PROJECT_NAME = "board-enthusiasts-fallback"
 GITHUB_ENVIRONMENT_SECRET_NAMES = frozenset(
     {
         "SUPABASE_AUTH_DISCORD_CLIENT_SECRET",
@@ -758,7 +761,7 @@ def auto_load_command_environment(
 ) -> Path | None:
     """Load the root-managed environment file relevant to the current CLI command."""
 
-    if command_name in {"deploy-staging", "deploy", "bootstrap-super-admin"}:
+    if command_name in {"deploy-staging", "deploy", "deploy-fallback-pages", "bootstrap-super-admin"}:
         env_path = get_environment_file_path(config, target=deploy_target or "staging")
         apply_environment_file(env_path)
         normalize_supabase_environment()
@@ -2746,6 +2749,7 @@ def ensure_migration_workspace_scaffolding(config: DevConfig) -> None:
         ("production env example", config.repo_root / config.production_env_example),
         ("Cloudflare Pages template", config.repo_root / config.cloudflare_pages_template),
         ("Cloudflare Workers template", config.repo_root / config.cloudflare_workers_template),
+        ("Cloudflare fallback Pages content root", config.repo_root / config.cloudflare_fallback_pages_root),
     ]
 
     missing = [f"{label}: {path}" for label, path in required_paths if not path.exists()]
@@ -5053,6 +5057,17 @@ def ensure_cloudflare_pages_project(config: DevConfig, *, target: str, env: dict
     """Ensure the Cloudflare Pages project exists for the target environment."""
 
     project_name = get_deploy_pages_project_name(target=target)
+    ensure_named_cloudflare_pages_project(env, project_name=project_name)
+
+
+def ensure_named_cloudflare_pages_project(
+    env: dict[str, str],
+    *,
+    project_name: str,
+    production_branch: str = "main",
+) -> None:
+    """Ensure a named Cloudflare Pages project exists."""
+
     if get_cloudflare_pages_project(env, project_name=project_name) is not None:
         return
 
@@ -5067,7 +5082,7 @@ def ensure_cloudflare_pages_project(config: DevConfig, *, target: str, env: dict
             headers=build_cloudflare_api_headers(env),
             payload={
                 "name": project_name,
-                "production_branch": "main",
+                "production_branch": production_branch,
             },
         )
     except DevCliError as ex:
@@ -5590,15 +5605,34 @@ def run_pages_deploy(
 ) -> str:
     """Deploy the built SPA bundle to Cloudflare Pages."""
 
+    return run_named_pages_deploy(
+        config,
+        directory=config.repo_root / config.migration_spa_root / "dist",
+        project_name=get_deploy_pages_project_name(target=target),
+        source_branch=source_branch,
+        subprocess_env=subprocess_env,
+    )
+
+
+def run_named_pages_deploy(
+    config: DevConfig,
+    *,
+    directory: Path,
+    project_name: str,
+    source_branch: str,
+    subprocess_env: dict[str, str],
+) -> str:
+    """Deploy a static directory to a named Cloudflare Pages project."""
+
     result = run_command(
         [
             "npx",
             "wrangler",
             "pages",
             "deploy",
-            str(config.repo_root / config.migration_spa_root / "dist"),
+            str(directory),
             "--project-name",
-            get_deploy_pages_project_name(target=target),
+            project_name,
             "--branch",
             source_branch,
         ],
@@ -5617,6 +5651,53 @@ def run_pages_deploy(
             "Unable to determine the Cloudflare Pages deployment alias from Wrangler output. "
             "Stopping before DNS changes so deploy automation does not guess an incorrect target."
         )
+    return alias_hostname
+
+
+def deploy_fallback_pages(
+    config: DevConfig,
+    *,
+    project_name: str,
+    source_branch: str,
+) -> str:
+    """Deploy the standalone fallback/error pages bundle to Cloudflare Pages."""
+
+    env_values = require_environment_values(
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN",
+        context="Cloudflare fallback Pages deploy",
+    )
+    subprocess_env = build_subprocess_env(
+        extra={
+            "CLOUDFLARE_API_TOKEN": env_values["CLOUDFLARE_API_TOKEN"],
+            "CLOUDFLARE_ACCOUNT_ID": env_values["CLOUDFLARE_ACCOUNT_ID"],
+        }
+    )
+    fallback_root = config.repo_root / config.cloudflare_fallback_pages_root
+
+    write_step("Running Cloudflare fallback Pages preflight")
+    get_cloudflare_pages_projects(env_values)
+    ensure_named_cloudflare_pages_project(env_values, project_name=project_name)
+
+    write_step(f"Deploying Cloudflare fallback Pages bundle for {project_name}")
+    alias_hostname = run_named_pages_deploy(
+        config,
+        directory=fallback_root,
+        project_name=project_name,
+        source_branch=source_branch,
+        subprocess_env=subprocess_env,
+    )
+    base_url = f"https://{alias_hostname}"
+
+    print()
+    print("Fallback Pages URLs")
+    print(f"- Base page: {base_url}/")
+    print(f"- Cloudflare 5xx page: {base_url}/cloudflare/5xx.html")
+    print(f"- Cloudflare 1xxx page: {base_url}/cloudflare/1xxx.html")
+    if source_branch.strip().lower() == "main":
+        print(f"- Production alias: https://{project_name}.pages.dev/")
+    else:
+        print(f"- Preview branch: {source_branch}")
     return alias_hostname
 
 
@@ -8379,6 +8460,28 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
 
+    deploy_fallback_pages = subparsers.add_parser(
+        "deploy-fallback-pages",
+        parents=[shared],
+        help="Deploy the standalone Cloudflare fallback/error pages bundle",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    deploy_fallback_pages.add_argument(
+        "--staging",
+        action="store_true",
+        help="Load Cloudflare credentials from the staging environment file instead of production",
+    )
+    deploy_fallback_pages.add_argument(
+        "--project-name",
+        default=DEFAULT_CLOUDFLARE_FALLBACK_PAGES_PROJECT_NAME,
+        help="Cloudflare Pages project name for the standalone fallback site",
+    )
+    deploy_fallback_pages.add_argument(
+        "--source-branch",
+        default=None,
+        help="Explicit Git branch name to attach to the Pages deploy metadata; defaults to GITHUB_REF_NAME or the current branch",
+    )
+
     return parser
 
 
@@ -8421,6 +8524,7 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
         production_env_file="config/.env",
         cloudflare_pages_template="cloudflare/pages/wrangler.template.jsonc",
         cloudflare_workers_template="backend/cloudflare/workers/wrangler.template.jsonc",
+        cloudflare_fallback_pages_root="cloudflare/fallback-pages",
         migration_spa_base_url="http://127.0.0.1:4173",
         migration_workers_base_url="http://127.0.0.1:8787",
     )
@@ -8459,6 +8563,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         deploy_target = resolve_deploy_target(staging=getattr(args, "staging", False))
     elif args.command == "deploy-staging":
         deploy_target = "staging"
+    elif args.command == "deploy-fallback-pages":
+        deploy_target = resolve_deploy_target(staging=getattr(args, "staging", False))
     elif args.command == "bootstrap-super-admin":
         deploy_target = args.target
     auto_load_command_environment(config, command_name=args.command, deploy_target=deploy_target)
@@ -8662,6 +8768,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 upgrade=args.upgrade,
                 preflight_only=args.preflight_only,
                 dry_run_only=args.dry_run_only,
+            )
+        elif args.command == "deploy-fallback-pages":
+            deploy_fallback_pages(
+                config,
+                project_name=args.project_name,
+                source_branch=resolve_deploy_source_branch(config, explicit_source_branch=args.source_branch),
             )
         else:
             parser.error(f"Unknown command: {args.command}")
