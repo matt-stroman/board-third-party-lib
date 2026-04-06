@@ -380,10 +380,10 @@ python ./scripts/dev.py bootstrap-super-admin
 
 By default this targets `production` and bootstraps:
 
-- email: `super-admin@example.com`
-- password: `LocalDevOnly!234`
+- the email you pass with `--email`, or an interactive prompt when omitted
+- a password that is entered only through the secure hidden prompt
 
-These defaults are placeholders only. Override them with the real operator-owned values before using this against any hosted environment.
+For hosted environments, the password is never accepted as a CLI argument. The maintained bootstrap flow prompts for it securely and requires confirmation before continuing.
 
 The bootstrap is idempotent:
 
@@ -400,7 +400,8 @@ The bootstrap is idempotent:
 You can override the target or profile fields when needed:
 
 ```bash
-python ./scripts/dev.py bootstrap-super-admin staging --email you@example.com --password "Set-A-Strong-Password-Here"
+python ./scripts/dev.py bootstrap-super-admin --email you@example.com
+python ./scripts/dev.py bootstrap-super-admin staging --email you@example.com
 ```
 
 ### Run hosted deploys from the GitHub web UI

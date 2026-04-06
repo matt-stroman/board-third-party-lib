@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
+import getpass
 import json
 import math
 import os
@@ -268,8 +269,6 @@ OPTIONAL_DEPLOY_ENV_NAMES = (
     "VITE_SUPABASE_AUTH_GITHUB_ENABLED",
     "VITE_SUPABASE_AUTH_GOOGLE_ENABLED",
 )
-DEFAULT_BOOTSTRAP_SUPER_ADMIN_EMAIL = "super-admin@example.com"
-DEFAULT_BOOTSTRAP_SUPER_ADMIN_PASSWORD = "LocalDevOnly!234"
 DEFAULT_BOOTSTRAP_SUPER_ADMIN_USER_NAME = "bootstrap-admin"
 DEFAULT_BOOTSTRAP_SUPER_ADMIN_FIRST_NAME = "Bootstrap"
 DEFAULT_BOOTSTRAP_SUPER_ADMIN_LAST_NAME = "Admin"
@@ -6608,12 +6607,55 @@ def resolve_deploy_required_environment_names(*, target: str) -> tuple[str, ...]
     return DEPLOY_REQUIRED_ENV_NAMES
 
 
+def resolve_bootstrap_super_admin_email(*, email: str | None, target: str) -> str:
+    """Return the operator email for a bootstrap run, prompting when omitted."""
+
+    normalized = (email or "").strip()
+    if normalized:
+        return normalized
+
+    if not sys.stdin.isatty():
+        raise DevCliError(
+            f"{target.title()} super-admin bootstrap requires --email when stdin is not interactive."
+        )
+
+    prompt = f"{target.title()} super-admin email: "
+    while True:
+        entered = input(prompt).strip()
+        if entered:
+            return entered
+        print("Email is required.")
+
+
+def prompt_bootstrap_super_admin_password(*, target: str, email: str) -> str:
+    """Prompt securely for the bootstrap password and require confirmation."""
+
+    if not sys.stdin.isatty():
+        raise DevCliError(
+            f"{target.title()} super-admin bootstrap requires an interactive terminal to enter the password securely."
+        )
+
+    prompt = f"{target.title()} super-admin password for {email}: "
+    confirm_prompt = f"Confirm password for {email}: "
+    while True:
+        password = getpass.getpass(prompt)
+        if not password:
+            print("Password is required.")
+            continue
+
+        confirmation = getpass.getpass(confirm_prompt)
+        if password != confirmation:
+            print("Passwords did not match. Please try again.")
+            continue
+
+        return password
+
+
 def run_bootstrap_super_admin_command(
     config: DevConfig,
     *,
     target: str,
-    email: str,
-    password: str,
+    email: str | None,
     user_name: str | None,
     display_name: str | None,
     first_name: str | None,
@@ -6626,6 +6668,8 @@ def run_bootstrap_super_admin_command(
 
     ensure_migration_workspace_scaffolding(config)
     install_migration_workspace_dependencies(config)
+    resolved_email = resolve_bootstrap_super_admin_email(email=email, target=target)
+    password = prompt_bootstrap_super_admin_password(target=target, email=resolved_email)
     env_values = require_environment_values(
         "SUPABASE_URL",
         "SUPABASE_SECRET_KEY",
@@ -6643,9 +6687,8 @@ def run_bootstrap_super_admin_command(
             "--secret-key",
             env_values["SUPABASE_SECRET_KEY"],
             "--email",
-            email,
-            "--password",
-            password,
+            resolved_email,
+            "--password-stdin",
             "--user-name",
             (user_name or "").strip() or DEFAULT_BOOTSTRAP_SUPER_ADMIN_USER_NAME,
             "--display-name",
@@ -6657,6 +6700,7 @@ def run_bootstrap_super_admin_command(
         ],
         cwd=config.repo_root,
         env=os.environ.copy(),
+        input_data=password,
     )
 
 
@@ -7976,13 +8020,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bootstrap_super_admin.add_argument(
         "--email",
-        default=DEFAULT_BOOTSTRAP_SUPER_ADMIN_EMAIL,
-        help="Super-admin email address",
-    )
-    bootstrap_super_admin.add_argument(
-        "--password",
-        default=DEFAULT_BOOTSTRAP_SUPER_ADMIN_PASSWORD,
-        help="Super-admin password",
+        help="Super-admin email address; prompted when omitted",
     )
     bootstrap_super_admin.add_argument(
         "--user-name",
@@ -8520,7 +8558,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 config,
                 target=args.target,
                 email=args.email,
-                password=args.password,
                 user_name=args.user_name,
                 display_name=args.display_name,
                 first_name=args.first_name,
