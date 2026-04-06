@@ -25,7 +25,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Initialize required public submodules
+        run: git submodule update --init --depth=1 api backend frontend
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -50,7 +53,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Initialize required public submodules
+        run: git submodule update --init --depth=1 api backend frontend
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -110,7 +116,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Initialize required public submodules
+        run: git submodule update --init --depth=1 api backend frontend
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -170,7 +179,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Initialize required public submodules
+        run: git submodule update --init --depth=1 api backend frontend
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -233,7 +245,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Initialize required public submodules
+        run: git submodule update --init --depth=1 api backend frontend
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -268,7 +283,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Initialize required public submodules
+        run: git submodule update --init --depth=1 api backend frontend
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -313,7 +331,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Initialize required public submodules
+        run: git submodule update --init --depth=1 api backend frontend
 
       - name: Setup Python
         uses: actions/setup-python@v5
