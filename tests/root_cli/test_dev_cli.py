@@ -803,6 +803,22 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
         self.assertEqual(alias, "production-1-0-0-landing-pag.board-enthusiasts.pages.dev")
 
+    def test_get_expected_cloudflare_pages_alias_hostname_uses_project_hostname_for_main(self) -> None:
+        alias = dev.get_expected_cloudflare_pages_alias_hostname(
+            project_name="board-enthusiasts-fallback",
+            source_branch="main",
+        )
+
+        self.assertEqual(alias, "board-enthusiasts-fallback.pages.dev")
+
+    def test_get_expected_cloudflare_pages_alias_hostname_uses_branch_alias_for_non_main(self) -> None:
+        alias = dev.get_expected_cloudflare_pages_alias_hostname(
+            project_name="board-enthusiasts-fallback",
+            source_branch="feature/fallback-pages",
+        )
+
+        self.assertEqual(alias, "feature-fallback-pages.board-enthusiasts-fallback.pages.dev")
+
     def test_ensure_cloudflare_pages_custom_domain_attaches_missing_hostname(self) -> None:
         env_values = {
             "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",

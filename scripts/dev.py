@@ -4914,6 +4914,15 @@ def parse_cloudflare_pages_alias_hostname(output: str) -> str | None:
     return match.group("host").strip().lower()
 
 
+def get_expected_cloudflare_pages_alias_hostname(*, project_name: str, source_branch: str) -> str:
+    """Return the stable Pages alias hostname expected for a source branch."""
+
+    normalized_branch = source_branch.strip().lower()
+    if normalized_branch == "main":
+        return f"{project_name}.pages.dev"
+    return build_cloudflare_pages_branch_alias_hostname(project_name=project_name, source_branch=source_branch)
+
+
 def assert_pages_custom_domain_dns_access(env_values: dict[str, str]) -> None:
     """Verify the token can inspect and later manage DNS for the Pages custom domain hostname."""
 
@@ -5647,9 +5656,9 @@ def run_named_pages_deploy(
 
     alias_hostname = parse_cloudflare_pages_alias_hostname(f"{result.stdout or ''}\n{result.stderr or ''}")
     if not alias_hostname:
-        raise DevCliError(
-            "Unable to determine the Cloudflare Pages deployment alias from Wrangler output. "
-            "Stopping before DNS changes so deploy automation does not guess an incorrect target."
+        alias_hostname = get_expected_cloudflare_pages_alias_hostname(
+            project_name=project_name,
+            source_branch=source_branch,
         )
     return alias_hostname
 
