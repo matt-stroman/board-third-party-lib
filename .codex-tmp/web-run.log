@@ -1,0 +1,3 @@
+Workspace npm dependencies are already current.
+Hot reload enabled via Vite and Wrangler dev mode.
+==> Reusing local database + auth + backend dependencies runtime

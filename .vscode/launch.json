@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Backend API (Debug Build)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "backend: prepare debug",
+      "program": "${workspaceFolder}/backend/src/Board.ThirdPartyLibrary.Api/bin/Debug/net10.0/Board.ThirdPartyLibrary.Api.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/backend/src/Board.ThirdPartyLibrary.Api",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "justMyCode": true,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\\bNow listening on:\\s+(https?://\\S+)",
+        "uriFormat": "%s/health/live"
+      }
+    },
+    {
+      "name": "Backend API (Release Build)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "backend: prepare release",
+      "program": "${workspaceFolder}/backend/src/Board.ThirdPartyLibrary.Api/bin/Release/net10.0/Board.ThirdPartyLibrary.Api.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/backend/src/Board.ThirdPartyLibrary.Api",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "justMyCode": true,
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\\bNow listening on:\\s+(https?://\\S+)",
+        "uriFormat": "%s/health/live"
+      }
+    }
+  ]
+}

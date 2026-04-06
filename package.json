@@ -1,0 +1,34 @@
+{
+  "name": "board-enthusiasts",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Root migration workspace for the Cloudflare, Supabase, and Workers conversion.",
+  "workspaces": [
+    "frontend",
+    "backend/apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build:migration": "npm run build --workspace @board-enthusiasts/migration-contract --workspace @board-enthusiasts/workers-api --workspace @board-enthusiasts/spa",
+    "lint:migration": "npm run lint --workspace @board-enthusiasts/migration-contract --workspace @board-enthusiasts/workers-api --workspace @board-enthusiasts/spa --if-present",
+    "typecheck:migration": "npm run typecheck --workspace @board-enthusiasts/migration-contract --workspace @board-enthusiasts/workers-api --workspace @board-enthusiasts/spa",
+    "seed:migration": "tsx backend/scripts/migration-seed.ts",
+    "test:contract-smoke": "tsx tests/contract-smoke/run-contract-smoke.ts",
+    "test:workers-smoke": "tsx tests/workers-smoke/run-workers-smoke.ts",
+    "test:parity": "playwright test --config tests/parity/playwright.config.ts",
+    "capture:parity-baseline": "playwright test --config tests/parity/playwright.config.ts --update-snapshots",
+    "test:migration": "npm run typecheck:migration && npm run test:contract-smoke"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@supabase/supabase-js": "^2.57.4",
+    "@types/node": "^24.0.0",
+    "pixelmatch": "^7.1.0",
+    "pngjs": "^7.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

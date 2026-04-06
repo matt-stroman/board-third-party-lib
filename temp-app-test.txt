@@ -1,0 +1,121 @@
+
+ RUN  v3.2.4 C:/Source/board-enthusiasts/board-enthusiasts/frontend
+
+ ✓ src/App.test.tsx > App > renders the live BE front door and signed-out shell navigation 115ms
+ ✓ src/App.test.tsx > App > keeps Browse highlighted only on browse routes 117ms
+ ✓ src/App.test.tsx > App > renders the dedicated offerings page and links users back to the game index 58ms
+ ✓ src/App.test.tsx > App > renders the install guide with the Board download and install links 27ms
+ ✓ src/App.test.tsx > App > renders the support page with the support email address 16ms
+ ✓ src/App.test.tsx > App > shows a friendly browse error message and points users to contact us when the site cannot be reached 35ms
+ ✓ src/App.test.tsx > App > renders the signed-in account avatar in the shell and user menu 67ms
+ ✓ src/App.test.tsx > App > renders the production landing mode surface when enabled 56ms
+ ✓ src/App.test.tsx > App > keeps the landing shell free of preview-environment notices outside production 19ms
+ ✓ src/App.test.tsx > App > submits the landing-page signup form 727ms
+ ✓ src/App.test.tsx > App > keeps first name optional, marks consent required, and enables submit after consent 399ms
+ ✓ src/App.test.tsx > App > allows clicking submit before turnstile completes and shows a helpful error 450ms
+ ✓ src/App.test.tsx > App > does not render the custom anti-spam panel while the turnstile widget is loading 12ms
+ ✓ src/App.test.tsx > App > renders a local anti-spam simulator on loopback when no real turnstile key is configured 27ms
+ ✓ src/App.test.tsx > App > 'submits with no explicit role interes…' 636ms
+ ✓ src/App.test.tsx > App > 'submits with only the player role int…' 697ms
+ ✓ src/App.test.tsx > App > 'submits with only the developer role …' 684ms
+ ✓ src/App.test.tsx > App > lets the user one-click report a landing signup issue through the internal support endpoint 749ms
+ ✓ src/App.test.tsx > App > falls back to a manual support email link when automatic issue reporting fails 744ms
+ ✓ src/App.test.tsx > App > routes the landing shell updates link back to the signup section from privacy 10ms
+ ✓ src/App.test.tsx > App > opens title quick view from browse results without leaving the results page 93ms
+ ✓ src/App.test.tsx > App > applies the restored live studio-scoped search filters without leaving the studio page 189ms
+ ✓ src/App.test.tsx > App > shows the visible browse result range for the current page 93ms
+ × src/App.test.tsx > App > moves release version into the hero area for player title detail views 26ms
+   → expect(element).not.toBeInTheDocument()
+
+expected document not to contain element, found <dd>
+  Configured
+</dd> instead
+ ✓ src/App.test.tsx > App > shows an unavailable notice for unlisted titles that remain in a player's collection 20ms
+ ✓ src/App.test.tsx > App > prefers a title logo on browse cards when one is available 30ms
+ ✓ src/App.test.tsx > App > filters browse results by adjustable minimum and maximum player range 74ms
+ ✓ src/App.test.tsx > App > redirects protected routes to sign in when unauthenticated 39ms
+ ✓ src/App.test.tsx > App > shows enabled social sign-in providers and stores the intended return path 62ms
+ ✓ src/App.test.tsx > App > shows the become-a-developer workflow to signed-in players without developer access 25ms
+ ✓ src/App.test.tsx > App > restores the maintained studio workflow navigation inside /developer 42ms
+ ✓ src/App.test.tsx > App > shows the correct selector stack for each develop domain 123ms
+ ✓ src/App.test.tsx > App > restores the maintained title overview as summary cards instead of inline editors 56ms
+ ✓ src/App.test.tsx > App > toggles title visibility directly from the title overview 50ms
+ ✓ src/App.test.tsx > App > explains why the title visibility switch is disabled for draft titles 46ms
+ ✓ src/App.test.tsx > App > lets archived titles be unarchived while keeping other overview actions disabled 67ms
+ ✓ src/App.test.tsx > App > shows unarchive failures under the title actions section instead of the page header 67ms
+ ✓ src/App.test.tsx > App > shows duplicate release version errors under the create action in plain language 95ms
+ ✓ src/App.test.tsx > App > restores the release overview without the old publish workflow 36ms
+ ✓ src/App.test.tsx > App > unlocks the release overview for editing only after the user clicks edit, then saves 1272ms
+ ✓ src/App.test.tsx > App > keeps older releases selectable after a newer release is created 25ms
+ ✓ src/App.test.tsx > App > blocks title deletion confirmation when the current password is invalid 399ms
+ ✓ src/App.test.tsx > App > advances to the second delete confirmation when the current password is valid 415ms
+ ✓ src/App.test.tsx > App > submits the delete password step when Enter is pressed in the password field 340ms
+ ✓ src/App.test.tsx > App > clears the delete password when the user goes back from the second confirmation step 467ms
+ ✓ src/App.test.tsx > App > submits the second delete confirmation step when Enter is pressed in the title field 657ms
+ ✓ src/App.test.tsx > App > submits self-service registration from the sign-in page 799ms
+ ✓ src/App.test.tsx > App > passes signup marketing consent when the user opts in during registration 897ms
+ ✓ src/App.test.tsx > App > validates registration fields on blur and keeps submit disabled until the required fields are ready 467ms
+ ✓ src/App.test.tsx > App > clears the registration form each time the modal opens 948ms
+ ✓ src/App.test.tsx > App > restores the registration draft after the page remounts 962ms
+ ✓ src/App.test.tsx > App > does not reopen the registration modal automatically from stored draft state 12ms
+ ✓ src/App.test.tsx > App > shows connected-account signup options at the top of the registration modal when providers are enabled 187ms
+ ✓ src/App.test.tsx > App > requests password recovery from the sign-in page 610ms
+ ✓ src/App.test.tsx > App > advances recovery from code verification to password reset and returns to sign in after save 1347ms
+ ✓ src/App.test.tsx > App > returns to sign in after password recovery even if sign out hits a transient fetch failure 1307ms
+ ✓ src/App.test.tsx > App > lets the recovery request step route to registration or back to sign in 293ms
+ ✓ src/App.test.tsx > App > validates empty sign-in fields before calling auth and supports password reveal 141ms
+ ✓ src/App.test.tsx > App > skips password visibility toggles during tab navigation 92ms
+ ✓ src/App.test.tsx > App > does not redirect away from sign in until the current user bootstrap completes 12ms
+ ✓ src/App.test.tsx > App > holds the sign-in page open for MFA step-up after password authentication succeeds 782ms
+ ✓ src/App.test.tsx > App > renders the restored signed-in shell account menu links 88ms
+ ✓ src/App.test.tsx > App > renders the restored notification menu, unread badge, and marks a notification read on open 105ms
+ ✓ src/App.test.tsx > App > hides developer-only report messages from the player reported titles workflow 25ms
+ ✓ src/App.test.tsx > App > restores an in-progress player profile edit after the page remounts 967ms
+ ✓ src/App.test.tsx > App > lets players request an email change from account settings 558ms
+ ✓ src/App.test.tsx > App > lets players change their password from account settings 851ms
+ ✓ src/App.test.tsx > App > lets oauth-created users set a local password from account settings 609ms
+ ✓ src/App.test.tsx > App > shows connected accounts and lets players disconnect one when another sign-in option remains 189ms
+ ✓ src/App.test.tsx > App > prompts oauth-only users to set a password before disconnecting their last connected account 173ms
+ ✓ src/App.test.tsx > App > renders the MFA enrollment QR code when Supabase returns raw svg markup 87ms
+ ✓ src/App.test.tsx > App > renders the MFA enrollment QR code when Supabase returns a data url 93ms
+ ✓ src/App.test.tsx > App > lets the user restart MFA setup when a stale unverified factor exists 93ms
+ ✓ src/App.test.tsx > App > keeps developer-only report messages visible to moderators 34ms
+ ✓ src/App.test.tsx > App > keeps the studio slug helper empty until the display name has a value 448ms
+ ✓ src/App.test.tsx > App > supports studio avatar and media previews from url and upload in the create studio flow 2099ms
+ ✓ src/App.test.tsx > App > reduces oversized studio logo uploads locally before submission 119ms
+ ✓ src/App.test.tsx > App > reduces oversized title card uploads locally before submission 65ms
+ ✓ src/App.test.tsx > App > shows the selected title card preview immediately after upload 69ms
+ ✓ src/App.test.tsx > App > lets developers add multiple genres and remove only the selected chip in title create 210ms
+ ✓ src/App.test.tsx > App > lets developers add a custom genre locally with Enter and persists it only when the title is saved 243ms
+ ✓ src/App.test.tsx > App > restores legacy cached title-create drafts without crashing when fields change 612ms
+ ✓ src/App.test.tsx > App > normalizes legacy metadata token values and removes only the selected genre in edit mode 174ms
+ ✓ src/App.test.tsx > App > keeps genres usable when the age rating authority catalog request fails 500ms
+ ✓ src/App.test.tsx > App > updates studio links immediately when switching studio contexts in the overview 138ms
+ ✓ src/App.test.tsx > App > publishes route-specific metadata for the landing privacy page 16ms
+ ✓ src/App.test.tsx > App > publishes route-specific metadata for the live privacy page 16ms
+ ✓ src/App.test.tsx > App > shows the same studio media controls in the edit studio flow 29ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/App.test.tsx > App > moves release version into the hero area for player title detail views
+Error: expect(element).not.toBeInTheDocument()
+
+expected document not to contain element, found <dd>
+  Configured
+</dd> instead
+ ❯ src/App.test.tsx:1331:50
+    1329|     expect(screen.getAllByText("1.0.0").length).toBeGreaterThan(0);
+    1330|     expect(screen.getByRole("heading", { name: "Current release" })).t…
+    1331|     expect(screen.queryByText("Configured")).not.toBeInTheDocument();
+       |                                                  ^
+    1332|   });
+    1333| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 87 passed (88)
+   Start at  21:59:50
+   Duration  29.51s (transform 445ms, setup 138ms, collect 638ms, tests 27.92s, environment 341ms, prepare 77ms)
+

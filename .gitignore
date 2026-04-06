@@ -1,0 +1,42 @@
+# Ignore Obsidian workspace metadata anywhere in the repository
+.obsidian/
+
+# Python bytecode/cache
+__pycache__/
+*.py[cod]
+
+# Local developer CLI logs
+.dev-cli-logs/
+
+# Local build/test artifacts
+artifacts/
+
+# Node/npm workspace artifacts
+node_modules/
+apps/*/node_modules/
+apps/*/dist/
+packages/*/node_modules/
+*.tsbuildinfo
+tests/parity/.auth/
+tests/parity/test-results/
+tests/parity/playwright-report/
+test-results/
+playwright-report/
+
+# Cloudflare and Supabase local artifacts
+.wrangler/
+backend/apps/workers-api/.dev.vars
+backend/apps/workers-api/.wrangler/
+supabase/.temp/
+backend/supabase/.branches/
+backend/supabase/.temp/
+
+# Local environment files
+.env
+.env.*
+config/.env
+config/.env.*
+!.env.example
+!config/.env.example
+!config/.env.local.example
+!config/.env.staging.example

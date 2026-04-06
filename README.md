@@ -1,0 +1,136 @@
+# board-enthusiasts
+
+A solution for third party developers for the Board ecosystem to use to register and share their games with the public.
+
+Current implementation status:
+
+- the maintained backend runtime now lives in the [`backend`](backend) submodule as Supabase + Cloudflare Workers
+- the maintained executable API contract now lives in the [`api`](api) submodule and targets the Workers/Supabase surface only
+- the maintained frontend runtime now lives in the [`frontend`](frontend) submodule as a React + TypeScript SPA
+- the maintained on-Board frontend now lives in the [`be-home`](be-home) submodule as a Unity app that consumes the BE API on Board itself
+
+## Table of Contents
+
+- [Getting started in this repository](#getting-started-in-this-repository)
+- [Docs](#docs)
+- [Planning](#planning)
+- [Developer Automation](#developer-automation)
+
+## Getting started in this repository
+
+This repository currently tracks `api`, `backend`, `frontend`, and `be-home` as top-level git submodules.
+
+Quick start (maintained local stack from the repository root):
+
+```bash
+python ./scripts/dev.py bootstrap
+python ./scripts/dev.py web --hot-reload
+```
+
+This starts local Supabase services, the maintained Workers backend, and the SPA.
+If the local Supabase volume is empty, the `api` and `web` entrypoints automatically seed the deterministic demo catalog before the backend starts.
+If the running local Supabase schema is missing required checked-in tables from newer migrations, `api` and `web` automatically reset the local database and reseed before continuing.
+Run `python ./scripts/dev.py seed-data` whenever you want to refresh the full checked-in local demo catalog fixture set after seed changes.
+
+Quick start (backend API only):
+
+```bash
+python ./scripts/dev.py bootstrap
+python ./scripts/dev.py api
+```
+
+Initialize them after clone:
+
+```bash
+git submodule update --init --recursive
+```
+
+Check that submodules are initialized (no leading `-` in status output):
+
+```bash
+git submodule status
+```
+
+## Docs
+
+- Project-wide developer docs:
+  - Developer CLI (root automation commands): [`docs/developer-cli.md`](docs/developer-cli.md)
+  - Maintained stack overview: [`docs/maintained-stack.md`](docs/maintained-stack.md)
+- Backend-specific developer docs (in backend submodule):
+  - Backend local runbook: [`backend/docs/workers-backend-local-runbook.md`](backend/docs/workers-backend-local-runbook.md)
+
+## Planning
+
+- Active release-planning reference:
+  - MVP release audit: [`planning/mvp-release-audit.md`](planning/mvp-release-audit.md)
+- Historical planning context:
+  - Root historical plans and landing-page wave notes: [`planning/README.md`](planning/README.md)
+  - Initial data schema plan: [`api/planning/initial-data-schema-plan.md`](api/planning/initial-data-schema-plan.md)
+
+## Developer Automation
+
+Primary root script entry point:
+
+- [`scripts/dev.py`](scripts/dev.py)
+- root-managed environment files:
+  - [`config/.env.local.example`](config/.env.local.example)
+  - [`config/.env.staging.example`](config/.env.staging.example)
+  - [`config/.env.example`](config/.env.example)
+
+See the dedicated CLI doc for full command coverage and options:
+
+- [`docs/developer-cli.md`](docs/developer-cli.md)
+
+Examples:
+
+```bash
+python ./scripts/dev.py doctor
+python ./scripts/dev.py bootstrap
+python ./scripts/dev.py database up
+python ./scripts/dev.py auth up
+python ./scripts/dev.py api
+python ./scripts/dev.py api down
+python ./scripts/dev.py api down --include-dependencies
+python ./scripts/dev.py web --hot-reload
+python ./scripts/dev.py web status
+python ./scripts/dev.py web status --include-dependencies
+python ./scripts/dev.py web down
+python ./scripts/dev.py web down --include-dependencies
+python ./scripts/dev.py all-tests
+python ./scripts/dev.py verify --skip-contract-tests
+python ./scripts/dev.py api-lint
+python ./scripts/dev.py api-test --start-workers
+python ./scripts/dev.py test
+python ./scripts/dev.py contract-smoke --start-workers
+python ./scripts/dev.py workers-smoke --start-stack
+python ./scripts/dev.py parity-test
+python ./scripts/dev.py deploy --staging --dry-run-only
+python ./scripts/dev.py deploy --staging
+python ./scripts/dev.py env staging --copy-example
+python ./scripts/dev.py env staging --open
+python ./scripts/dev.py env staging --sync-github-environment
+```
+
+GitHub web UI deploys are also supported through the manual workflow:
+
+- `Actions` -> `Manual Deploy`
+- choose `staging` or `production`
+- optionally set `force`, `upgrade`, `preflight_only`, or `dry_run_only`
+- run the workflow after the matching GitHub Environment (`staging` or `production`) has the required vars and secrets configured
+
+GitHub UI deploys now attach the Cloudflare Pages publish to the triggering Git branch instead of hardcoding `main`. Local CLI deploys do the same from the currently checked-out branch unless you override it with `--source-branch <name>`.
+
+Local deploy preflight now also verifies that the matching GitHub Environment is in sync with the checked-out root `.env` file before publish. If the Environment has drifted, rerun:
+
+- `python ./scripts/dev.py env staging --sync-github-environment`
+- `python ./scripts/dev.py env production --sync-github-environment`
+
+The supported root-managed environment files live under [`config/`](config):
+
+- `config/.env.local`: local developer overrides used by the root CLI for local runtime workflows
+- `config/.env.staging`: staging deployment/operator values used by `deploy --staging`
+- `config/.env`: reserved for future production deployment/operator values
+
+For hosted Supabase environments, `SUPABASE_URL` may be omitted when `SUPABASE_PROJECT_REF` is set and the project uses the default hosted Supabase URL. Keep `SUPABASE_URL` explicit for local development, custom domains, and any non-default routing.
+
+Do not commit those live `.env` files. Only the checked-in `*.example` templates should be tracked.

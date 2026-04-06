@@ -1,0 +1,206 @@
+# Production Release Runbook
+
+This runbook is the step-by-step guide for preparing and deploying the live Board Enthusiasts experience to `production`.
+
+Use it together with:
+
+- [docs/developer-cli.md](./developer-cli.md)
+- [docs/data-operations.md](./data-operations.md)
+- [docs/analytics.md](./analytics.md)
+- [docs/staging-release-runbook.md](./staging-release-runbook.md)
+
+## Table of Contents
+
+- [Release Goal](#release-goal)
+- [Production Data Policy](#production-data-policy)
+- [Pre-Deployment Checks](#pre-deployment-checks)
+- [Production Environment Preparation](#production-environment-preparation)
+- [Deploy Steps](#deploy-steps)
+- [Post-Deploy Validation](#post-deploy-validation)
+- [First-Run Admin Bootstrap](#first-run-admin-bootstrap)
+- [If Staging Data Must Be Promoted](#if-staging-data-must-be-promoted)
+
+## Release Goal
+
+The production target is the live BE site with:
+
+- `VITE_LANDING_MODE=false`
+- the public browse, studio, title, offerings, install, and support surfaces
+- player, developer, and moderator workflows enabled
+- analytics enabled
+- no demo content seeded into production
+
+## Production Data Policy
+
+Production is intentionally different from staging:
+
+- `staging` stays seeded with the maintained mock/demo catalog and smoke users
+- `production` must not be seeded with demo users, demo studios, demo titles, demo media, or demo reports
+- the only initial bootstrap account should be the operator super admin
+
+The recommended initial operator bootstrap is:
+
+- email: `super-admin@example.com`
+- password: `LocalDevOnly!234`
+
+These are placeholder defaults only. Override them with the real operator-owned values before any hosted bootstrap.
+
+## Pre-Deployment Checks
+
+Run these locally from the root repository:
+
+```bash
+python ./scripts/dev.py all-tests --start-workers
+python ./scripts/dev.py api-test --start-workers --skip-lint
+python ./scripts/dev.py parity-test
+```
+
+Also confirm:
+
+1. The root CLI/unit test suite is green.
+2. The frontend test suite is green.
+3. The backend test suite is green.
+4. The contract smoke and workers smoke suites are green.
+5. The working tree contains only intentional release changes.
+
+## Production Environment Preparation
+
+Open the production environment file:
+
+```bash
+python ./scripts/dev.py env production --open
+```
+
+Confirm `config/.env` contains the real hosted values for:
+
+- `BOARD_ENTHUSIASTS_SPA_BASE_URL`
+- `BOARD_ENTHUSIASTS_WORKERS_BASE_URL`
+- `SUPABASE_URL`
+- `SUPABASE_PROJECT_REF`
+- `SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SECRET_KEY`
+- `SUPABASE_DB_PASSWORD`
+- `SUPABASE_ACCESS_TOKEN`
+- `SUPABASE_AVATARS_BUCKET`
+- `SUPABASE_CARD_IMAGES_BUCKET`
+- `SUPABASE_HERO_IMAGES_BUCKET`
+- `SUPABASE_LOGO_IMAGES_BUCKET`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+- `VITE_TURNSTILE_SITE_KEY`
+- `TURNSTILE_SECRET_KEY`
+- `BREVO_API_KEY`
+- `BREVO_SIGNUPS_LIST_ID`
+- `ALLOWED_WEB_ORIGINS`
+- `SUPPORT_REPORT_RECIPIENT`
+- `SUPPORT_REPORT_SENDER_EMAIL`
+- `SUPPORT_REPORT_SENDER_NAME`
+- `DEPLOY_SMOKE_SECRET`
+- `VITE_LANDING_MODE=false`
+
+Important note:
+
+- `DEPLOY_SMOKE_PLAYER_EMAIL`
+- `DEPLOY_SMOKE_DEVELOPER_EMAIL`
+- `DEPLOY_SMOKE_MODERATOR_EMAIL`
+- `DEPLOY_SMOKE_USER_PASSWORD`
+
+are optional in production unless you intentionally provision dedicated production smoke accounts. If those are omitted, the maintained deploy flow falls back to public-route smoke.
+
+### GitHub Environment Sync
+
+Publish the current production env file into the matching GitHub Environment:
+
+```bash
+python ./scripts/dev.py env production --sync-github-environment
+```
+
+## Deploy Steps
+
+### 1. Preflight
+
+```bash
+python ./scripts/dev.py deploy --preflight-only
+```
+
+### 2. Dry Run
+
+```bash
+python ./scripts/dev.py deploy --dry-run-only
+```
+
+### 3. Real Production Deploy
+
+```bash
+python ./scripts/dev.py deploy
+```
+
+This should:
+
+- push the hosted Supabase auth/provider configuration for production
+- provision or validate hosted Supabase schema state
+- provision or validate typed storage buckets
+- skip demo seeding for production
+- deploy the Workers API
+- deploy the Pages frontend
+- run the configured hosted smoke checks
+
+## Post-Deploy Validation
+
+After the deployment succeeds, manually validate the live production site.
+
+### Public Flows
+
+Check:
+
+- `/`
+- `/offerings`
+- `/browse`
+- `/studios`
+- `/install`
+- `/support`
+
+Verify:
+
+- the site shell renders correctly
+- copy is current and user-friendly
+- public browse/search behave correctly
+- no demo content is present unless it was intentionally promoted
+
+### Account Flows
+
+After the operator account is bootstrapped, verify:
+
+- sign-in works
+- `/player` loads
+- `/developer` loads
+- moderation access is present
+
+## First-Run Admin Bootstrap
+
+Run this once against production after the first successful deploy:
+
+```bash
+python ./scripts/dev.py bootstrap-super-admin
+```
+
+This command is idempotent. It creates or repairs:
+
+- the Supabase Auth user
+- the BE `app_users` projection
+- the full elevated role set needed for end-to-end access
+
+## If Staging Data Must Be Promoted
+
+If preview users created real data in staging that should become production baseline data, do not improvise the import.
+
+Use [docs/data-operations.md](./data-operations.md), especially:
+
+- [Staging To Production Promotion Options](./data-operations.md#staging-to-production-promotion-options)
+- [Selective Promotion Checklist](./data-operations.md#selective-promotion-checklist)
+
+Recommended order of preference:
+
+1. Fresh production with no promotion
+2. Whole-environment baseline promotion before launch
+3. Selective promotion only with a reviewed inventory and import plan

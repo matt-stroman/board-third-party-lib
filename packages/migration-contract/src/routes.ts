@@ -1,0 +1,111 @@
+export type MaintainedAccessLevel = "public" | "player" | "developer" | "moderator";
+
+export interface MaintainedUiRoute {
+  path: string;
+  label: string;
+  access: MaintainedAccessLevel;
+  parityMarker: string;
+}
+
+export const maintainedUiRoutes: ReadonlyArray<MaintainedUiRoute> = [
+  { path: "/", label: "Home", access: "public", parityMarker: "Board Enthusiasts" },
+  { path: "/browse", label: "Browse", access: "public", parityMarker: "Browse" },
+  { path: "/studios/blue-harbor-games", label: "Public Studio", access: "public", parityMarker: "Blue Harbor Games" },
+  { path: "/browse/blue-harbor-games/lantern-drift", label: "Public Title", access: "public", parityMarker: "Lantern Drift" },
+  { path: "/player", label: "Player Workspace", access: "player", parityMarker: "My Games" },
+  { path: "/developer", label: "Developer Workspace", access: "developer", parityMarker: "Developer Console" },
+  { path: "/moderate", label: "Moderation Workspace", access: "moderator", parityMarker: "Verify Developers" }
+];
+
+export interface MaintainedApiRoute {
+  method: "GET" | "POST" | "PUT" | "DELETE";
+  path: string;
+  description: string;
+  access: MaintainedAccessLevel;
+  authMode: "public" | "token-optional" | "token-required";
+}
+
+export const maintainedApiRoutes: ReadonlyArray<MaintainedApiRoute> = [
+  { method: "GET", path: "/", description: "API metadata", access: "public", authMode: "public" },
+  { method: "GET", path: "/health/live", description: "Live health probe", access: "public", authMode: "public" },
+  { method: "GET", path: "/health/ready", description: "Ready health probe", access: "public", authMode: "public" },
+  { method: "GET", path: "/genres", description: "Genre catalog listing", access: "public", authMode: "public" },
+  { method: "GET", path: "/age-rating-authorities", description: "Age rating authority catalog listing", access: "public", authMode: "public" },
+  { method: "GET", path: "/spotlights/home", description: "Home spotlight listing", access: "public", authMode: "public" },
+  { method: "GET", path: "/catalog", description: "Public catalog listing", access: "public", authMode: "public" },
+  { method: "GET", path: "/studios", description: "Public studio listing", access: "public", authMode: "public" },
+  { method: "GET", path: "/catalog/blue-harbor-games/lantern-drift", description: "Catalog detail", access: "public", authMode: "token-optional" },
+  { method: "GET", path: "/studios/blue-harbor-games", description: "Public studio detail", access: "public", authMode: "public" },
+  { method: "GET", path: "/identity/user-name-availability", description: "Public username availability check", access: "public", authMode: "public" },
+  { method: "POST", path: "/studios", description: "Create developer studio", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/identity/me", description: "Current-user bootstrap", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/identity/me/profile", description: "Current-user profile read", access: "player", authMode: "token-required" },
+  { method: "PUT", path: "/identity/me/profile", description: "Current-user profile update", access: "player", authMode: "token-required" },
+  { method: "POST", path: "/identity/me/password/verify", description: "Current-user password verification", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/identity/me/board-profile", description: "Current-user linked Board profile", access: "player", authMode: "token-required" },
+  { method: "PUT", path: "/identity/me/board-profile", description: "Current-user linked Board profile upsert", access: "player", authMode: "token-required" },
+  { method: "DELETE", path: "/identity/me/board-profile", description: "Current-user linked Board profile delete", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/identity/me/notifications", description: "Current-user notifications", access: "player", authMode: "token-required" },
+  { method: "POST", path: "/identity/me/notifications/{notificationId}/read", description: "Mark current-user notification as read", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/identity/me/developer-enrollment", description: "Developer access read model", access: "player", authMode: "token-required" },
+  { method: "POST", path: "/identity/me/developer-enrollment", description: "Developer self-enrollment", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/player/library", description: "Player library titles", access: "player", authMode: "token-required" },
+  { method: "PUT", path: "/player/library/titles/{titleId}", description: "Add title to player library", access: "player", authMode: "token-required" },
+  { method: "DELETE", path: "/player/library/titles/{titleId}", description: "Remove title from player library", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/player/wishlist", description: "Player wishlist titles", access: "player", authMode: "token-required" },
+  { method: "PUT", path: "/player/wishlist/titles/{titleId}", description: "Add title to player wishlist", access: "player", authMode: "token-required" },
+  { method: "DELETE", path: "/player/wishlist/titles/{titleId}", description: "Remove title from player wishlist", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/player/followed-studios", description: "Player followed studios", access: "player", authMode: "token-required" },
+  { method: "PUT", path: "/player/followed-studios/{studioId}", description: "Follow studio", access: "player", authMode: "token-required" },
+  { method: "DELETE", path: "/player/followed-studios/{studioId}", description: "Unfollow studio", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/player/reports", description: "Player title report list", access: "player", authMode: "token-required" },
+  { method: "POST", path: "/player/reports", description: "Create player title report", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/player/reports/{reportId}", description: "Player title report detail", access: "player", authMode: "token-required" },
+  { method: "POST", path: "/player/reports/{reportId}/messages", description: "Add player title report message", access: "player", authMode: "token-required" },
+  { method: "GET", path: "/developer/studios", description: "Developer studio workspace list", access: "developer", authMode: "token-required" },
+  { method: "PUT", path: "/developer/studios/{studioId}", description: "Update developer studio", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/developer/studios/{studioId}/links", description: "Developer studio link list", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/studios/{studioId}/links", description: "Create developer studio link", access: "developer", authMode: "token-required" },
+  { method: "PUT", path: "/developer/studios/{studioId}/links/{linkId}", description: "Update developer studio link", access: "developer", authMode: "token-required" },
+  { method: "DELETE", path: "/developer/studios/{studioId}/links/{linkId}", description: "Delete developer studio link", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/studios/{studioId}/logo-upload", description: "Upload developer studio logo", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/studios/{studioId}/avatar-upload", description: "Upload developer studio avatar", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/studios/{studioId}/banner-upload", description: "Upload developer studio banner", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/developer/studios/{studioId}/titles", description: "Developer title list for a studio", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/studios/{studioId}/titles", description: "Create developer title", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/developer/titles/{titleId}", description: "Developer title detail", access: "developer", authMode: "token-required" },
+  { method: "PUT", path: "/developer/titles/{titleId}", description: "Update developer title", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/titles/{titleId}/activate", description: "Activate developer title", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/titles/{titleId}/archive", description: "Archive developer title", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/titles/{titleId}/unarchive", description: "Unarchive developer title", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/titles/{titleId}/delete", description: "Delete developer title", access: "developer", authMode: "token-required" },
+  { method: "PUT", path: "/developer/titles/{titleId}/metadata/current", description: "Update current title metadata", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/developer/titles/{titleId}/metadata-versions", description: "Developer title metadata versions", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/titles/{titleId}/metadata-versions/{revisionNumber}/activate", description: "Activate title metadata version", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/developer/titles/{titleId}/media", description: "Developer title media assets", access: "developer", authMode: "token-required" },
+  { method: "PUT", path: "/developer/titles/{titleId}/media/{mediaRole}", description: "Upsert developer title media asset", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/titles/{titleId}/media/{mediaRole}/upload", description: "Upload developer title media asset", access: "developer", authMode: "token-required" },
+  { method: "DELETE", path: "/developer/titles/{titleId}/media/{mediaRole}", description: "Delete developer title media asset", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/developer/titles/{titleId}/showcase-media", description: "Developer title showcase media list", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/titles/{titleId}/showcase-media", description: "Create developer title showcase media", access: "developer", authMode: "token-required" },
+  { method: "PUT", path: "/developer/titles/{titleId}/showcase-media/{showcaseMediaId}", description: "Update developer title showcase media", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/titles/{titleId}/showcase-media/{showcaseMediaId}/image-upload", description: "Upload developer title showcase media image", access: "developer", authMode: "token-required" },
+  { method: "DELETE", path: "/developer/titles/{titleId}/showcase-media/{showcaseMediaId}", description: "Delete developer title showcase media", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/developer/titles/{titleId}/reports", description: "Developer title report list", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/developer/titles/{titleId}/reports/{reportId}", description: "Developer title report detail", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/titles/{titleId}/reports/{reportId}/messages", description: "Add developer title report message", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/developer/titles/{titleId}/releases", description: "Developer title releases", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/titles/{titleId}/releases", description: "Create title release", access: "developer", authMode: "token-required" },
+  { method: "PUT", path: "/developer/titles/{titleId}/releases/{releaseId}", description: "Update title release", access: "developer", authMode: "token-required" },
+  { method: "POST", path: "/developer/titles/{titleId}/releases/{releaseId}/activate", description: "Activate title release", access: "developer", authMode: "token-required" },
+  { method: "DELETE", path: "/developer/studios/{studioId}", description: "Delete developer studio", access: "developer", authMode: "token-required" },
+  { method: "GET", path: "/moderation/developers", description: "Moderation developer search", access: "moderator", authMode: "token-required" },
+  { method: "GET", path: "/moderation/developers/{developerSubject}/verification", description: "Read developer verification state", access: "moderator", authMode: "token-required" },
+  { method: "PUT", path: "/moderation/developers/{developerSubject}/verified-developer", description: "Grant verified developer role", access: "moderator", authMode: "token-required" },
+  { method: "DELETE", path: "/moderation/developers/{developerSubject}/verified-developer", description: "Revoke verified developer role", access: "moderator", authMode: "token-required" },
+  { method: "GET", path: "/moderation/title-reports", description: "Moderation title report list", access: "moderator", authMode: "token-required" },
+  { method: "GET", path: "/moderation/title-reports/{reportId}", description: "Moderation title report detail", access: "moderator", authMode: "token-required" },
+  { method: "POST", path: "/moderation/title-reports/{reportId}/messages", description: "Add moderation title report message", access: "moderator", authMode: "token-required" },
+  { method: "POST", path: "/moderation/title-reports/{reportId}/validate", description: "Validate title report", access: "moderator", authMode: "token-required" },
+  { method: "POST", path: "/moderation/title-reports/{reportId}/invalidate", description: "Invalidate title report", access: "moderator", authMode: "token-required" }
+];

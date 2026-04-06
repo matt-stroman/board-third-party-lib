@@ -1,0 +1,360 @@
+name: Root Validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: root-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  root-tooling:
+    name: Validate Root Tooling
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Show submodule status
+        run: git submodule status --recursive
+
+      - name: Compile root developer CLI
+        run: python -m py_compile scripts/dev.py
+
+      - name: Run root developer automation tests
+        run: python -m unittest discover -s tests/root_cli -p "test_*.py"
+
+  contract-smoke:
+    name: Contract Smoke
+    runs-on: ubuntu-latest
+    needs: root-tooling
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Configure isolated local validation ports
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import os
+
+          run_id = int(os.environ.get("GITHUB_RUN_ID", "0"))
+          base_port = 56000 + (run_id % 200) * 20
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_API_PORT={base_port}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_DB_PORT={base_port + 1}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_SHADOW_PORT={base_port + 2}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_STUDIO_PORT={base_port + 3}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_MAILPIT_PORT={base_port + 4}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_WORKERS_PORT={base_port + 5}")
+          PY
+
+      - name: Apply isolated Supabase config
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          config_path = Path("backend/supabase/config.toml")
+          text = config_path.read_text(encoding="utf-8")
+          replacements = [
+              ("port = 55421", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_API_PORT']}"),
+              ("port = 55432", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_DB_PORT']}"),
+              ("shadow_port = 55420", f"shadow_port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_SHADOW_PORT']}"),
+              ("port = 55423", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_STUDIO_PORT']}"),
+              ("port = 55424", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_MAILPIT_PORT']}"),
+          ]
+          updated = text
+          for original, replacement in replacements:
+              updated = updated.replace(original, replacement, 1)
+          config_path.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Run contract smoke tests
+        run: python ./scripts/dev.py contract-smoke --start-workers
+
+  workers-smoke:
+    name: Workers Smoke
+    runs-on: ubuntu-latest
+    needs: root-tooling
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Configure isolated local validation ports
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import os
+
+          run_id = int(os.environ.get("GITHUB_RUN_ID", "0")) + 1
+          base_port = 56000 + (run_id % 200) * 20
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_API_PORT={base_port}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_DB_PORT={base_port + 1}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_SHADOW_PORT={base_port + 2}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_STUDIO_PORT={base_port + 3}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_MAILPIT_PORT={base_port + 4}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_WORKERS_PORT={base_port + 5}")
+          PY
+
+      - name: Apply isolated Supabase config
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          config_path = Path("backend/supabase/config.toml")
+          text = config_path.read_text(encoding="utf-8")
+          replacements = [
+              ("port = 55421", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_API_PORT']}"),
+              ("port = 55432", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_DB_PORT']}"),
+              ("shadow_port = 55420", f"shadow_port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_SHADOW_PORT']}"),
+              ("port = 55423", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_STUDIO_PORT']}"),
+              ("port = 55424", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_MAILPIT_PORT']}"),
+          ]
+          updated = text
+          for original, replacement in replacements:
+              updated = updated.replace(original, replacement, 1)
+          config_path.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Run workers smoke tests
+        run: python ./scripts/dev.py workers-smoke --start-stack
+
+  api-contract-postman:
+    name: API Contract Postman
+    runs-on: ubuntu-latest
+    needs: root-tooling
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Postman CLI
+        run: npm install --global postman-cli
+
+      - name: Configure isolated local validation ports
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import os
+
+          run_id = int(os.environ.get("GITHUB_RUN_ID", "0")) + 2
+          base_port = 56000 + (run_id % 200) * 20
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_API_PORT={base_port}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_DB_PORT={base_port + 1}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_SHADOW_PORT={base_port + 2}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_SUPABASE_STUDIO_PORT={base_port + 3}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_MAILPIT_PORT={base_port + 4}")
+          print(f"BOARD_ENTHUSIASTS_LOCAL_WORKERS_PORT={base_port + 5}")
+          PY
+
+      - name: Apply isolated Supabase config
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          config_path = Path("backend/supabase/config.toml")
+          text = config_path.read_text(encoding="utf-8")
+          replacements = [
+              ("port = 55421", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_API_PORT']}"),
+              ("port = 55432", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_DB_PORT']}"),
+              ("shadow_port = 55420", f"shadow_port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_SHADOW_PORT']}"),
+              ("port = 55423", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_SUPABASE_STUDIO_PORT']}"),
+              ("port = 55424", f"port = {os.environ['BOARD_ENTHUSIASTS_LOCAL_MAILPIT_PORT']}"),
+          ]
+          updated = text
+          for original, replacement in replacements:
+              updated = updated.replace(original, replacement, 1)
+          config_path.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Run Postman API contract tests
+        run: python ./scripts/dev.py api-test --start-workers
+
+  pages-dry-run:
+    name: Pages Staging Dry Run
+    runs-on: ubuntu-latest
+    needs: root-tooling
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Run Pages staging dry run
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ci-dry-run-account
+          CLOUDFLARE_API_TOKEN: ci-dry-run-token
+          BOARD_ENTHUSIASTS_WORKERS_BASE_URL: https://api.staging.boardenthusiasts.com
+          SUPABASE_URL: https://example-project.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: ci-dry-run-publishable-key
+          VITE_TURNSTILE_SITE_KEY: ci-dry-run-turnstile-site-key
+          VITE_LANDING_MODE: true
+        run: python ./scripts/dev.py deploy-staging --dry-run --pages-only
+
+  workers-dry-run:
+    name: Workers Staging Dry Run
+    runs-on: ubuntu-latest
+    needs: root-tooling
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Run Workers staging dry run
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ci-dry-run-account
+          CLOUDFLARE_API_TOKEN: ci-dry-run-token
+          BOARD_ENTHUSIASTS_WORKERS_BASE_URL: https://api.staging.boardenthusiasts.com
+          SUPABASE_URL: https://example-project.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: ci-dry-run-publishable-key
+          SUPABASE_SECRET_KEY: ci-dry-run-secret-key
+          SUPABASE_AVATARS_BUCKET: avatars
+          SUPABASE_CARD_IMAGES_BUCKET: card-images
+          SUPABASE_HERO_IMAGES_BUCKET: hero-images
+          SUPABASE_LOGO_IMAGES_BUCKET: logo-images
+          TURNSTILE_SECRET_KEY: ci-dry-run-turnstile-secret-key
+          BREVO_API_KEY: ci-dry-run-brevo-api-key
+          BREVO_SIGNUPS_LIST_ID: 1
+          ALLOWED_WEB_ORIGINS: https://boardenthusiasts.com,https://staging.boardenthusiasts.com
+          SUPPORT_REPORT_RECIPIENT: support@boardenthusiasts.com
+          SUPPORT_REPORT_SENDER_EMAIL: noreply@boardenthusiasts.com
+          SUPPORT_REPORT_SENDER_NAME: Board Enthusiasts
+        run: python ./scripts/dev.py deploy-staging --dry-run --workers-only
+
+  deploy-cli-surface:
+    name: Deploy CLI Surface
+    runs-on: ubuntu-latest
+    needs: root-tooling
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate deploy command surface
+        run: |
+          python ./scripts/dev.py deploy --help
+          python - <<'PY'
+          from pathlib import Path
+
+          required = {
+              "config/.env.staging.example": [
+                  "SUPABASE_DB_PASSWORD=",
+                  "SUPABASE_ACCESS_TOKEN=",
+                  "DEPLOY_SMOKE_SECRET=",
+                  "DEPLOY_SMOKE_PLAYER_EMAIL=",
+                  "DEPLOY_SMOKE_DEVELOPER_EMAIL=",
+                  "DEPLOY_SMOKE_MODERATOR_EMAIL=",
+                  "DEPLOY_SMOKE_USER_PASSWORD=",
+              ],
+              "config/.env.example": [
+                  "SUPABASE_DB_PASSWORD=",
+                  "SUPABASE_ACCESS_TOKEN=",
+                  "DEPLOY_SMOKE_SECRET=",
+                  "DEPLOY_SMOKE_PLAYER_EMAIL=",
+                  "DEPLOY_SMOKE_DEVELOPER_EMAIL=",
+                  "DEPLOY_SMOKE_MODERATOR_EMAIL=",
+                  "DEPLOY_SMOKE_USER_PASSWORD=",
+              ],
+          }
+
+          for path, expected_lines in required.items():
+              text = Path(path).read_text(encoding="utf-8")
+              missing = [line for line in expected_lines if line not in text]
+              if missing:
+                  raise SystemExit(f"{path} is missing expected deploy keys: {missing}")
+          PY

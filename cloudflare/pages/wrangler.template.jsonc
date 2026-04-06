@@ -1,0 +1,13 @@
+{
+  "$schema": "https://developers.cloudflare.com/workers/wrangler/config-schema.json",
+  "name": "board-enthusiasts-pages-staging",
+  "compatibility_date": "2025-03-01",
+  "pages_build_output_dir": "../../frontend/dist",
+  "vars": {
+    "VITE_API_BASE_URL": "env(BOARD_ENTHUSIASTS_WORKERS_BASE_URL)",
+    "VITE_SUPABASE_URL": "env(SUPABASE_URL)",
+    "VITE_SUPABASE_PUBLISHABLE_KEY": "env(SUPABASE_PUBLISHABLE_KEY)",
+    "VITE_TURNSTILE_SITE_KEY": "env(VITE_TURNSTILE_SITE_KEY)",
+    "VITE_LANDING_MODE": "env(VITE_LANDING_MODE)"
+  }
+}
