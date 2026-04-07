@@ -447,13 +447,9 @@ For production specifically:
 - bootstrap the first operator account separately
 - keep staging as the seeded/mock-data environment for release validation
 
-Recommended first-production bootstrap command:
+Use the maintained privileged operator bootstrap workflow from a trusted checkout with the production environment loaded securely.
 
-```bash
-python ./scripts/dev.py bootstrap-super-admin --email "operator@your-domain.com"
-```
-
-The command prompts securely for the operator password and confirmation at runtime instead of accepting the password on the command line.
+The workflow prompts securely for the operator password and confirmation at runtime instead of accepting the password on the command line. The public repo intentionally omits runnable privileged bootstrap examples.
 
 Why this is better than production seeding:
 

@@ -390,18 +390,15 @@ Hosted smoke behavior differs by environment when `VITE_LANDING_MODE=false`:
 
 ### Bootstrap the first production super admin
 
-Use the maintained root CLI instead of demo seeding when you need the initial production operator account:
-
-```bash
-python ./scripts/dev.py bootstrap-super-admin
-```
+Use the maintained root CLI's privileged hosted-account bootstrap workflow instead of demo seeding when you need the initial production operator account.
 
 By default this targets `production` and bootstraps:
 
-- the email you pass with `--email`, or an interactive prompt when omitted
+- the operator-owned email address supplied at runtime
 - a password that is entered only through the secure hidden prompt
 
 For hosted environments, the password is never accepted as a CLI argument. The maintained bootstrap flow prompts for it securely and requires confirmation before continuing.
+The public repo intentionally does not include copy-pasteable production bootstrap invocations.
 
 The bootstrap is idempotent:
 
@@ -414,13 +411,6 @@ The bootstrap is idempotent:
   - `moderator`
   - `admin`
   - `super_admin`
-
-You can override the target or profile fields when needed:
-
-```bash
-python ./scripts/dev.py bootstrap-super-admin --email you@example.com
-python ./scripts/dev.py bootstrap-super-admin staging --email you@example.com
-```
 
 ### Run hosted deploys from the GitHub web UI
 
