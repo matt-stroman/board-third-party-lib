@@ -1631,6 +1631,85 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertNotIn("https://api.staging.boardenthusiasts.com/developer/titles/title-1/releases/release-1/publish", requested_urls)
         self.assertNotIn("https://api.staging.boardenthusiasts.com/developer/titles/title-1/releases/release-1/withdraw", requested_urls)
 
+    def test_run_full_mvp_workers_deploy_smoke_allows_empty_production_catalog(self) -> None:
+        env_values = {
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.boardenthusiasts.com",
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://boardenthusiasts.com",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
+            "DEPLOY_SMOKE_PLAYER_EMAIL": "testing+player@boardenthusiasts.com",
+            "DEPLOY_SMOKE_DEVELOPER_EMAIL": "testing+developer@boardenthusiasts.com",
+            "DEPLOY_SMOKE_MODERATOR_EMAIL": "testing+moderator@boardenthusiasts.com",
+            "DEPLOY_SMOKE_USER_PASSWORD": "shared-password",
+        }
+        request_calls: list[dict[str, object | None]] = []
+        release_create_count = 0
+        report_create_count = 0
+
+        def fake_request_json(*, url: str, method: str = "GET", headers: dict[str, str] | None = None, payload: object = None, **_: object) -> object:
+            nonlocal release_create_count, report_create_count
+            request_calls.append({"url": url, "method": method, "headers": headers, "payload": payload})
+
+            if url.endswith("/health/ready"):
+                return {"status": "ready"}
+            if url == "https://api.boardenthusiasts.com/":
+                return {"service": "board-enthusiasts-workers-api"}
+            if url.endswith("/genres"):
+                return {"genres": [{"slug": "utility"}]}
+            if url.endswith("/age-rating-authorities"):
+                return {"ageRatingAuthorities": [{"code": "ESRB"}]}
+            if "/catalog?pageNumber=1&pageSize=4&sort=title-asc" in url:
+                return {"titles": []}
+            if url.endswith("/identity/me/notifications"):
+                return {"notifications": [{"id": "notification-1"}]}
+            if url.endswith("/developer/studios"):
+                return {"studios": []}
+            if url.endswith("/studios") and method == "POST":
+                return {"studio": {"id": "studio-1"}}
+            if url.endswith("/links") and method == "POST":
+                return {"link": {"id": "link-1"}}
+            if url.endswith("/developer/studios/studio-1/titles") and method == "POST":
+                return {"title": {"id": "title-1"}}
+            if url.endswith("/metadata/current") and method == "PUT":
+                return {"title": {"currentMetadataRevision": 2}}
+            if url.endswith("/releases") and method == "POST":
+                release_create_count += 1
+                return {"release": {"id": f"release-{release_create_count}"}}
+            if url.endswith("/releases") and method == "GET":
+                return {"releases": [{"version": "0.1.0-smoke"}, {"version": "0.1.1-smoke"}]}
+            if url.endswith("/player/reports") and method == "POST":
+                report_create_count += 1
+                return {"report": {"id": f"report-{report_create_count}"}}
+            if "/moderation/developers?search=" in url:
+                return {
+                    "developers": [
+                        {
+                            "email": "testing+developer@boardenthusiasts.com",
+                            "developerSubject": "developer-subject-1",
+                        }
+                    ]
+                }
+            return {}
+
+        with (
+            mock.patch.object(dev, "wait_for_workers_deploy_smoke_base_url"),
+            mock.patch.object(
+                dev,
+                "fetch_supabase_access_token",
+                side_effect=["player-token", "developer-token", "moderator-token"],
+            ),
+            mock.patch.object(dev, "request_json", side_effect=fake_request_json),
+            mock.patch.object(dev.time, "time", return_value=1773474581),
+        ):
+            dev.run_full_mvp_workers_deploy_smoke(target="production", env_values=env_values)
+
+        requested_urls = [str(call["url"]) for call in request_calls]
+        self.assertIn("https://api.boardenthusiasts.com/player/library", requested_urls)
+        self.assertIn("https://api.boardenthusiasts.com/player/wishlist", requested_urls)
+        self.assertNotIn("https://api.boardenthusiasts.com/player/library/titles/", "".join(requested_urls))
+        self.assertNotIn("https://api.boardenthusiasts.com/player/wishlist/titles/", "".join(requested_urls))
+        self.assertNotIn("https://api.boardenthusiasts.com/catalog/", "".join(requested_urls))
+
     def test_has_local_required_schema_includes_marketing_contacts(self) -> None:
         runtime_env = {
             "SUPABASE_URL": "http://127.0.0.1:55421",

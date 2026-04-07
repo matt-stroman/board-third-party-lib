@@ -47,6 +47,7 @@ The recommended initial operator bootstrap is:
 - a strong operator-owned password entered only at the secure prompt during bootstrap
 
 The maintained bootstrap flow no longer accepts the password on the command line or in committed docs/examples.
+Public access to this repository does not grant hosted-environment access by itself; privileged operator workflows still require the production provider credentials and secret material that live outside git. Even so, the public runbooks intentionally omit copy-pasteable privileged bootstrap invocations.
 
 ## Pre-Deployment Checks
 
@@ -249,11 +250,7 @@ After the operator account is bootstrapped, verify:
 
 ## First-Run Admin Bootstrap
 
-Run this once against production after the first successful deploy:
-
-```bash
-python ./scripts/dev.py bootstrap-super-admin --email "operator@your-domain.com"
-```
+Run the maintained privileged operator bootstrap workflow once against production after the first successful deploy, from a trusted checkout that already has the production environment loaded securely.
 
 This command is idempotent. It creates or repairs:
 
@@ -261,7 +258,12 @@ This command is idempotent. It creates or repairs:
 - the BE `app_users` projection
 - the full elevated role set needed for end-to-end access
 
-The command will securely prompt for the password and confirmation at runtime.
+Operational guidance:
+
+- use the real operator-owned email address
+- enter the password only through the secure runtime prompt
+- do not paste privileged bootstrap commands into shared tickets, docs, chat, or screenshots
+- do not run the workflow from CI, shared shells, or untrusted machines
 
 ## If Staging Data Must Be Promoted
 

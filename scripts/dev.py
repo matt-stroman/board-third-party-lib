@@ -6009,7 +6009,6 @@ def run_landing_workers_deploy_smoke(*, target: str, env_values: dict[str, str])
 def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]) -> None:
     """Exercise the hosted full-MVP Worker routes with staged smoke accounts."""
 
-    del target  # The smoke users themselves identify the environment-specific scope.
     base_url = env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"].rstrip("/")
     smoke_values = require_full_mvp_deploy_smoke_values(env_values)
     wait_for_workers_deploy_smoke_base_url(base_url=base_url)
@@ -6069,27 +6068,25 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         url=f"{base_url}/catalog?pageNumber=1&pageSize=4&sort=title-asc",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
-    if not isinstance(catalog_payload, dict) or not isinstance(catalog_payload.get("titles"), list) or not catalog_payload["titles"]:
-        raise DevCliError("Workers smoke failed: /catalog did not return at least one public title.")
+    if not isinstance(catalog_payload, dict) or not isinstance(catalog_payload.get("titles"), list):
+        raise DevCliError("Workers smoke failed: /catalog did not return a titles list.")
 
     public_title = next((entry for entry in catalog_payload["titles"] if isinstance(entry, dict)), None)
-    if not isinstance(public_title, dict):
-        raise DevCliError("Workers smoke failed: catalog payload did not contain a valid title object.")
+    public_title_id = str(public_title.get("id", "")).strip() if isinstance(public_title, dict) else ""
+    public_title_slug = str(public_title.get("slug", "")).strip() if isinstance(public_title, dict) else ""
+    public_studio_slug = str(public_title.get("studioSlug", "")).strip() if isinstance(public_title, dict) else ""
 
-    public_title_id = str(public_title.get("id", "")).strip()
-    public_title_slug = str(public_title.get("slug", "")).strip()
-    public_studio_slug = str(public_title.get("studioSlug", "")).strip()
-    if not public_title_id or not public_title_slug or not public_studio_slug:
-        raise DevCliError("Workers smoke failed: catalog title did not include id, slug, and studioSlug.")
-
-    request_json(
-        url=f"{base_url}/catalog/{urllib.parse.quote(public_studio_slug)}/{urllib.parse.quote(public_title_slug)}",
-        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
-    )
-    request_json(
-        url=f"{base_url}/studios/{urllib.parse.quote(public_studio_slug)}",
-        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
-    )
+    if public_title_id and public_title_slug and public_studio_slug:
+        request_json(
+            url=f"{base_url}/catalog/{urllib.parse.quote(public_studio_slug)}/{urllib.parse.quote(public_title_slug)}",
+            headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+        )
+        request_json(
+            url=f"{base_url}/studios/{urllib.parse.quote(public_studio_slug)}",
+            headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+        )
+    elif target != "production":
+        raise DevCliError("Workers smoke failed: /catalog did not return at least one public title.")
 
     player_headers = build_api_bearer_headers(player_token)
     developer_headers = build_api_bearer_headers(developer_token)
@@ -6128,27 +6125,28 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
             )
 
     request_json(url=f"{base_url}/player/library", headers=player_headers)
-    request_json(
-        url=f"{base_url}/player/library/titles/{urllib.parse.quote(public_title_id)}",
-        method="PUT",
-        headers=player_headers,
-    )
-    request_json(
-        url=f"{base_url}/player/library/titles/{urllib.parse.quote(public_title_id)}",
-        method="DELETE",
-        headers=player_headers,
-    )
     request_json(url=f"{base_url}/player/wishlist", headers=player_headers)
-    request_json(
-        url=f"{base_url}/player/wishlist/titles/{urllib.parse.quote(public_title_id)}",
-        method="PUT",
-        headers=player_headers,
-    )
-    request_json(
-        url=f"{base_url}/player/wishlist/titles/{urllib.parse.quote(public_title_id)}",
-        method="DELETE",
-        headers=player_headers,
-    )
+    if public_title_id:
+        request_json(
+            url=f"{base_url}/player/library/titles/{urllib.parse.quote(public_title_id)}",
+            method="PUT",
+            headers=player_headers,
+        )
+        request_json(
+            url=f"{base_url}/player/library/titles/{urllib.parse.quote(public_title_id)}",
+            method="DELETE",
+            headers=player_headers,
+        )
+        request_json(
+            url=f"{base_url}/player/wishlist/titles/{urllib.parse.quote(public_title_id)}",
+            method="PUT",
+            headers=player_headers,
+        )
+        request_json(
+            url=f"{base_url}/player/wishlist/titles/{urllib.parse.quote(public_title_id)}",
+            method="DELETE",
+            headers=player_headers,
+        )
 
     request_json(url=f"{base_url}/identity/me", headers=developer_headers)
     request_json(url=f"{base_url}/identity/me/profile", headers=developer_headers)
