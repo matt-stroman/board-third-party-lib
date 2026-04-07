@@ -7,6 +7,7 @@ Use it together with:
 - [docs/developer-cli.md](./developer-cli.md)
 - [docs/data-operations.md](./data-operations.md)
 - [docs/analytics.md](./analytics.md)
+- [docs/support-playbook.md](./support-playbook.md)
 - [docs/staging-release-runbook.md](./staging-release-runbook.md)
 
 ## Table of Contents

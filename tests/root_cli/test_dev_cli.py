@@ -3172,18 +3172,86 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             perform_clean_operation.call_args_list,
         )
 
-    def test_main_seed_data_uses_start_and_db_reset_workflow(self) -> None:
-        with mock.patch.object(dev, "run_supabase_stack_command") as run_supabase_stack_command:
+    def test_main_seed_data_uses_additive_seed_workflow_by_default(self) -> None:
+        with (
+            mock.patch.object(dev, "run_supabase_stack_command") as run_supabase_stack_command,
+            mock.patch.object(dev, "seed_migration_data") as seed_migration_data,
+        ):
             exit_code = dev.main(["seed-data"])
+
+        self.assertEqual(0, exit_code)
+        run_supabase_stack_command.assert_called_once_with(mock.ANY, action="start")
+        seed_migration_data.assert_called_once_with(
+            mock.ANY,
+            seed_password=dev.LOCAL_SEED_DEFAULT_PASSWORD,
+            additive=True,
+        )
+
+    def test_main_seed_data_reset_workflow_reseeds_with_requested_password(self) -> None:
+        with mock.patch.object(dev, "run_supabase_stack_command") as run_supabase_stack_command:
+            exit_code = dev.main(["seed-data", "--reset", "--seed-password", "CustomSeed!234"])
 
         self.assertEqual(0, exit_code)
         self.assertEqual(
             [
                 mock.call(mock.ANY, action="start"),
-                mock.call(mock.ANY, action="db-reset"),
+                mock.call(mock.ANY, action="db-reset", seed_password="CustomSeed!234"),
             ],
             run_supabase_stack_command.call_args_list,
         )
+
+    def test_seed_migration_data_passes_additive_flag_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            config = dev.config_from_args(self.create_args(), repo_root)
+            asset_root = repo_root / "frontend" / "public" / "seed-catalog"
+            asset_root.mkdir(parents=True, exist_ok=True)
+
+            runtime_env = {
+                "SUPABASE_URL": "http://127.0.0.1:55421",
+                "SUPABASE_SECRET_KEY": "service-role-key",
+                "SUPABASE_AVATARS_BUCKET": "avatars",
+                "SUPABASE_CARD_IMAGES_BUCKET": "card-images",
+                "SUPABASE_HERO_IMAGES_BUCKET": "hero-images",
+                "SUPABASE_LOGO_IMAGES_BUCKET": "logo-images",
+            }
+
+            with (
+                mock.patch.object(dev, "assert_command_available"),
+                mock.patch.object(dev, "ensure_migration_workspace_scaffolding"),
+                mock.patch.object(dev, "install_migration_workspace_dependencies"),
+                mock.patch.object(dev, "get_local_supabase_runtime", return_value=runtime_env),
+                mock.patch.object(dev, "wait_for_local_supabase_http_ready"),
+                mock.patch.object(dev, "run_command") as run_command,
+            ):
+                dev.seed_migration_data(config, seed_password="SeedPassword!123", additive=True)
+
+            run_command.assert_called_once_with(
+                [
+                    "npm",
+                    "run",
+                    "seed:migration",
+                    "--",
+                    "--additive",
+                    "--supabase-url",
+                    "http://127.0.0.1:55421",
+                    "--secret-key",
+                    "service-role-key",
+                    "--password",
+                    "SeedPassword!123",
+                    "--asset-root",
+                    str(asset_root.resolve()),
+                    "--avatars-bucket",
+                    "avatars",
+                    "--card-images-bucket",
+                    "card-images",
+                    "--hero-images-bucket",
+                    "hero-images",
+                    "--logo-images-bucket",
+                    "logo-images",
+                ],
+                cwd=config.repo_root,
+            )
 
     def test_run_api_contract_tests_starts_workers_and_injects_seeded_tokens(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

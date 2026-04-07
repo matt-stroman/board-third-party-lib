@@ -46,6 +46,7 @@ export const maintainedApiRoutes: ReadonlyArray<MaintainedApiRoute> = [
   { method: "PUT", path: "/identity/me/board-profile", description: "Current-user linked Board profile upsert", access: "player", authMode: "token-required" },
   { method: "DELETE", path: "/identity/me/board-profile", description: "Current-user linked Board profile delete", access: "player", authMode: "token-required" },
   { method: "GET", path: "/identity/me/notifications", description: "Current-user notifications", access: "player", authMode: "token-required" },
+  { method: "DELETE", path: "/identity/me/notifications", description: "Clear current-user notifications", access: "player", authMode: "token-required" },
   { method: "POST", path: "/identity/me/notifications/{notificationId}/read", description: "Mark current-user notification as read", access: "player", authMode: "token-required" },
   { method: "GET", path: "/identity/me/developer-enrollment", description: "Developer access read model", access: "player", authMode: "token-required" },
   { method: "POST", path: "/identity/me/developer-enrollment", description: "Developer self-enrollment", access: "player", authMode: "token-required" },

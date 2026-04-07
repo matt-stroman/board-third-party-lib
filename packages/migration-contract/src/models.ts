@@ -500,6 +500,8 @@ export interface DeveloperTitle {
   ageRatingValue: string | null;
   minAgeYears: number;
   ageDisplay: string | null;
+  wishlistCount?: number;
+  libraryCount?: number;
   cardImageUrl: string | null;
   acquisitionUrl: string | null;
   mediaAssets: TitleMediaAsset[];
@@ -593,6 +595,8 @@ export interface CatalogTitleSummary {
   ageRatingValue: string | null;
   minAgeYears: number;
   ageDisplay: string | null;
+  wishlistCount?: number;
+  libraryCount?: number;
   cardImageUrl: string | null;
   logoImageUrl: string | null;
   acquisitionUrl: string | null;
@@ -761,7 +765,7 @@ export const migrationMediaUploadPolicies = {
     maxUploadBytes: 1536 * 1024,
     acceptedMimeTypes: ["image/webp", "image/jpeg", "image/png"],
     recommendedWidth: 900,
-    recommendedHeight: 1280,
+    recommendedHeight: 1200,
   },
   heroImages: {
     bucket: migrationMediaBuckets.heroImages,
@@ -1202,7 +1206,7 @@ function buildSeedTitleFixture(args: {
       url: `${studioHomepage}/titles/${args.slug}`
     },
     media: [
-      { role: "card", assetPath: `${args.slug}/card.png`, altText: `${args.displayName} card art`, mimeType: "image/png", width: 900, height: 1280 },
+      { role: "card", assetPath: `${args.slug}/card.png`, altText: `${args.displayName} card art`, mimeType: "image/png", width: 900, height: 1200 },
       { role: "hero", assetPath: `${args.slug}/hero.png`, altText: `${args.displayName} hero art`, mimeType: "image/png", width: 1600, height: 900 },
       { role: "logo", assetPath: `${args.slug}/logo.png`, altText: `${args.displayName} logo`, mimeType: "image/png", width: 1200, height: 400 }
     ],

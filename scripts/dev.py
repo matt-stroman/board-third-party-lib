@@ -3501,12 +3501,13 @@ def force_remove_supabase_project_volumes(config: DevConfig) -> bool:
     return True
 
 
-def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
+def run_supabase_stack_command(config: DevConfig, *, action: str, seed_password: str | None = None) -> None:
     """Run a Supabase local workflow command from the repository root.
 
     Args:
         config: CLI configuration containing the Supabase project path.
         action: Supported action name.
+        seed_password: Optional password override used when reseeding after a local db reset.
 
     Returns:
         None.
@@ -3694,6 +3695,7 @@ def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
     if action == "db-reset":
         ensure_docker_daemon_available()
         write_step("Resetting local Supabase database and reseeding")
+        resolved_seed_password = seed_password or LOCAL_SEED_DEFAULT_PASSWORD
         attempts = 3
         for attempt in range(1, attempts + 1):
             result = run_command(
@@ -3704,7 +3706,7 @@ def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
             )
             if result.returncode == 0:
                 try:
-                    seed_migration_data(config, seed_password=LOCAL_SEED_DEFAULT_PASSWORD)
+                    seed_migration_data(config, seed_password=resolved_seed_password)
                     return
                 except DevCliError as ex:
                     if attempt < attempts and is_transient_supabase_seed_readiness_failure(ex):
@@ -3747,7 +3749,7 @@ def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
                 raise DevCliError("Supabase db reset failed." + (f"\n{output}" if output else ""))
 
             try:
-                seed_migration_data(config, seed_password=LOCAL_SEED_DEFAULT_PASSWORD)
+                seed_migration_data(config, seed_password=resolved_seed_password)
                 return
             except DevCliError as ex:
                 if attempt < attempts and (
@@ -3764,12 +3766,13 @@ def run_supabase_stack_command(config: DevConfig, *, action: str) -> None:
     raise DevCliError(f"Unsupported Supabase action: {action}")
 
 
-def seed_migration_data(config: DevConfig, *, seed_password: str) -> None:
+def seed_migration_data(config: DevConfig, *, seed_password: str, additive: bool = False) -> None:
     """Seed deterministic Supabase auth, data, and storage fixtures for the maintained stack.
 
     Args:
         config: CLI configuration containing workspace paths.
         seed_password: Password assigned to seeded local Supabase auth users.
+        additive: Whether to preserve existing local data and only add missing maintained fixtures.
 
     Returns:
         None.
@@ -3799,12 +3802,16 @@ def seed_migration_data(config: DevConfig, *, seed_password: str) -> None:
         raise DevCliError(f"Migration seed asset root was not found: {asset_root}")
 
     write_step("Seeding local Supabase auth, storage, and relational demo data")
-    run_command(
+    command = [
+        "npm",
+        "run",
+        "seed:migration",
+        "--",
+    ]
+    if additive:
+        command.append("--additive")
+    command.extend(
         [
-            "npm",
-            "run",
-            "seed:migration",
-            "--",
             "--supabase-url",
             runtime_env["SUPABASE_URL"],
             "--secret-key",
@@ -3821,9 +3828,9 @@ def seed_migration_data(config: DevConfig, *, seed_password: str) -> None:
             runtime_env["SUPABASE_HERO_IMAGES_BUCKET"],
             "--logo-images-bucket",
             runtime_env["SUPABASE_LOGO_IMAGES_BUCKET"],
-        ],
-        cwd=config.repo_root,
+        ]
     )
+    run_command(command, cwd=config.repo_root)
 
 
 def fetch_supabase_access_token(*, supabase_url: str, publishable_key: str, email: str, password: str) -> str:
@@ -8272,6 +8279,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=LOCAL_SEED_DEFAULT_PASSWORD,
         help="Password assigned to seeded local Supabase users",
     )
+    seed_data.add_argument(
+        "--reset",
+        action="store_true",
+        help="Reset the local Supabase database before reseeding the maintained fixtures",
+    )
 
     contract_smoke = subparsers.add_parser(
         "contract-smoke",
@@ -8710,7 +8722,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         elif args.command == "seed-data":
             run_supabase_stack_command(config, action="start")
-            run_supabase_stack_command(config, action="db-reset")
+            if args.reset:
+                run_supabase_stack_command(config, action="db-reset", seed_password=args.seed_password)
+            else:
+                seed_migration_data(config, seed_password=args.seed_password, additive=True)
         elif args.command == "contract-smoke":
             run_contract_smoke(
                 config,
