@@ -4605,6 +4605,7 @@ def build_deploy_fingerprint(
         "secrets": {
             key: hashlib.sha256(env_values[key].encode("utf-8")).hexdigest()[:16]
             for key in DEPLOY_SECRET_ENV_NAMES
+            if key in env_values
         },
     }
     return hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True).encode("utf-8")).hexdigest()
