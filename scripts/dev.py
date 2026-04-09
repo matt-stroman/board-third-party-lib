@@ -6128,9 +6128,21 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         raise DevCliError("Workers smoke failed: /catalog did not return a titles list.")
 
     public_title = next((entry for entry in catalog_payload["titles"] if isinstance(entry, dict)), None)
+    library_title = next(
+        (
+            entry
+            for entry in catalog_payload["titles"]
+            if isinstance(entry, dict)
+            and str(entry.get("id", "")).strip()
+            and isinstance(entry.get("acquisitionUrl"), str)
+            and entry["acquisitionUrl"].strip()
+        ),
+        None,
+    )
     public_title_id = str(public_title.get("id", "")).strip() if isinstance(public_title, dict) else ""
     public_title_slug = str(public_title.get("slug", "")).strip() if isinstance(public_title, dict) else ""
     public_studio_slug = str(public_title.get("studioSlug", "")).strip() if isinstance(public_title, dict) else ""
+    library_title_id = str(library_title.get("id", "")).strip() if isinstance(library_title, dict) else ""
 
     if public_title_id and public_title_slug and public_studio_slug:
         request_json(
@@ -6143,6 +6155,8 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         )
     elif target != "production":
         raise DevCliError("Workers smoke failed: /catalog did not return at least one public title.")
+    if not library_title_id and target != "production":
+        raise DevCliError("Workers smoke failed: /catalog did not return at least one library-eligible public title.")
 
     player_headers = build_api_bearer_headers(player_token)
     developer_headers = build_api_bearer_headers(developer_token)
@@ -6182,17 +6196,18 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
 
     request_json(url=f"{base_url}/player/library", headers=player_headers)
     request_json(url=f"{base_url}/player/wishlist", headers=player_headers)
-    if public_title_id:
+    if library_title_id:
         request_json(
-            url=f"{base_url}/player/library/titles/{urllib.parse.quote(public_title_id)}",
+            url=f"{base_url}/player/library/titles/{urllib.parse.quote(library_title_id)}",
             method="PUT",
             headers=player_headers,
         )
         request_json(
-            url=f"{base_url}/player/library/titles/{urllib.parse.quote(public_title_id)}",
+            url=f"{base_url}/player/library/titles/{urllib.parse.quote(library_title_id)}",
             method="DELETE",
             headers=player_headers,
         )
+    if public_title_id:
         request_json(
             url=f"{base_url}/player/wishlist/titles/{urllib.parse.quote(public_title_id)}",
             method="PUT",
