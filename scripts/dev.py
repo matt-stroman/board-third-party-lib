@@ -6284,6 +6284,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
                     "genreSlugs": ["utility", "qa"],
                     "minPlayers": 1,
                     "maxPlayers": 4,
+                    "maxPlayersOrMore": False,
                     "ageRatingAuthority": "ESRB",
                     "ageRatingValue": "E",
                     "minAgeYears": 6,
@@ -6317,6 +6318,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
                 "genreSlugs": ["utility", "qa"],
                 "minPlayers": 1,
                 "maxPlayers": 6,
+                "maxPlayersOrMore": False,
                 "ageRatingAuthority": "ESRB",
                 "ageRatingValue": "E10+",
                 "minAgeYears": 10,
@@ -6344,7 +6346,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
                 "altText": "Deploy smoke card art",
                 "mimeType": "image/png",
                 "width": 900,
-                "height": 1280,
+                "height": 1200,
             },
         )
         request_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases", headers=developer_headers)

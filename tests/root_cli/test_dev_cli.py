@@ -1573,6 +1573,23 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         )
         self.assertNotIn("visibility", title_create_call["payload"])
         self.assertNotIn("lifecycleStatus", title_create_call["payload"])
+        self.assertEqual(False, title_create_call["payload"]["metadata"]["maxPlayersOrMore"])
+
+        title_metadata_call = next(
+            call
+            for call in request_calls
+            if call["url"] == "https://api.staging.boardenthusiasts.com/developer/titles/title-1/metadata/current"
+            and call["method"] == "PUT"
+        )
+        self.assertEqual(False, title_metadata_call["payload"]["maxPlayersOrMore"])
+
+        title_media_call = next(
+            call
+            for call in request_calls
+            if call["url"] == "https://api.staging.boardenthusiasts.com/developer/titles/title-1/media/card"
+            and call["method"] == "PUT"
+        )
+        self.assertEqual(1200, title_media_call["payload"]["height"])
 
         requested_urls = [str(call["url"]) for call in request_calls]
         self.assertIn("https://api.staging.boardenthusiasts.com/developer/titles/title-1/activate", requested_urls)
