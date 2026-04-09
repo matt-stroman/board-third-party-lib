@@ -228,6 +228,56 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertIn("DEPLOY_SMOKE_USER_PASSWORD", dev.resolve_deploy_required_environment_names(target="staging"))
         self.assertNotIn("DEPLOY_SMOKE_USER_PASSWORD", dev.resolve_deploy_required_environment_names(target="production"))
 
+    def test_build_deploy_fingerprint_omits_optional_missing_smoke_password_secret(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+        env_values = {
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://boardenthusiasts.com",
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.boardenthusiasts.com",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_PROJECT_REF": "project-ref",
+            "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
+            "SUPABASE_AVATARS_BUCKET": "avatars",
+            "SUPABASE_CARD_IMAGES_BUCKET": "cards",
+            "SUPABASE_HERO_IMAGES_BUCKET": "heroes",
+            "SUPABASE_LOGO_IMAGES_BUCKET": "logos",
+            "BREVO_SIGNUPS_LIST_ID": "list-id",
+            "ALLOWED_WEB_ORIGINS": "https://boardenthusiasts.com",
+            "SUPPORT_REPORT_RECIPIENT": "support@boardenthusiasts.com",
+            "SUPPORT_REPORT_SENDER_EMAIL": "noreply@boardenthusiasts.com",
+            "SUPPORT_REPORT_SENDER_NAME": "Board Enthusiasts",
+            "VITE_LANDING_MODE": "false",
+            "SUPABASE_SECRET_KEY": "secret-key",
+            "SUPABASE_DB_PASSWORD": "db-password",
+            "SUPABASE_ACCESS_TOKEN": "supabase-access-token",
+            "CLOUDFLARE_API_TOKEN": "cloudflare-token",
+            "TURNSTILE_SECRET_KEY": "turnstile-secret-key",
+            "BREVO_API_KEY": "brevo-api-key",
+            "DEPLOY_SMOKE_SECRET": "deploy-smoke-secret",
+        }
+
+        with (
+            mock.patch.object(
+                dev,
+                "get_git_repository_fingerprint",
+                return_value={"revision": "abc123", "dirty": False, "status_hash": None},
+            ),
+            mock.patch.object(dev.json, "dumps", wraps=dev.json.dumps) as json_dumps,
+        ):
+            fingerprint = dev.build_deploy_fingerprint(
+                config,
+                target="production",
+                source_branch="main",
+                env_values=env_values,
+            )
+
+        payload = json_dumps.call_args.args[0]
+        self.assertRegex(fingerprint, r"^[0-9a-f]{64}$")
+        self.assertNotIn("DEPLOY_SMOKE_USER_PASSWORD", payload["secrets"])
+        self.assertEqual(
+            dev.hashlib.sha256(b"deploy-smoke-secret").hexdigest()[:16],
+            payload["secrets"]["DEPLOY_SMOKE_SECRET"],
+        )
+
     def test_collect_present_environment_values_ignores_placeholders_and_keeps_oauth_values(self) -> None:
         with mock.patch.dict(
             dev.os.environ,
@@ -1573,6 +1623,23 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         )
         self.assertNotIn("visibility", title_create_call["payload"])
         self.assertNotIn("lifecycleStatus", title_create_call["payload"])
+        self.assertEqual(False, title_create_call["payload"]["metadata"]["maxPlayersOrMore"])
+
+        title_metadata_call = next(
+            call
+            for call in request_calls
+            if call["url"] == "https://api.staging.boardenthusiasts.com/developer/titles/title-1/metadata/current"
+            and call["method"] == "PUT"
+        )
+        self.assertEqual(False, title_metadata_call["payload"]["maxPlayersOrMore"])
+
+        title_media_call = next(
+            call
+            for call in request_calls
+            if call["url"] == "https://api.staging.boardenthusiasts.com/developer/titles/title-1/media/card"
+            and call["method"] == "PUT"
+        )
+        self.assertEqual(1200, title_media_call["payload"]["height"])
 
         requested_urls = [str(call["url"]) for call in request_calls]
         self.assertIn("https://api.staging.boardenthusiasts.com/developer/titles/title-1/activate", requested_urls)
