@@ -30,9 +30,13 @@ interface SmokeContext {
   currentUserNotificationId: string;
   createdStudioId: string;
   createdStudioSlug: string;
+  createdStudioCatalogMediaId: string;
+  studioCatalogMediaUploadId: string;
   createdTitleId: string;
   createdTitleSlug: string;
   createdTitleMetadataRevision: number;
+  createdTitleCatalogMediaId: string;
+  titleCatalogMediaUploadId: string;
   createdStudioLinkId: string;
   createdPlayerReportId: string;
   developerReportId: string;
@@ -143,6 +147,7 @@ function buildCreateTitleBody(slug: string, displayName = "Smoke Test Title"): J
       genreSlugs: ["utility", "qa"],
       minPlayers: 1,
       maxPlayers: 2,
+      maxPlayersOrMore: false,
       ageRatingAuthority: "ESRB",
       ageRatingValue: "E",
       minAgeYears: 6,
@@ -165,6 +170,7 @@ function buildMetadataBody(displayName: string): JsonRecord {
     genreSlugs: ["utility", "qa"],
     minPlayers: 1,
     maxPlayers: 4,
+    maxPlayersOrMore: false,
     ageRatingAuthority: "ESRB",
     ageRatingValue: "E10+",
     minAgeYears: 10,
@@ -260,6 +266,34 @@ async function bootstrapContext(): Promise<SmokeContext> {
     `delete-smoke-${bootstrapSuffix}`,
     "Delete Smoke Title",
   );
+  const studioCatalogMediaUpload = await fetchJson<{ mediaEntry: { id: string } }>(
+    `/developer/studios/${requireValue(managedStudio?.id, "managed studio id")}/catalog-media`,
+    developerAuth,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        mediaTypeKey: "studio_logo",
+        kind: "image",
+        sourceUrl: "https://example.invalid/bootstrap-studio-logo.png",
+        altText: "Bootstrap studio logo",
+        displayOrder: 0,
+      }),
+    },
+  );
+  const titleCatalogMediaUpload = await fetchJson<{ mediaEntry: { id: string } }>(
+    `/developer/titles/${requireValue(managedTitle?.id, "managed title id")}/catalog-media`,
+    developerAuth,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        mediaTypeKey: "title_card",
+        kind: "image",
+        sourceUrl: "https://example.invalid/bootstrap-title-card.png",
+        altText: "Bootstrap title card",
+        displayOrder: 0,
+      }),
+    },
+  );
 
   return {
     publicTitleId: requireValue(publicTitleId, "public title id"),
@@ -272,9 +306,13 @@ async function bootstrapContext(): Promise<SmokeContext> {
     currentUserNotificationId: "",
     createdStudioId: "",
     createdStudioSlug: "",
+    createdStudioCatalogMediaId: "",
+    studioCatalogMediaUploadId: studioCatalogMediaUpload.mediaEntry.id,
     createdTitleId: "",
     createdTitleSlug: "",
     createdTitleMetadataRevision: 0,
+    createdTitleCatalogMediaId: "",
+    titleCatalogMediaUploadId: titleCatalogMediaUpload.mediaEntry.id,
     createdStudioLinkId: "",
     createdPlayerReportId: "",
     developerReportId: "",
@@ -358,6 +396,11 @@ function buildRequestPlan(
       };
     case "DELETE /identity/me/board-profile":
       return { path: "/identity/me/board-profile", init: { method: route.method, headers: buildHeaders(token) } };
+    case "DELETE /identity/me/notifications":
+      return {
+        path: "/identity/me/notifications",
+        init: { method: route.method, headers: buildHeaders(developerToken || token) },
+      };
     case "POST /identity/me/notifications/{notificationId}/read":
       return {
         path: `/identity/me/notifications/${requireValue(context.currentUserNotificationId, "current user notification id")}/read`,
@@ -476,6 +519,52 @@ function buildRequestPlan(
         init: { method: route.method, headers: buildHeaders(token), body: formData },
       };
     }
+    case "GET /developer/studios/{studioId}/catalog-media":
+      return {
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/catalog-media`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/studios/{studioId}/catalog-media":
+      return {
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/catalog-media`,
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({
+            mediaTypeKey: "studio_logo",
+            kind: "image",
+            sourceUrl: "https://example.invalid/smoke-studio-logo.png",
+            altText: "Smoke studio logo",
+            displayOrder: 0,
+          }),
+        },
+      };
+    case "PUT /developer/studios/{studioId}/catalog-media/{mediaEntryId}":
+      return {
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/catalog-media/${requireValue(context.createdStudioCatalogMediaId, "created studio catalog media id")}`,
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({
+            sourceUrl: "https://example.invalid/smoke-studio-logo-updated.png",
+            altText: "Updated smoke studio logo",
+            displayOrder: 1,
+          }),
+        },
+      };
+    case "DELETE /developer/studios/{studioId}/catalog-media/{mediaEntryId}":
+      return {
+        path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/catalog-media/${requireValue(context.createdStudioCatalogMediaId, "created studio catalog media id")}`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/studios/{studioId}/catalog-media/{mediaEntryId}/upload": {
+      const formData = new FormData();
+      formData.set("media", new Blob([pngPixel], { type: "image/png" }), "studio-logo.png");
+      return {
+        path: `/developer/studios/${requireValue(context.managedStudioId, "managed studio id")}/catalog-media/${requireValue(context.studioCatalogMediaUploadId, "studio catalog media upload id")}/upload`,
+        init: { method: route.method, headers: buildHeaders(token), body: formData },
+      };
+    }
     case "GET /developer/studios/{studioId}/titles":
       return {
         path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/titles`,
@@ -555,6 +644,53 @@ function buildRequestPlan(
         path: `/developer/titles/${requireValue(context.createdTitleId, "created title id")}/media`,
         init: { method: route.method, headers: buildHeaders(token) },
       };
+    case "GET /developer/titles/{titleId}/catalog-media":
+      return {
+        path: `/developer/titles/${requireValue(context.createdTitleId, "created title id")}/catalog-media`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/titles/{titleId}/catalog-media":
+      return {
+        path: `/developer/titles/${requireValue(context.createdTitleId, "created title id")}/catalog-media`,
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({
+            mediaTypeKey: "title_card",
+            kind: "image",
+            sourceUrl: "https://example.invalid/smoke-title-card.png",
+            altText: "Smoke title card",
+            displayOrder: 0,
+          }),
+        },
+      };
+    case "PUT /developer/titles/{titleId}/catalog-media/{mediaEntryId}":
+      return {
+        path: `/developer/titles/${requireValue(context.createdTitleId, "created title id")}/catalog-media/${requireValue(context.createdTitleCatalogMediaId, "created title catalog media id")}`,
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({
+            sourceUrl: "https://example.invalid/smoke-title-card-updated.png",
+            altText: "Updated smoke title card",
+            displayOrder: 1,
+          }),
+        },
+      };
+    case "DELETE /developer/titles/{titleId}/catalog-media/{mediaEntryId}":
+      return {
+        path: `/developer/titles/${requireValue(context.createdTitleId, "created title id")}/catalog-media/${requireValue(context.createdTitleCatalogMediaId, "created title catalog media id")}`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/titles/{titleId}/catalog-media/{mediaEntryId}/upload": {
+      const formData = new FormData();
+      formData.set("media", new Blob([pngPixel], { type: "image/png" }), "title-card.png");
+      formData.set("altText", "Uploaded smoke title card");
+      return {
+        path: `/developer/titles/${requireValue(context.managedTitleId, "managed title id")}/catalog-media/${requireValue(context.titleCatalogMediaUploadId, "title catalog media upload id")}/upload`,
+        init: { method: route.method, headers: buildHeaders(token), body: formData },
+      };
+    }
     case "PUT /developer/titles/{titleId}/media/{mediaRole}":
       return {
         path: `/developer/titles/${requireValue(context.createdTitleId, "created title id")}/media/card`,
@@ -566,7 +702,7 @@ function buildRequestPlan(
             altText: "Smoke card art",
             mimeType: "image/png",
             width: 900,
-            height: 1280,
+            height: 1200,
           }),
         },
       };
@@ -758,9 +894,15 @@ function applyResponseContext(route: (typeof maintainedApiRoutes)[number], paylo
     case "POST /developer/studios/{studioId}/links":
       context.createdStudioLinkId = (((json.link as JsonRecord | undefined)?.id as string | undefined) ?? "");
       break;
+    case "POST /developer/studios/{studioId}/catalog-media":
+      context.createdStudioCatalogMediaId = (((json.mediaEntry as JsonRecord | undefined)?.id as string | undefined) ?? "");
+      break;
     case "POST /developer/studios/{studioId}/titles":
       context.createdTitleId = (((json.title as JsonRecord | undefined)?.id as string | undefined) ?? "");
       context.createdTitleMetadataRevision = Number(((json.title as JsonRecord | undefined)?.currentMetadataRevision as number | undefined) ?? 0);
+      break;
+    case "POST /developer/titles/{titleId}/catalog-media":
+      context.createdTitleCatalogMediaId = (((json.mediaEntry as JsonRecord | undefined)?.id as string | undefined) ?? "");
       break;
     case "GET /developer/titles/{titleId}":
     case "PUT /developer/titles/{titleId}":

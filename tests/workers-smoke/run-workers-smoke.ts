@@ -318,6 +318,7 @@ async function run(): Promise<void> {
             genreSlugs: ["utility", "qa"],
             minPlayers: 1,
             maxPlayers: 4,
+            maxPlayersOrMore: false,
             ageRatingAuthority: "ESRB",
             ageRatingValue: "E",
             minAgeYears: 6
@@ -356,6 +357,7 @@ async function run(): Promise<void> {
           genreSlugs: ["utility", "qa"],
           minPlayers: 1,
           maxPlayers: 6,
+          maxPlayersOrMore: false,
           ageRatingAuthority: "ESRB",
           ageRatingValue: "E10+",
           minAgeYears: 10
@@ -384,7 +386,7 @@ async function run(): Promise<void> {
           altText: "Workers card art",
           mimeType: "image/png",
           width: 900,
-          height: 1280
+          height: 1200
         })
       },
       200,
