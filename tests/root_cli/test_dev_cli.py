@@ -1353,6 +1353,50 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertIn("Request timed out", message)
         self.assertIn("15 seconds", message)
 
+    def test_request_workers_deploy_smoke_json_retries_timeout_once(self) -> None:
+        timeout_error = dev.DevCliError(
+            "Request timed out for https://api.boardenthusiasts.com/player/wishlist after 30 seconds. "
+            "Check your network connection and verify the target service is reachable."
+        )
+
+        with (
+            mock.patch.object(dev, "request_json", side_effect=[timeout_error, {"titles": []}]) as request_json,
+            mock.patch.object(dev, "write_step") as write_step,
+            mock.patch.object(dev.time, "sleep") as sleep,
+        ):
+            payload = dev.request_workers_deploy_smoke_json(url="https://api.boardenthusiasts.com/player/wishlist")
+
+        self.assertEqual({"titles": []}, payload)
+        self.assertEqual(2, request_json.call_count)
+        request_json.assert_called_with(
+            url="https://api.boardenthusiasts.com/player/wishlist",
+            method="GET",
+            headers=None,
+            payload=None,
+            data=None,
+            timeout_seconds=30,
+        )
+        write_step.assert_called_once_with(
+            "Workers smoke request timed out; retrying once: https://api.boardenthusiasts.com/player/wishlist"
+        )
+        sleep.assert_called_once_with(5)
+
+    def test_request_workers_deploy_smoke_json_does_not_retry_non_timeout_errors(self) -> None:
+        error = dev.DevCliError("HTTP 500 Internal Server Error for https://api.boardenthusiasts.com/player/wishlist: no detail")
+
+        with (
+            mock.patch.object(dev, "request_json", side_effect=error) as request_json,
+            mock.patch.object(dev, "write_step") as write_step,
+            mock.patch.object(dev.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(dev.DevCliError) as raised:
+                dev.request_workers_deploy_smoke_json(url="https://api.boardenthusiasts.com/player/wishlist")
+
+        self.assertIs(error, raised.exception)
+        request_json.assert_called_once()
+        write_step.assert_not_called()
+        sleep.assert_not_called()
+
     def test_run_workers_deploy_smoke_preserves_smoke_secret_for_support_issue_probe(self) -> None:
         env_values = {
             "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.staging.boardenthusiasts.com",

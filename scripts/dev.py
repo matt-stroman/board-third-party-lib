@@ -5938,6 +5938,43 @@ def build_api_bearer_headers(token: str) -> dict[str, str]:
     }
 
 
+def is_request_timeout_error(error: DevCliError) -> bool:
+    """Return whether a CLI error represents an HTTP timeout from ``request_json``."""
+
+    return str(error).startswith("Request timed out for ")
+
+
+def request_workers_deploy_smoke_json(
+    *,
+    url: str,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    payload: dict[str, object] | list[object] | None = None,
+    data: bytes | None = None,
+    timeout_seconds: int = 30,
+) -> object:
+    """Issue a post-deploy Workers smoke request with a slightly more forgiving timeout policy."""
+
+    for attempt in range(2):
+        try:
+            return request_json(
+                url=url,
+                method=method,
+                headers=headers,
+                payload=payload,
+                data=data,
+                timeout_seconds=timeout_seconds,
+            )
+        except DevCliError as ex:
+            if not is_request_timeout_error(ex) or attempt > 0:
+                raise
+
+            write_step(f"Workers smoke request timed out; retrying once: {url}")
+            time.sleep(5)
+
+    raise AssertionError("Workers deploy smoke request retry loop exhausted unexpectedly.")
+
+
 def require_full_mvp_deploy_smoke_values(env_values: dict[str, str]) -> dict[str, str]:
     """Resolve the extra smoke-account values required for full-MVP hosted smoke."""
 
@@ -5998,7 +6035,7 @@ def run_landing_workers_deploy_smoke(*, target: str, env_values: dict[str, str])
 
     wait_for_workers_deploy_smoke_base_url(base_url=base_url)
 
-    ready_payload = request_json(
+    ready_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/health/ready",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
@@ -6006,7 +6043,7 @@ def run_landing_workers_deploy_smoke(*, target: str, env_values: dict[str, str])
         raise DevCliError("Workers smoke failed: /health/ready did not report ready status.")
 
     try:
-        signup_payload = request_json(
+        signup_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/marketing/signups",
             method="POST",
             headers=smoke_headers,
@@ -6035,7 +6072,7 @@ def run_landing_workers_deploy_smoke(*, target: str, env_values: dict[str, str])
         if not brevo_contact:
             raise DevCliError("Workers smoke failed: Brevo contact was not created.")
 
-        support_payload = request_json(
+        support_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/support/issues",
             method="POST",
             headers=smoke_headers,
@@ -6069,7 +6106,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
     smoke_values = require_full_mvp_deploy_smoke_values(env_values)
     wait_for_workers_deploy_smoke_base_url(base_url=base_url)
 
-    ready_payload = request_json(
+    ready_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/health/ready",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
@@ -6095,18 +6132,18 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         password=smoke_values["DEPLOY_SMOKE_USER_PASSWORD"],
     )
 
-    metadata_payload = request_json(
+    metadata_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
     if not isinstance(metadata_payload, dict) or metadata_payload.get("service") != "board-enthusiasts-workers-api":
         raise DevCliError("Workers smoke failed: root metadata route did not return the expected service name.")
 
-    genres_payload = request_json(
+    genres_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/genres",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
-    age_rating_payload = request_json(
+    age_rating_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/age-rating-authorities",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
@@ -6115,12 +6152,12 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
     if not isinstance(age_rating_payload, dict) or not isinstance(age_rating_payload.get("ageRatingAuthorities"), list):
         raise DevCliError("Workers smoke failed: /age-rating-authorities did not return an authority list.")
 
-    request_json(
+    request_workers_deploy_smoke_json(
         url=f"{base_url}/identity/user-name-availability?userName=deploy-smoke-check",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
 
-    catalog_payload = request_json(
+    catalog_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/catalog?pageNumber=1&pageSize=4&sort=title-asc",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
@@ -6145,11 +6182,11 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
     library_title_id = str(library_title.get("id", "")).strip() if isinstance(library_title, dict) else ""
 
     if public_title_id and public_title_slug and public_studio_slug:
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/catalog/{urllib.parse.quote(public_studio_slug)}/{urllib.parse.quote(public_title_slug)}",
             headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/studios/{urllib.parse.quote(public_studio_slug)}",
             headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
         )
@@ -6162,10 +6199,10 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
     developer_headers = build_api_bearer_headers(developer_token)
     moderator_headers = build_api_bearer_headers(moderator_token)
 
-    request_json(url=f"{base_url}/identity/me", headers=player_headers)
-    request_json(url=f"{base_url}/identity/me/profile", headers=player_headers)
-    player_notifications_payload = request_json(url=f"{base_url}/identity/me/notifications", headers=player_headers)
-    request_json(
+    request_workers_deploy_smoke_json(url=f"{base_url}/identity/me", headers=player_headers)
+    request_workers_deploy_smoke_json(url=f"{base_url}/identity/me/profile", headers=player_headers)
+    player_notifications_payload = request_workers_deploy_smoke_json(url=f"{base_url}/identity/me/notifications", headers=player_headers)
+    request_workers_deploy_smoke_json(
         url=f"{base_url}/identity/me/board-profile",
         method="PUT",
         headers=player_headers,
@@ -6175,9 +6212,9 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
             "avatarUrl": "https://example.invalid/deploy-smoke-player.png",
         },
     )
-    request_json(url=f"{base_url}/identity/me/board-profile", headers=player_headers)
-    request_json(url=f"{base_url}/identity/me/board-profile", method="DELETE", headers=player_headers)
-    request_json(url=f"{base_url}/identity/me/developer-enrollment", headers=player_headers)
+    request_workers_deploy_smoke_json(url=f"{base_url}/identity/me/board-profile", headers=player_headers)
+    request_workers_deploy_smoke_json(url=f"{base_url}/identity/me/board-profile", method="DELETE", headers=player_headers)
+    request_workers_deploy_smoke_json(url=f"{base_url}/identity/me/developer-enrollment", headers=player_headers)
     if isinstance(player_notifications_payload, dict) and isinstance(player_notifications_payload.get("notifications"), list):
         first_notification = next(
             (
@@ -6188,43 +6225,43 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
             None,
         )
         if isinstance(first_notification, dict):
-            request_json(
+            request_workers_deploy_smoke_json(
                 url=f"{base_url}/identity/me/notifications/{urllib.parse.quote(first_notification['id'])}/read",
                 method="POST",
                 headers=player_headers,
             )
 
-    request_json(url=f"{base_url}/player/library", headers=player_headers)
-    request_json(url=f"{base_url}/player/wishlist", headers=player_headers)
+    request_workers_deploy_smoke_json(url=f"{base_url}/player/library", headers=player_headers)
+    request_workers_deploy_smoke_json(url=f"{base_url}/player/wishlist", headers=player_headers)
     if library_title_id:
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/player/library/titles/{urllib.parse.quote(library_title_id)}",
             method="PUT",
             headers=player_headers,
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/player/library/titles/{urllib.parse.quote(library_title_id)}",
             method="DELETE",
             headers=player_headers,
         )
     if public_title_id:
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/player/wishlist/titles/{urllib.parse.quote(public_title_id)}",
             method="PUT",
             headers=player_headers,
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/player/wishlist/titles/{urllib.parse.quote(public_title_id)}",
             method="DELETE",
             headers=player_headers,
         )
 
-    request_json(url=f"{base_url}/identity/me", headers=developer_headers)
-    request_json(url=f"{base_url}/identity/me/profile", headers=developer_headers)
-    request_json(url=f"{base_url}/identity/me/developer-enrollment", headers=developer_headers)
-    request_json(url=f"{base_url}/identity/me/developer-enrollment", method="POST", headers=developer_headers)
+    request_workers_deploy_smoke_json(url=f"{base_url}/identity/me", headers=developer_headers)
+    request_workers_deploy_smoke_json(url=f"{base_url}/identity/me/profile", headers=developer_headers)
+    request_workers_deploy_smoke_json(url=f"{base_url}/identity/me/developer-enrollment", headers=developer_headers)
+    request_workers_deploy_smoke_json(url=f"{base_url}/identity/me/developer-enrollment", method="POST", headers=developer_headers)
 
-    managed_studios_payload = request_json(url=f"{base_url}/developer/studios", headers=developer_headers)
+    managed_studios_payload = request_workers_deploy_smoke_json(url=f"{base_url}/developer/studios", headers=developer_headers)
     if not isinstance(managed_studios_payload, dict) or not isinstance(managed_studios_payload.get("studios"), list):
         raise DevCliError("Workers smoke failed: /developer/studios did not return a managed studio list.")
 
@@ -6236,7 +6273,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
     rollback_release_id = ""
     release_under_test_id = ""
     try:
-        created_studio_payload = request_json(
+        created_studio_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/studios",
             method="POST",
             headers=developer_headers,
@@ -6252,7 +6289,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         if not created_studio_id:
             raise DevCliError("Workers smoke failed: studio create did not return a studio id.")
 
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}",
             method="PUT",
             headers=developer_headers,
@@ -6262,8 +6299,8 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
                 "description": "Updated temporary hosted deploy-smoke studio.",
             },
         )
-        request_json(url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/links", headers=developer_headers)
-        created_link_payload = request_json(
+        request_workers_deploy_smoke_json(url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/links", headers=developer_headers)
+        created_link_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/links",
             method="POST",
             headers=developer_headers,
@@ -6274,20 +6311,20 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         created_link_id = str(created_link_payload["link"].get("id", "")).strip()
         if not created_link_id:
             raise DevCliError("Workers smoke failed: studio link create did not return a link id.")
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/links/{urllib.parse.quote(created_link_id)}",
             method="PUT",
             headers=developer_headers,
             payload={"label": "Support", "url": "https://example.invalid/deploy-support"},
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/links/{urllib.parse.quote(created_link_id)}",
             method="DELETE",
             headers=developer_headers,
         )
-        request_json(url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/titles", headers=developer_headers)
+        request_workers_deploy_smoke_json(url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/titles", headers=developer_headers)
 
-        created_title_payload = request_json(
+        created_title_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}/titles",
             method="POST",
             headers=developer_headers,
@@ -6313,8 +6350,8 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         if not created_title_id:
             raise DevCliError("Workers smoke failed: title create did not return a title id.")
 
-        request_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}", headers=developer_headers)
-        request_json(
+        request_workers_deploy_smoke_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}", headers=developer_headers)
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}",
             method="PUT",
             headers=developer_headers,
@@ -6323,7 +6360,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
                 "visibility": "unlisted",
             },
         )
-        revised_title_payload = request_json(
+        revised_title_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/metadata/current",
             method="PUT",
             headers=developer_headers,
@@ -6346,14 +6383,14 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         if not isinstance(current_metadata_revision, int):
             raise DevCliError("Workers smoke failed: title metadata update did not return currentMetadataRevision.")
 
-        request_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/metadata-versions", headers=developer_headers)
-        request_json(
+        request_workers_deploy_smoke_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/metadata-versions", headers=developer_headers)
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/metadata-versions/{current_metadata_revision}/activate",
             method="POST",
             headers=developer_headers,
         )
-        request_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/media", headers=developer_headers)
-        request_json(
+        request_workers_deploy_smoke_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/media", headers=developer_headers)
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/media/card",
             method="PUT",
             headers=developer_headers,
@@ -6365,8 +6402,8 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
                 "height": 1200,
             },
         )
-        request_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases", headers=developer_headers)
-        created_release_payload = request_json(
+        request_workers_deploy_smoke_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases", headers=developer_headers)
+        created_release_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases",
             method="POST",
             headers=developer_headers,
@@ -6382,7 +6419,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         if not rollback_release_id:
             raise DevCliError("Workers smoke failed: title release create did not return a release id.")
 
-        second_release_payload = request_json(
+        second_release_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases",
             method="POST",
             headers=developer_headers,
@@ -6398,7 +6435,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         if not release_under_test_id:
             raise DevCliError("Workers smoke failed: second title release create did not return a release id.")
 
-        release_list_payload = request_json(
+        release_list_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases",
             headers=developer_headers,
         )
@@ -6412,7 +6449,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         if "0.1.0-smoke" not in release_versions or "0.1.1-smoke" not in release_versions:
             raise DevCliError("Workers smoke failed: title releases list did not preserve both release versions.")
 
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(release_under_test_id)}",
             method="PUT",
             headers=developer_headers,
@@ -6422,28 +6459,28 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
                 "acquisitionUrl": "https://example.invalid/releases/0.1.1-smoke",
             },
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/releases/{urllib.parse.quote(rollback_release_id)}/activate",
             method="POST",
             headers=developer_headers,
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/activate",
             method="POST",
             headers=developer_headers,
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/archive",
             method="POST",
             headers=developer_headers,
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/unarchive",
             method="POST",
             headers=developer_headers,
         )
 
-        created_report_payload = request_json(
+        created_report_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/player/reports",
             method="POST",
             headers=player_headers,
@@ -6452,7 +6489,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
                 "reason": f"Deploy smoke report {unique_suffix}",
             },
         )
-        second_created_report_payload = request_json(
+        second_created_report_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/player/reports",
             method="POST",
             headers=player_headers,
@@ -6470,21 +6507,21 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         if not created_report_id or not second_created_report_id:
             raise DevCliError("Workers smoke failed: player report creation did not return both report ids.")
 
-        request_json(url=f"{base_url}/player/reports", headers=player_headers)
-        request_json(url=f"{base_url}/player/reports/{urllib.parse.quote(created_report_id)}", headers=player_headers)
-        request_json(
+        request_workers_deploy_smoke_json(url=f"{base_url}/player/reports", headers=player_headers)
+        request_workers_deploy_smoke_json(url=f"{base_url}/player/reports/{urllib.parse.quote(created_report_id)}", headers=player_headers)
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/player/reports/{urllib.parse.quote(created_report_id)}/messages",
             method="POST",
             headers=player_headers,
             payload={"message": "Deploy smoke player follow-up."},
         )
 
-        request_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/reports", headers=developer_headers)
-        request_json(
+        request_workers_deploy_smoke_json(url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/reports", headers=developer_headers)
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/reports/{urllib.parse.quote(created_report_id)}",
             headers=developer_headers,
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/developer/titles/{urllib.parse.quote(created_title_id)}/reports/{urllib.parse.quote(created_report_id)}/messages",
             method="POST",
             headers=developer_headers,
@@ -6492,7 +6529,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         )
 
         developer_search_term = smoke_values["DEPLOY_SMOKE_DEVELOPER_EMAIL"].split("@", 1)[0]
-        moderation_search_payload = request_json(
+        moderation_search_payload = request_workers_deploy_smoke_json(
             url=f"{base_url}/moderation/developers?search={urllib.parse.quote(developer_search_term)}",
             headers=moderator_headers,
         )
@@ -6509,39 +6546,39 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         if not isinstance(moderated_developer, dict) or not isinstance(moderated_developer.get("developerSubject"), str):
             raise DevCliError("Workers smoke failed: moderation search did not return the configured smoke developer.")
         moderated_developer_subject = moderated_developer["developerSubject"].strip()
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/moderation/developers/{urllib.parse.quote(moderated_developer_subject)}/verification",
             headers=moderator_headers,
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/moderation/developers/{urllib.parse.quote(moderated_developer_subject)}/verified-developer",
             method="PUT",
             headers=moderator_headers,
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/moderation/developers/{urllib.parse.quote(moderated_developer_subject)}/verified-developer",
             method="DELETE",
             headers=moderator_headers,
         )
 
-        request_json(url=f"{base_url}/moderation/title-reports", headers=moderator_headers)
-        request_json(
+        request_workers_deploy_smoke_json(url=f"{base_url}/moderation/title-reports", headers=moderator_headers)
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/moderation/title-reports/{urllib.parse.quote(created_report_id)}",
             headers=moderator_headers,
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/moderation/title-reports/{urllib.parse.quote(created_report_id)}/messages",
             method="POST",
             headers=moderator_headers,
             payload={"message": "Deploy smoke moderation follow-up.", "recipientRole": "developer"},
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/moderation/title-reports/{urllib.parse.quote(created_report_id)}/validate",
             method="POST",
             headers=moderator_headers,
             payload={"note": "Validated by deploy smoke."},
         )
-        request_json(
+        request_workers_deploy_smoke_json(
             url=f"{base_url}/moderation/title-reports/{urllib.parse.quote(second_created_report_id)}/invalidate",
             method="POST",
             headers=moderator_headers,
@@ -6549,7 +6586,7 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         )
     finally:
         if created_studio_id:
-            request_json(
+            request_workers_deploy_smoke_json(
                 url=f"{base_url}/developer/studios/{urllib.parse.quote(created_studio_id)}",
                 method="DELETE",
                 headers=developer_headers,
@@ -6563,25 +6600,25 @@ def run_public_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, st
     base_url = env_values["BOARD_ENTHUSIASTS_WORKERS_BASE_URL"].rstrip("/")
     wait_for_workers_deploy_smoke_base_url(base_url=base_url)
 
-    ready_payload = request_json(
+    ready_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/health/ready",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
     if not isinstance(ready_payload, dict) or ready_payload.get("status") != "ready":
         raise DevCliError("Workers smoke failed: /health/ready did not report ready status.")
 
-    metadata_payload = request_json(
+    metadata_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
     if not isinstance(metadata_payload, dict) or metadata_payload.get("service") != "board-enthusiasts-workers-api":
         raise DevCliError("Workers smoke failed: root metadata route did not return the expected service name.")
 
-    genres_payload = request_json(
+    genres_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/genres",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
-    age_rating_payload = request_json(
+    age_rating_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/age-rating-authorities",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
@@ -6590,33 +6627,33 @@ def run_public_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, st
     if not isinstance(age_rating_payload, dict) or not isinstance(age_rating_payload.get("ageRatingAuthorities"), list):
         raise DevCliError("Workers smoke failed: /age-rating-authorities did not return an authority list.")
 
-    request_json(
+    request_workers_deploy_smoke_json(
         url=f"{base_url}/identity/user-name-availability?userName=deploy-smoke-check",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
 
-    title_spotlights_payload = request_json(
+    title_spotlights_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/spotlights/home",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
     if not isinstance(title_spotlights_payload, dict) or not isinstance(title_spotlights_payload.get("entries"), list):
         raise DevCliError("Workers smoke failed: /spotlights/home did not return an entries list.")
 
-    offering_spotlights_payload = request_json(
+    offering_spotlights_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/internal/home-offering-spotlights",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
     if not isinstance(offering_spotlights_payload, dict) or not isinstance(offering_spotlights_payload.get("entries"), list):
         raise DevCliError("Workers smoke failed: /internal/home-offering-spotlights did not return an entries list.")
 
-    catalog_payload = request_json(
+    catalog_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/catalog?pageNumber=1&pageSize=4&sort=title-asc",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
     if not isinstance(catalog_payload, dict) or not isinstance(catalog_payload.get("titles"), list):
         raise DevCliError("Workers smoke failed: /catalog did not return a titles list.")
 
-    studios_payload = request_json(
+    studios_payload = request_workers_deploy_smoke_json(
         url=f"{base_url}/studios",
         headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
     )
@@ -6628,7 +6665,7 @@ def run_public_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, st
         public_title_slug = str(public_title.get("slug", "")).strip()
         public_studio_slug = str(public_title.get("studioSlug", "")).strip()
         if public_title_slug and public_studio_slug:
-            request_json(
+            request_workers_deploy_smoke_json(
                 url=f"{base_url}/catalog/{urllib.parse.quote(public_studio_slug)}/{urllib.parse.quote(public_title_slug)}",
                 headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
             )
@@ -6637,7 +6674,7 @@ def run_public_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, st
     if isinstance(public_studio, dict):
         studio_slug = str(public_studio.get("slug", "")).strip()
         if studio_slug:
-            request_json(
+            request_workers_deploy_smoke_json(
                 url=f"{base_url}/studios/{urllib.parse.quote(studio_slug)}",
                 headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
             )
