@@ -33,6 +33,17 @@ export type TitleLifecycleStatus = "draft" | "active" | "archived";
 export type TitleVisibility = "unlisted" | "listed";
 export type TitleMediaRole = "card" | "hero" | "logo";
 export type TitleShowcaseMediaKind = "image" | "external_video";
+export type MediaOwnerKind = "studio" | "title";
+export type CatalogMediaEntryKind = "image" | "external_video";
+export type CatalogMediaTypeKey =
+  | "studio_avatar"
+  | "studio_logo"
+  | "studio_banner"
+  | "title_avatar"
+  | "title_card"
+  | "title_logo"
+  | "title_quick_view_banner"
+  | "title_showcase";
 
 export interface CurrentUserResponse {
   subject: string;
@@ -325,6 +336,7 @@ export interface StudioSummary {
   bannerUrl: string | null;
   followerCount: number;
   links: StudioLink[];
+  catalogMediaEntries: CatalogMediaEntry[];
 }
 
 export interface Studio extends StudioSummary {
@@ -385,6 +397,7 @@ export interface UpsertTitleMetadataRequest {
   genreSlugs: string[];
   minPlayers: number;
   maxPlayers: number;
+  maxPlayersOrMore: boolean;
   ageRatingAuthority: string | null;
   ageRatingValue: string | null;
   minAgeYears: number;
@@ -462,15 +475,89 @@ export interface UpsertTitleMediaAssetRequest {
 
 export interface CreateTitleShowcaseMediaRequest {
   kind: TitleShowcaseMediaKind;
+  imageUrl?: string | null;
   videoUrl: string | null;
   altText: string | null;
   displayOrder: number;
 }
 
 export interface UpdateTitleShowcaseMediaRequest {
+  imageUrl?: string | null;
   videoUrl: string | null;
   altText: string | null;
   displayOrder: number;
+}
+
+export interface CatalogMediaTypeDefinition {
+  key: CatalogMediaTypeKey;
+  ownerKind: MediaOwnerKind;
+  displayName: string;
+  usageSummary: string;
+  bucket: MigrationMediaBucketName;
+  maxUploadBytes: number;
+  recommendedWidth: number;
+  recommendedHeight: number;
+  acceptedMimeTypes: readonly string[];
+  acceptedFileTypes: readonly string[];
+  aspectWidth: number;
+  aspectHeight: number;
+  allowsMultiple: boolean;
+  supportsVideo: boolean;
+}
+
+export interface CatalogMediaEntry {
+  id: string;
+  ownerKind: MediaOwnerKind;
+  studioId: string | null;
+  titleId: string | null;
+  mediaTypeKey: CatalogMediaTypeKey;
+  kind: CatalogMediaEntryKind;
+  sourceUrl: string | null;
+  storagePath: string | null;
+  previewImageUrl: string | null;
+  previewStoragePath: string | null;
+  videoUrl: string | null;
+  altText: string | null;
+  mimeType: string | null;
+  width: number | null;
+  height: number | null;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CatalogMediaTypeListResponse {
+  mediaTypes: CatalogMediaTypeDefinition[];
+}
+
+export interface CatalogMediaEntryListResponse {
+  mediaEntries: CatalogMediaEntry[];
+}
+
+export interface CatalogMediaEntryResponse {
+  mediaEntry: CatalogMediaEntry;
+}
+
+export interface CreateCatalogMediaEntryRequest {
+  mediaTypeKey: CatalogMediaTypeKey;
+  kind: CatalogMediaEntryKind;
+  sourceUrl?: string | null;
+  videoUrl?: string | null;
+  altText: string | null;
+  mimeType?: string | null;
+  width?: number | null;
+  height?: number | null;
+  displayOrder?: number;
+}
+
+export interface UpdateCatalogMediaEntryRequest {
+  sourceUrl?: string | null;
+  videoUrl?: string | null;
+  altText?: string | null;
+  mimeType?: string | null;
+  width?: number | null;
+  height?: number | null;
+  displayOrder?: number;
 }
 
 export interface CurrentTitleRelease {
@@ -495,6 +582,7 @@ export interface DeveloperTitle {
   genreDisplay: string;
   minPlayers: number;
   maxPlayers: number;
+  maxPlayersOrMore?: boolean;
   playerCountDisplay: string;
   ageRatingAuthority: string | null;
   ageRatingValue: string | null;
@@ -504,6 +592,7 @@ export interface DeveloperTitle {
   libraryCount?: number;
   cardImageUrl: string | null;
   acquisitionUrl: string | null;
+  catalogMediaEntries: CatalogMediaEntry[];
   mediaAssets: TitleMediaAsset[];
   showcaseMedia: TitleShowcaseMedia[];
   currentRelease?: CurrentTitleRelease;
@@ -528,6 +617,7 @@ export interface TitleMetadataVersion {
   genreDisplay: string;
   minPlayers: number;
   maxPlayers: number;
+  maxPlayersOrMore?: boolean;
   playerCountDisplay: string;
   ageRatingAuthority: string | null;
   ageRatingValue: string | null;
@@ -590,6 +680,7 @@ export interface CatalogTitleSummary {
   genreDisplay: string;
   minPlayers: number;
   maxPlayers: number;
+  maxPlayersOrMore?: boolean;
   playerCountDisplay: string;
   ageRatingAuthority: string | null;
   ageRatingValue: string | null;
@@ -600,6 +691,7 @@ export interface CatalogTitleSummary {
   cardImageUrl: string | null;
   logoImageUrl: string | null;
   acquisitionUrl: string | null;
+  catalogMediaEntries: CatalogMediaEntry[];
 }
 
 export interface CatalogPaging {
@@ -709,6 +801,7 @@ export interface MigrationSeedTitleFixture {
   genreDisplay: string;
   minPlayers: number;
   maxPlayers: number;
+  maxPlayersOrMore?: boolean;
   ageRatingAuthority: string | null;
   ageRatingValue: string | null;
   minAgeYears: number;
@@ -782,6 +875,137 @@ export const migrationMediaUploadPolicies = {
     recommendedHeight: 400,
   },
 } as const satisfies Record<MigrationMediaBucketKey, MigrationMediaUploadPolicy>;
+
+export const catalogMediaTypeDefinitions = {
+  studioAvatar: {
+    key: "studio_avatar",
+    ownerKind: "studio",
+    displayName: "Studio avatar",
+    usageSummary: "Used in compact studio identity spots, such as the square studio icon on studio cards and studio headers.",
+    bucket: migrationMediaBuckets.avatars,
+    maxUploadBytes: migrationMediaUploadPolicies.avatars.maxUploadBytes,
+    recommendedWidth: migrationMediaUploadPolicies.avatars.recommendedWidth,
+    recommendedHeight: migrationMediaUploadPolicies.avatars.recommendedHeight,
+    acceptedMimeTypes: migrationMediaUploadPolicies.avatars.acceptedMimeTypes,
+    acceptedFileTypes: ["PNG", "JPG", "WEBP"],
+    aspectWidth: 1,
+    aspectHeight: 1,
+    allowsMultiple: false,
+    supportsVideo: false,
+  },
+  studioLogo: {
+    key: "studio_logo",
+    ownerKind: "studio",
+    displayName: "Studio logo",
+    usageSummary: "Used where the studio needs a horizontal brand mark or wordmark.",
+    bucket: migrationMediaBuckets.logoImages,
+    maxUploadBytes: migrationMediaUploadPolicies.logoImages.maxUploadBytes,
+    recommendedWidth: migrationMediaUploadPolicies.logoImages.recommendedWidth,
+    recommendedHeight: migrationMediaUploadPolicies.logoImages.recommendedHeight,
+    acceptedMimeTypes: migrationMediaUploadPolicies.logoImages.acceptedMimeTypes,
+    acceptedFileTypes: ["PNG", "WEBP", "SVG"],
+    aspectWidth: 3,
+    aspectHeight: 1,
+    allowsMultiple: false,
+    supportsVideo: false,
+  },
+  studioBanner: {
+    key: "studio_banner",
+    ownerKind: "studio",
+    displayName: "Studio banner",
+    usageSummary: "Used as the wide studio header image at the top of studio surfaces.",
+    bucket: migrationMediaBuckets.heroImages,
+    maxUploadBytes: migrationMediaUploadPolicies.heroImages.maxUploadBytes,
+    recommendedWidth: 1680,
+    recommendedHeight: 720,
+    acceptedMimeTypes: migrationMediaUploadPolicies.heroImages.acceptedMimeTypes,
+    acceptedFileTypes: ["PNG", "JPG", "WEBP", "SVG"],
+    aspectWidth: 21,
+    aspectHeight: 9,
+    allowsMultiple: false,
+    supportsVideo: false,
+  },
+  titleAvatar: {
+    key: "title_avatar",
+    ownerKind: "title",
+    displayName: "Title avatar",
+    usageSummary: "Used in compact title identity spots, such as the small image beside the title name on cards and quick views.",
+    bucket: migrationMediaBuckets.avatars,
+    maxUploadBytes: migrationMediaUploadPolicies.avatars.maxUploadBytes,
+    recommendedWidth: migrationMediaUploadPolicies.avatars.recommendedWidth,
+    recommendedHeight: migrationMediaUploadPolicies.avatars.recommendedHeight,
+    acceptedMimeTypes: migrationMediaUploadPolicies.avatars.acceptedMimeTypes,
+    acceptedFileTypes: ["PNG", "JPG", "WEBP"],
+    aspectWidth: 1,
+    aspectHeight: 1,
+    allowsMultiple: false,
+    supportsVideo: false,
+  },
+  titleCard: {
+    key: "title_card",
+    ownerKind: "title",
+    displayName: "Title card",
+    usageSummary: "Used on browse tiles and other square title discovery cards.",
+    bucket: migrationMediaBuckets.cardImages,
+    maxUploadBytes: migrationMediaUploadPolicies.cardImages.maxUploadBytes,
+    recommendedWidth: 1200,
+    recommendedHeight: 1200,
+    acceptedMimeTypes: migrationMediaUploadPolicies.cardImages.acceptedMimeTypes,
+    acceptedFileTypes: ["PNG", "JPG", "WEBP"],
+    aspectWidth: 1,
+    aspectHeight: 1,
+    allowsMultiple: false,
+    supportsVideo: false,
+  },
+  titleLogo: {
+    key: "title_logo",
+    ownerKind: "title",
+    displayName: "Title logo",
+    usageSummary: "Used for large horizontal title branding where a wordmark fits naturally.",
+    bucket: migrationMediaBuckets.logoImages,
+    maxUploadBytes: migrationMediaUploadPolicies.logoImages.maxUploadBytes,
+    recommendedWidth: migrationMediaUploadPolicies.logoImages.recommendedWidth,
+    recommendedHeight: migrationMediaUploadPolicies.logoImages.recommendedHeight,
+    acceptedMimeTypes: migrationMediaUploadPolicies.logoImages.acceptedMimeTypes,
+    acceptedFileTypes: ["PNG", "WEBP", "SVG"],
+    aspectWidth: 3,
+    aspectHeight: 1,
+    allowsMultiple: false,
+    supportsVideo: false,
+  },
+  titleQuickViewBanner: {
+    key: "title_quick_view_banner",
+    ownerKind: "title",
+    displayName: "Title quick view banner",
+    usageSummary: "Used in the wide thin image strip at the top of title quick view.",
+    bucket: migrationMediaBuckets.heroImages,
+    maxUploadBytes: migrationMediaUploadPolicies.heroImages.maxUploadBytes,
+    recommendedWidth: 1680,
+    recommendedHeight: 720,
+    acceptedMimeTypes: migrationMediaUploadPolicies.heroImages.acceptedMimeTypes,
+    acceptedFileTypes: ["PNG", "JPG", "WEBP", "SVG"],
+    aspectWidth: 21,
+    aspectHeight: 9,
+    allowsMultiple: false,
+    supportsVideo: false,
+  },
+  titleShowcase: {
+    key: "title_showcase",
+    ownerKind: "title",
+    displayName: "Title showcase",
+    usageSummary: "Used for title screenshots and videos in the full title gallery. The first item becomes the default title detail image.",
+    bucket: migrationMediaBuckets.heroImages,
+    maxUploadBytes: migrationMediaUploadPolicies.heroImages.maxUploadBytes,
+    recommendedWidth: 1920,
+    recommendedHeight: 1080,
+    acceptedMimeTypes: migrationMediaUploadPolicies.heroImages.acceptedMimeTypes,
+    acceptedFileTypes: ["PNG", "JPG", "WEBP", "SVG"],
+    aspectWidth: 16,
+    aspectHeight: 9,
+    allowsMultiple: true,
+    supportsVideo: true,
+  },
+} as const satisfies Record<string, CatalogMediaTypeDefinition>;
 
 const migrationSeedStudioDescriptionMaxLength = 1600;
 const migrationSeedTitleShortDescriptionMaxLength = 220;
@@ -1156,6 +1380,7 @@ function buildSeedTitleFixture(args: {
   genreSlugs: string[];
   minPlayers: number;
   maxPlayers: number;
+  maxPlayersOrMore?: boolean;
   ageRatingAuthority: string;
   ageRatingValue: string;
   minAgeYears: number;
@@ -1197,6 +1422,7 @@ function buildSeedTitleFixture(args: {
     genreDisplay: buildGenreDisplay(args.genreSlugs),
     minPlayers: args.minPlayers,
     maxPlayers: args.maxPlayers,
+    maxPlayersOrMore: args.maxPlayersOrMore ?? false,
     ageRatingAuthority: args.ageRatingAuthority,
     ageRatingValue: args.ageRatingValue,
     minAgeYears: args.minAgeYears,

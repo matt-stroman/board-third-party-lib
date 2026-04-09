@@ -1687,9 +1687,79 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 "http://127.0.0.1:55421/rest/v1/genres?select=*&limit=1",
                 "http://127.0.0.1:55421/rest/v1/age_rating_authorities?select=*&limit=1",
                 "http://127.0.0.1:55421/rest/v1/marketing_contacts?select=*&limit=1",
+                "http://127.0.0.1:55421/rest/v1/catalog_media_type_definitions?select=*&limit=1",
+                "http://127.0.0.1:55421/rest/v1/catalog_media_entries?select=*&limit=1",
             ],
             requested_urls,
         )
+
+    def test_apply_local_supabase_migrations_runs_supabase_migration_up(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        with (
+            mock.patch.object(dev, "ensure_migration_workspace_scaffolding"),
+            mock.patch.object(dev, "ensure_docker_daemon_available"),
+            mock.patch.object(dev, "resolve_supabase_command_prefix", return_value=["supabase"]),
+            mock.patch.object(
+                dev,
+                "run_command",
+                return_value=mock.Mock(returncode=0, stdout="Applying migration 20260407153000", stderr=""),
+            ) as run_command,
+            mock.patch.object(dev, "print_console_text") as print_console_text,
+        ):
+            dev.apply_local_supabase_migrations(config)
+
+        run_command.assert_called_once_with(
+            ["supabase", "migration", "up"],
+            cwd=config.repo_root / config.supabase_root,
+            check=False,
+            capture_output=True,
+        )
+        print_console_text.assert_called_once_with("Applying migration 20260407153000")
+
+    def test_ensure_local_demo_seed_data_applies_local_migrations_before_seed_probe(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+        runtime_env = {
+            "SUPABASE_URL": "http://127.0.0.1:55421",
+            "SUPABASE_SECRET_KEY": "secret-key",
+        }
+
+        with (
+            mock.patch.object(dev, "wait_for_local_supabase_http_ready") as wait_ready,
+            mock.patch.object(dev, "apply_local_supabase_migrations") as apply_local_migrations,
+            mock.patch.object(dev, "has_local_required_schema", return_value=True) as has_required_schema,
+            mock.patch.object(dev, "has_local_demo_seed_data", return_value=True) as has_seed_data,
+            mock.patch.object(dev, "seed_migration_data") as seed_migration_data,
+        ):
+            dev.ensure_local_demo_seed_data(config, runtime_env=runtime_env)
+
+        self.assertEqual(
+            [mock.call(runtime_env=runtime_env), mock.call(runtime_env=runtime_env)],
+            wait_ready.call_args_list,
+        )
+        apply_local_migrations.assert_called_once_with(config)
+        has_required_schema.assert_called_once_with(runtime_env)
+        has_seed_data.assert_called_once_with(runtime_env=runtime_env)
+        seed_migration_data.assert_not_called()
+
+    def test_ensure_local_demo_seed_data_raises_when_required_schema_is_still_missing_after_migrations(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+        runtime_env = {
+            "SUPABASE_URL": "http://127.0.0.1:55421",
+            "SUPABASE_SECRET_KEY": "secret-key",
+        }
+
+        with (
+            mock.patch.object(dev, "wait_for_local_supabase_http_ready"),
+            mock.patch.object(dev, "apply_local_supabase_migrations"),
+            mock.patch.object(dev, "has_local_required_schema", return_value=False),
+            mock.patch.object(dev, "run_supabase_stack_command") as run_supabase_stack_command,
+        ):
+            with self.assertRaises(dev.DevCliError) as raised:
+                dev.ensure_local_demo_seed_data(config, runtime_env=runtime_env)
+
+        self.assertIn("seed-data --reset", str(raised.exception))
+        run_supabase_stack_command.assert_not_called()
 
     def test_request_json_does_not_force_browser_user_agent(self) -> None:
         captured_user_agent: str | None = None

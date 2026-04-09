@@ -3292,6 +3292,8 @@ def has_local_required_schema(runtime_env: dict[str, str]) -> bool:
         "genres",
         "age_rating_authorities",
         "marketing_contacts",
+        "catalog_media_type_definitions",
+        "catalog_media_entries",
     )
     base_url = runtime_env["SUPABASE_URL"].rstrip("/")
     headers = build_supabase_bearer_headers(api_key=runtime_env["SUPABASE_SECRET_KEY"])
@@ -3313,6 +3315,49 @@ def has_local_required_schema(runtime_env: dict[str, str]) -> bool:
     return True
 
 
+def apply_local_supabase_migrations(config: DevConfig) -> None:
+    """Apply any outstanding checked-in migrations to the running local Supabase stack.
+
+    Args:
+        config: CLI configuration containing the Supabase project path.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If the local migration application fails.
+    """
+
+    ensure_migration_workspace_scaffolding(config)
+    ensure_docker_daemon_available()
+    supabase_root = config.repo_root / config.supabase_root
+    prefix = resolve_supabase_command_prefix()
+
+    write_step("Applying outstanding local Supabase migrations")
+    result = run_command(
+        [*prefix, "migration", "up"],
+        cwd=supabase_root,
+        check=False,
+        capture_output=True,
+    )
+
+    output = "\n".join(
+        part.strip()
+        for part in ((result.stdout or ""), (result.stderr or ""))
+        if part and part.strip()
+    )
+    if result.returncode != 0:
+        normalized_output = output.lower()
+        if "cannot connect to the docker daemon" in normalized_output or "no such container" in normalized_output:
+            raise DevCliError(
+                "Local Supabase services are not running. Start them with 'python ./scripts/dev.py database up'."
+            )
+        raise DevCliError("Applying local Supabase migrations failed." + (f"\n{output}" if output else ""))
+
+    if output:
+        print_console_text(output)
+
+
 def ensure_local_demo_seed_data(config: DevConfig, *, runtime_env: dict[str, str]) -> None:
     """Ensure the local Supabase stack contains deterministic demo data.
 
@@ -3325,10 +3370,14 @@ def ensure_local_demo_seed_data(config: DevConfig, *, runtime_env: dict[str, str
     """
 
     wait_for_local_supabase_http_ready(runtime_env=runtime_env)
+    apply_local_supabase_migrations(config)
+    wait_for_local_supabase_http_ready(runtime_env=runtime_env)
     if not has_local_required_schema(runtime_env):
-        write_step("Local runtime schema is behind checked-in migrations; resetting and reseeding")
-        run_supabase_stack_command(config, action="db-reset")
-        return
+        raise DevCliError(
+            "Local runtime is still missing required maintained schema after applying checked-in migrations. "
+            "Review the local Supabase migration state and rerun 'python ./scripts/dev.py web'. "
+            "If you intentionally want a fresh local rebuild, run 'python ./scripts/dev.py seed-data --reset'."
+        )
 
     if has_local_demo_seed_data(runtime_env=runtime_env):
         return
