@@ -45,6 +45,9 @@ Initialize them after clone:
 git submodule update --init --recursive
 ```
 
+The maintained submodules track `main`, and `python ./scripts/dev.py bootstrap` will reattach
+them to their local branches when Git leaves them detached after submodule updates.
+
 Check that submodules are initialized (no leading `-` in status output):
 
 ```bash

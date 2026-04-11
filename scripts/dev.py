@@ -1029,6 +1029,177 @@ def get_maintained_submodule_paths(config: DevConfig) -> tuple[tuple[str, Path],
     )
 
 
+def get_submodule_tracking_branch(config: DevConfig, path: Path) -> str:
+    """Return the configured branch a submodule should track locally.
+
+    Args:
+        config: CLI configuration containing the repository root.
+        path: Submodule directory path.
+
+    Returns:
+        The configured tracking branch name, defaulting to ``main``.
+    """
+
+    result = run_command(
+        ["git", "config", "--file", ".gitmodules", "--get", f"submodule.{path.name}.branch"],
+        cwd=config.repo_root,
+        check=False,
+        capture_output=True,
+    )
+    branch = result.stdout.strip() if result.returncode == 0 else ""
+    return branch or "main"
+
+
+def get_current_git_branch(path: Path) -> str | None:
+    """Return the current checked out Git branch, if any.
+
+    Args:
+        path: Repository path to inspect.
+
+    Returns:
+        The current branch name, or ``None`` when ``HEAD`` is detached.
+    """
+
+    result = run_command(
+        ["git", "symbolic-ref", "-q", "--short", "HEAD"],
+        cwd=path,
+        check=False,
+        capture_output=True,
+    )
+    branch = result.stdout.strip() if result.returncode == 0 else ""
+    return branch or None
+
+
+def git_ref_exists(path: Path, ref_name: str) -> bool:
+    """Return whether a Git ref exists in the repository.
+
+    Args:
+        path: Repository path to inspect.
+        ref_name: Fully-qualified ref name to test.
+
+    Returns:
+        ``True`` when the ref exists, else ``False``.
+    """
+
+    result = run_command(
+        ["git", "show-ref", "--verify", "--quiet", ref_name],
+        cwd=path,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def get_git_ref_sha(path: Path, ref_name: str) -> str | None:
+    """Return the commit SHA for a Git ref when available.
+
+    Args:
+        path: Repository path to inspect.
+        ref_name: Git ref or revision expression to resolve.
+
+    Returns:
+        The resolved SHA string, or ``None`` when the ref cannot be resolved.
+    """
+
+    result = run_command(
+        ["git", "rev-parse", ref_name],
+        cwd=path,
+        check=False,
+        capture_output=True,
+    )
+    sha = result.stdout.strip() if result.returncode == 0 else ""
+    return sha or None
+
+
+def git_ref_is_ancestor(path: Path, ancestor_ref: str, descendant_ref: str) -> bool:
+    """Return whether one Git ref is an ancestor of another.
+
+    Args:
+        path: Repository path to inspect.
+        ancestor_ref: Candidate ancestor revision.
+        descendant_ref: Candidate descendant revision.
+
+    Returns:
+        ``True`` when ``ancestor_ref`` is an ancestor of ``descendant_ref``.
+    """
+
+    result = run_command(
+        ["git", "merge-base", "--is-ancestor", ancestor_ref, descendant_ref],
+        cwd=path,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def reattach_maintained_submodule_heads(config: DevConfig) -> None:
+    """Reattach maintained submodules to their tracked branches when safe.
+
+    Git submodules naturally land in detached ``HEAD`` state after ``git submodule update``.
+    For local development in this workspace we prefer branch checkouts, so this helper
+    switches maintained submodules back to their configured tracking branches whenever the
+    current detached commit already matches the branch tip or can be reached by a simple
+    fast-forward of the local branch.
+
+    Args:
+        config: CLI configuration containing the repository root.
+
+    Returns:
+        None.
+    """
+
+    for label, path in get_maintained_submodule_paths(config):
+        if not test_submodule_initialized(path):
+            continue
+
+        current_branch = get_current_git_branch(path)
+        if current_branch:
+            continue
+
+        target_branch = get_submodule_tracking_branch(config, path)
+        head_sha = get_git_ref_sha(path, "HEAD")
+        local_ref = f"refs/heads/{target_branch}"
+        remote_ref = f"refs/remotes/origin/{target_branch}"
+
+        if not head_sha:
+            print(f"{label}: unable to resolve detached HEAD commit; leaving current checkout as-is.")
+            continue
+
+        if git_ref_exists(path, local_ref):
+            local_sha = get_git_ref_sha(path, local_ref)
+            if local_sha != head_sha:
+                if git_ref_is_ancestor(path, local_ref, "HEAD"):
+                    run_command(["git", "branch", "-f", target_branch, "HEAD"], cwd=path)
+                else:
+                    print(
+                        f"{label}: detached HEAD at {head_sha[:7]} was not a fast-forward of local '{target_branch}', "
+                        "so it was left detached to avoid rewriting branch history."
+                    )
+                    continue
+
+            switch_result = run_command(["git", "switch", target_branch], cwd=path, check=False, capture_output=True)
+            if switch_result.returncode != 0:
+                detail = switch_result.stderr.strip() or switch_result.stdout.strip() or "Git refused to switch branches."
+                print(f"{label}: could not switch back to '{target_branch}': {detail}")
+            continue
+
+        if git_ref_exists(path, remote_ref):
+            if not git_ref_is_ancestor(path, remote_ref, "HEAD"):
+                print(
+                    f"{label}: detached HEAD at {head_sha[:7]} did not fast-forward the tracked remote branch "
+                    f"'{target_branch}', so it was left detached."
+                )
+                continue
+
+            run_command(["git", "branch", "--track", target_branch, f"origin/{target_branch}"], cwd=path)
+            run_command(["git", "branch", "-f", target_branch, "HEAD"], cwd=path)
+            switch_result = run_command(["git", "switch", target_branch], cwd=path, check=False, capture_output=True)
+            if switch_result.returncode != 0:
+                detail = switch_result.stderr.strip() or switch_result.stdout.strip() or "Git refused to switch branches."
+                print(f"{label}: could not switch back to '{target_branch}': {detail}")
+            continue
+
+        print(f"{label}: tracked branch '{target_branch}' was not available locally or on origin; leaving detached HEAD in place.")
+
+
 def find_docker_desktop_executable() -> Path | None:
     """Return the expected Docker Desktop executable path on Windows when available.
 
@@ -1806,10 +1977,12 @@ def ensure_submodules(config: DevConfig) -> None:
     assert_command_available("git")
     if all(test_submodule_initialized(path) for _, path in get_maintained_submodule_paths(config)):
         print("Submodules appear initialized.")
+        reattach_maintained_submodule_heads(config)
         return
 
     write_step("Initializing submodules")
     run_command(["git", "submodule", "update", "--init", "--recursive"], cwd=config.repo_root)
+    reattach_maintained_submodule_heads(config)
 
 
 def restore_backend(config: DevConfig) -> None:

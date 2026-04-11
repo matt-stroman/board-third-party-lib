@@ -1,12 +1,16 @@
 [submodule "frontend"]
 	path = frontend
 	url = https://github.com/board-enthusiasts/board-enthusiasts_frontend.git
+	branch = main
 [submodule "backend"]
 	path = backend
 	url = https://github.com/board-enthusiasts/board-enthusiasts_backend.git
+	branch = main
 [submodule "api"]
 	path = api
 	url = https://github.com/board-enthusiasts/board-enthusiasts_api.git
+	branch = main
 [submodule "be-home"]
 	path = be-home
 	url = https://github.com/board-enthusiasts/be-home.git
+	branch = main
