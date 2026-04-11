@@ -308,7 +308,7 @@ export interface BoardProfile {
 }
 
 export interface BoardProfileResponse {
-  boardProfile: BoardProfile;
+  boardProfile: BoardProfile | null;
 }
 
 export interface UpsertBoardProfileRequest {
