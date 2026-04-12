@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 45
     environment: ${{ inputs.target }}
     env:
-      BOARD_ENTHUSIASTS_APP_ENV: ${{ inputs.target }}
+      BOARD_ENTHUSIASTS_APP_ENV: ${{ vars.BOARD_ENTHUSIASTS_APP_ENV }}
       BOARD_ENTHUSIASTS_SPA_BASE_URL: ${{ vars.BOARD_ENTHUSIASTS_SPA_BASE_URL }}
       BOARD_ENTHUSIASTS_WORKERS_BASE_URL: ${{ vars.BOARD_ENTHUSIASTS_WORKERS_BASE_URL }}
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
@@ -88,6 +88,33 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: false
+
+      - name: Validate synced deploy environment target
+        run: |
+          python - <<'PY'
+          import os
+
+          requested_target = "${{ inputs.target }}".strip().lower()
+          active_target = os.environ.get("BOARD_ENTHUSIASTS_APP_ENV", "").strip().lower()
+
+          if not active_target:
+              raise SystemExit(
+                  "Manual Deploy requires BOARD_ENTHUSIASTS_APP_ENV to be present in the active GitHub Environment, "
+                  f"but the '{requested_target}' environment did not provide a value.\n"
+                  "Run the environment sync workflow first, then retry this deployment."
+              )
+
+          if active_target != requested_target:
+              raise SystemExit(
+                  "Manual Deploy environment mismatch detected.\n"
+                  f"Requested deploy target: {requested_target}\n"
+                  f"Active BOARD_ENTHUSIASTS_APP_ENV: {active_target}\n"
+                  "This usually means the GitHub Environment values are out of sync with the checked-in deploy env file.\n"
+                  "Run the environment sync workflow before retrying this deployment."
+              )
+
+          print(f"Validated deploy environment target: {active_target}")
+          PY
 
       - name: Initialize required public submodules
         run: git submodule update --init --depth=1 api backend frontend
