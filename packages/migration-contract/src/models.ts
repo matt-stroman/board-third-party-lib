@@ -588,6 +588,7 @@ export interface DeveloperTitle {
   ageRatingValue: string | null;
   minAgeYears: number;
   ageDisplay: string | null;
+  viewCount?: number;
   wishlistCount?: number;
   libraryCount?: number;
   cardImageUrl: string | null;
@@ -686,6 +687,7 @@ export interface CatalogTitleSummary {
   ageRatingValue: string | null;
   minAgeYears: number;
   ageDisplay: string | null;
+  viewCount?: number;
   wishlistCount?: number;
   libraryCount?: number;
   cardImageUrl: string | null;
