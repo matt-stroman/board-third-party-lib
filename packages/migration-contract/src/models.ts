@@ -589,6 +589,8 @@ export interface DeveloperTitle {
   minAgeYears: number;
   ageDisplay: string | null;
   viewCount?: number;
+  getTitleClickCount?: number;
+  lastGetTitleClickedAt?: string | null;
   wishlistCount?: number;
   libraryCount?: number;
   cardImageUrl: string | null;
