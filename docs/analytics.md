@@ -347,11 +347,12 @@ Available today:
 - title detail visits: `title_detail_viewed`
 - title quick views: `title_quick_view_opened`
 - `Get Title` clicks: `title_get_clicked`
+- developer title analytics cards for unique title detail views, unique `Get Title` clicks, wishlist count, and library count
 
-Deferred for later:
+Still deferred:
 
 - hover-expand counts
-- dedicated developer-facing reporting UI
+- broader cross-product analytics dashboards beyond the existing developer title cards
 
 Sample query for title interactions:
 
@@ -522,7 +523,6 @@ These items are not part of the current launch slice:
 - developer in-app notifications on `Get Title`
 - optional developer email alerts on `Get Title`
 - hover-expand analytics
-- developer-facing analytics dashboards inside BE
 - external API consumer attribution via API keys
 - a single combined analytics dashboard
 - deep auth funnel reporting beyond the current start/completion/account-created slice
