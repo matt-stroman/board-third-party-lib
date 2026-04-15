@@ -5,9 +5,10 @@ This guide describes the analytics slice currently in place for the initial stag
 The short version:
 
 - Product-behavior events are recorded through the Workers API into Cloudflare Workers Analytics Engine.
+- Developer-facing studio and title analytics are stored separately in Supabase Postgres as event definitions plus timestamped event rows.
 - API traffic and endpoint usage are monitored through Cloudflare Workers observability.
-- A few higher-value workflows are instrumented now.
-- Developer notifications, richer API-consumer attribution, hover-expand tracking, and a unified dashboard are intentionally deferred into follow-up issues.
+- Developers can now build saved analytics views with per-card date ranges and derived metrics such as conversion rates and net-change cards.
+- Developer notifications, richer API-consumer attribution, hover-expand tracking, and a unified cross-product dashboard are intentionally deferred into follow-up issues.
 
 ## What Exists Today
 
@@ -36,6 +37,45 @@ Relevant implementation files:
 - [backend/apps/workers-api/src/worker.ts](../backend/apps/workers-api/src/worker.ts)
 - [backend/apps/workers-api/src/service-boundary.ts](../backend/apps/workers-api/src/service-boundary.ts)
 - [backend/cloudflare/workers/wrangler.template.jsonc](../backend/cloudflare/workers/wrangler.template.jsonc)
+
+### Developer Analytics Event Model
+
+Board Enthusiasts also maintains a separate developer-facing analytics model inside Supabase Postgres.
+
+This slice exists so studio and title analytics can support:
+
+- timestamped historical event tracking for developer-relevant actions
+- data-driven metric definitions for both studio and title analytics
+- saved analytics views per developer account
+- calculated metrics that are derived from tracked events instead of being written as raw events themselves
+
+The current model is split between:
+
+- `public.analytics_event_types`
+  - metric catalog rows
+  - one shared definition table for both studio and title metrics
+  - stores descriptor, display copy, scope, aggregation behavior, metric kind, formatting metadata, and optional calculation config
+- `public.analytics_events`
+  - timestamped event rows for tracked analytics actions
+  - scoped to either a studio or a title depending on the metric definition
+- `public.developer_analytics_saved_views`
+  - per-account saved analytics panel configurations
+
+Important boundary:
+
+- Cloudflare Workers Analytics Engine is still the source for broad product-behavior and route-level reporting
+- Supabase Postgres is now the source for developer-facing studio/title analytics cards and saved analytics views
+- the developer analytics catalog contains both tracked metrics and calculated metrics, but only tracked metrics write rows into `analytics_events`
+
+Relevant implementation files:
+
+- [backend/supabase/migrations/20260414100000_add_developer_analytics_event_model.sql](../backend/supabase/migrations/20260414100000_add_developer_analytics_event_model.sql)
+- [backend/supabase/migrations/20260414113000_backfill_analytics_events_from_current_state.sql](../backend/supabase/migrations/20260414113000_backfill_analytics_events_from_current_state.sql)
+- [backend/supabase/migrations/20260415110000_add_developer_analytics_saved_views.sql](../backend/supabase/migrations/20260415110000_add_developer_analytics_saved_views.sql)
+- [backend/supabase/migrations/20260415133000_add_developer_analytics_derived_metrics.sql](../backend/supabase/migrations/20260415133000_add_developer_analytics_derived_metrics.sql)
+- [backend/apps/workers-api/src/service-boundary.ts](../backend/apps/workers-api/src/service-boundary.ts)
+- [frontend/src/developer/develop-workspace.tsx](../frontend/src/developer/develop-workspace.tsx)
+- [packages/migration-contract/src/models.ts](../packages/migration-contract/src/models.ts)
 
 ### Internal Event Intake Route
 
@@ -347,12 +387,13 @@ Available today:
 - title detail visits: `title_detail_viewed`
 - title quick views: `title_quick_view_opened`
 - `Get Title` clicks: `title_get_clicked`
-- developer title analytics cards for unique title detail views, unique `Get Title` clicks, wishlist count, and library count
+- developer studio analytics cards for follows, unfollows, and follower net change
+- developer title analytics cards for tracked actions, saved views, and derived metrics such as wishlist conversion, library conversion, and net-change cards
 
 Still deferred:
 
 - hover-expand counts
-- broader cross-product analytics dashboards beyond the existing developer title cards
+- broader cross-product analytics dashboards beyond the current developer workspace cards
 
 Sample query for title interactions:
 
@@ -428,6 +469,10 @@ ORDER BY total DESC;
 ```
 
 ## Current Launch-Phase Event Definitions
+
+This section covers the Cloudflare product-behavior event stream only.
+
+Developer analytics tracked in Supabase use a separate event model and are not represented as Analytics Engine rows.
 
 ### `page_view`
 
@@ -520,12 +565,14 @@ Why it matters:
 
 These items are not part of the current launch slice:
 
-- developer in-app notifications on `Get Title`
-- optional developer email alerts on `Get Title`
+- developer in-app notifications tied to analytics thresholds such as `Get Title`
+- optional developer email alerts tied to analytics thresholds such as `Get Title`
 - hover-expand analytics
 - external API consumer attribution via API keys
 - a single combined analytics dashboard
 - deep auth funnel reporting beyond the current start/completion/account-created slice
+- peak active player analytics on title cards
+- custom developer-selected comparison ranges beyond the current automatic previous-range comparison on derived comparison cards
 
 Those items should be tracked in the root GitHub analytics follow-up issues created alongside this wave.
 
