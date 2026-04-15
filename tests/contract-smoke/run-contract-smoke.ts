@@ -49,6 +49,7 @@ interface SmokeContext {
   deleteTitleDisplayName: string;
   releaseUnderTestId: string;
   showcaseMediaUnderTestId: string;
+  analyticsSavedViewId: string;
 }
 
 interface RequestPlan {
@@ -325,6 +326,7 @@ async function bootstrapContext(): Promise<SmokeContext> {
     deleteTitleDisplayName: deleteTitle.displayName,
     releaseUnderTestId: "",
     showcaseMediaUnderTestId: "",
+    analyticsSavedViewId: "",
   };
 }
 
@@ -565,6 +567,61 @@ function buildRequestPlan(
         init: { method: route.method, headers: buildHeaders(token), body: formData },
       };
     }
+    case "GET /developer/analytics/views":
+      return {
+        path: "/developer/analytics/views?subjectScope=title",
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "POST /developer/analytics/views":
+      return {
+        path: "/developer/analytics/views",
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({
+            subjectScope: "title",
+            name: "Smoke analytics view",
+            panels: [
+              {
+                descriptor: "title_detail_viewed",
+                rangePresetId: "last-24-hours",
+                customFrom: null,
+                customTo: null,
+              },
+            ],
+          }),
+        },
+      };
+    case "PUT /developer/analytics/views/{viewId}":
+      return {
+        path: `/developer/analytics/views/${requireValue(context.analyticsSavedViewId, "analytics saved view id")}`,
+        init: {
+          method: route.method,
+          headers: buildHeaders(token, "application/json"),
+          body: JSON.stringify({
+            subjectScope: "title",
+            name: "Smoke analytics view updated",
+            panels: [
+              {
+                descriptor: "title_get_clicked",
+                rangePresetId: "today",
+                customFrom: null,
+                customTo: null,
+              },
+            ],
+          }),
+        },
+      };
+    case "DELETE /developer/analytics/views/{viewId}":
+      return {
+        path: `/developer/analytics/views/${requireValue(context.analyticsSavedViewId, "analytics saved view id")}`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "GET /developer/studios/{studioId}/analytics":
+      return {
+        path: `/developer/studios/${requireValue(context.managedStudioId, "managed studio id")}/analytics?descriptor=studio_followed`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
     case "GET /developer/studios/{studioId}/titles":
       return {
         path: `/developer/studios/${requireValue(context.createdStudioId || context.managedStudioId, "studio id")}/titles`,
@@ -585,6 +642,11 @@ function buildRequestPlan(
     case "GET /developer/titles/{titleId}":
       return {
         path: `/developer/titles/${requireValue(context.createdTitleId, "created title id")}`,
+        init: { method: route.method, headers: buildHeaders(token) },
+      };
+    case "GET /developer/titles/{titleId}/analytics":
+      return {
+        path: `/developer/titles/${requireValue(context.managedTitleId, "managed title id")}/analytics?descriptor=title_detail_viewed`,
         init: { method: route.method, headers: buildHeaders(token) },
       };
     case "PUT /developer/titles/{titleId}":
@@ -925,6 +987,10 @@ function applyResponseContext(route: (typeof maintainedApiRoutes)[number], paylo
       break;
     case "POST /developer/titles/{titleId}/showcase-media":
       context.showcaseMediaUnderTestId = (((json.showcaseMedia as JsonRecord | undefined)?.id as string | undefined) ?? "");
+      break;
+    case "POST /developer/analytics/views":
+    case "PUT /developer/analytics/views/{viewId}":
+      context.analyticsSavedViewId = (((json.view as JsonRecord | undefined)?.id as string | undefined) ?? context.analyticsSavedViewId);
       break;
     case "GET /moderation/title-reports": {
       const reports = (json.reports as Array<JsonRecord> | undefined) ?? [];
