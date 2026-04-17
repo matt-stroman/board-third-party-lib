@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
@@ -570,6 +571,41 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 "https://supabase.boardenthusiasts.com",
                 dev.infer_supabase_url_from_environment(),
             )
+
+    def test_get_supabase_project_ref_from_url_reads_default_hosted_project_ref(self) -> None:
+        self.assertEqual(
+            "project-ref-123",
+            dev.get_supabase_project_ref_from_url("https://project-ref-123.supabase.co"),
+        )
+
+    def test_assert_supabase_project_alignment_rejects_mismatched_runtime_project(self) -> None:
+        with self.assertRaises(dev.DevCliError) as raised:
+            dev.assert_supabase_project_alignment(
+                {
+                    "SUPABASE_PROJECT_REF": "production-ref",
+                    "SUPABASE_URL": "https://staging-ref.supabase.co",
+                }
+            )
+
+        message = str(raised.exception)
+        self.assertIn("SUPABASE_PROJECT_REF targets 'production-ref'", message)
+        self.assertIn("SUPABASE_URL points at 'staging-ref'", message)
+
+    def test_assert_supabase_project_alignment_logs_runtime_target_details(self) -> None:
+        with mock.patch.object(dev, "write_step") as write_step:
+            dev.assert_supabase_project_alignment(
+                {
+                    "SUPABASE_PROJECT_REF": "project-ref-123",
+                    "SUPABASE_URL": "https://project-ref-123.supabase.co",
+                }
+            )
+
+        write_step.assert_called_once_with(
+            "Supabase runtime target: "
+            "SUPABASE_PROJECT_REF=project-ref-123; "
+            "SUPABASE_URL=https://project-ref-123.supabase.co; "
+            "URL-derived project ref=project-ref-123"
+        )
 
     def test_infer_supabase_url_does_not_override_local_environment(self) -> None:
         with mock.patch.dict(
@@ -1272,6 +1308,8 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         ) as assert_supabase_publishable_access, mock.patch.object(
             dev, "assert_supabase_secret_access"
         ) as assert_supabase_secret_access, mock.patch.object(
+            dev, "assert_supabase_project_alignment"
+        ) as assert_supabase_project_alignment, mock.patch.object(
             dev, "assert_turnstile_secret_access"
         ) as assert_turnstile_secret_access, mock.patch.object(
             dev, "assert_brevo_configuration"
@@ -1289,9 +1327,122 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         assert_worker_custom_domain_dns_prerequisites.assert_called_once_with(env_values)
         assert_supabase_publishable_access.assert_called_once_with(env_values)
         assert_supabase_secret_access.assert_called_once_with(env_values)
+        assert_supabase_project_alignment.assert_called_once_with(env_values)
         assert_turnstile_secret_access.assert_called_once_with(env_values)
         assert_brevo_configuration.assert_called_once_with(env_values)
         run_supabase_link.assert_called_once_with(config, env_values=env_values, subprocess_env=subprocess_env)
+
+    def test_assert_hosted_required_schema_checks_runtime_tables(self) -> None:
+        env_values = {
+            "SUPABASE_URL": "https://project-ref.supabase.co",
+            "SUPABASE_SECRET_KEY": "secret-key",
+        }
+        requested_urls: list[str] = []
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        def fake_urlopen(request, timeout=15):
+            requested_urls.append(request.full_url)
+            return _Response()
+
+        with mock.patch.object(dev.urllib.request, "urlopen", side_effect=fake_urlopen):
+            dev.assert_hosted_required_schema(env_values)
+
+        self.assertEqual(
+            [
+                "https://project-ref.supabase.co/rest/v1/titles?select=*&limit=1",
+                "https://project-ref.supabase.co/rest/v1/studios?select=*&limit=1",
+                "https://project-ref.supabase.co/rest/v1/home_spotlight_entries?select=*&limit=1",
+                "https://project-ref.supabase.co/rest/v1/home_offering_spotlight_entries?select=*&limit=1",
+                "https://project-ref.supabase.co/rest/v1/player_followed_studios?select=*&limit=1",
+                "https://project-ref.supabase.co/rest/v1/be_home_presence_sessions?select=*&limit=1",
+                "https://project-ref.supabase.co/rest/v1/be_home_device_identities?select=*&limit=1",
+                "https://project-ref.supabase.co/rest/v1/title_detail_views?select=*&limit=1",
+                "https://project-ref.supabase.co/rest/v1/title_get_clicks?select=*&limit=1",
+            ],
+            requested_urls,
+        )
+
+    def test_deploy_migration_target_verifies_hosted_schema_after_supabase_push(self) -> None:
+        args = self.create_args()
+        config = dev.config_from_args(args, pathlib.Path.cwd())
+        env_values = {
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://boardenthusiasts.com",
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.boardenthusiasts.com",
+            "SUPABASE_PROJECT_REF": "project-ref",
+            "SUPABASE_URL": "https://project-ref.supabase.co",
+            "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
+            "SUPABASE_SECRET_KEY": "secret-key",
+            "SUPABASE_DB_PASSWORD": "db-password",
+            "SUPABASE_ACCESS_TOKEN": "supabase-access-token",
+            "SUPABASE_AVATARS_BUCKET": "avatars",
+            "SUPABASE_CARD_IMAGES_BUCKET": "cards",
+            "SUPABASE_HERO_IMAGES_BUCKET": "heroes",
+            "SUPABASE_LOGO_IMAGES_BUCKET": "logos",
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+            "CLOUDFLARE_API_TOKEN": "cloudflare-token",
+            "VITE_TURNSTILE_SITE_KEY": "turnstile-site-key",
+            "TURNSTILE_SECRET_KEY": "turnstile-secret-key",
+            "BREVO_API_KEY": "brevo-api-key",
+            "BREVO_SIGNUPS_LIST_ID": "list-id",
+            "ALLOWED_WEB_ORIGINS": "https://boardenthusiasts.com",
+            "SUPPORT_REPORT_RECIPIENT": "support@boardenthusiasts.com",
+            "SUPPORT_REPORT_SENDER_EMAIL": "noreply@boardenthusiasts.com",
+            "SUPPORT_REPORT_SENDER_NAME": "Board Enthusiasts",
+            "DEPLOY_SMOKE_SECRET": "deploy-smoke-secret",
+            "DEPLOY_SMOKE_PLAYER_EMAIL": "player@example.com",
+            "DEPLOY_SMOKE_DEVELOPER_EMAIL": "developer@example.com",
+            "DEPLOY_SMOKE_MODERATOR_EMAIL": "moderator@example.com",
+            "DEPLOY_SMOKE_USER_PASSWORD": "deploy-smoke-password",
+            "VITE_LANDING_MODE": "false",
+        }
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(dev, "assert_command_available"))
+            stack.enter_context(mock.patch.object(dev, "ensure_migration_workspace_scaffolding"))
+            stack.enter_context(mock.patch.object(dev, "install_migration_workspace_dependencies"))
+            stack.enter_context(mock.patch.object(dev, "collect_present_environment_values", return_value={}))
+            stack.enter_context(mock.patch.object(dev, "require_environment_values", return_value=env_values))
+            stack.enter_context(mock.patch.object(dev, "build_deploy_subprocess_environment", return_value={"env": "value"}))
+            stack.enter_context(mock.patch.object(dev, "resolve_deploy_source_branch", return_value="main"))
+            stack.enter_context(mock.patch.object(dev, "run_deploy_preflight"))
+            stack.enter_context(mock.patch.object(dev, "run_deploy_dry_run"))
+            stack.enter_context(mock.patch.object(dev, "build_deploy_fingerprint", return_value="fingerprint"))
+            stack.enter_context(mock.patch.object(dev, "normalize_deploy_stage_state", return_value=(set(), {})))
+            stack.enter_context(
+                mock.patch.object(dev, "get_deploy_worker_config_path", return_value=pathlib.Path("wrangler.generated.jsonc"))
+            )
+            stack.enter_context(mock.patch.object(dev, "run_supabase_remote_config_push"))
+            stack.enter_context(mock.patch.object(dev, "run_supabase_link"))
+            run_supabase_remote_push = stack.enter_context(mock.patch.object(dev, "run_supabase_remote_push"))
+            assert_hosted_required_schema = stack.enter_context(mock.patch.object(dev, "assert_hosted_required_schema"))
+            stack.enter_context(mock.patch.object(dev, "run_supabase_bucket_provisioning"))
+            stack.enter_context(mock.patch.object(dev, "run_supabase_hosted_demo_seeding"))
+            stack.enter_context(mock.patch.object(dev, "ensure_cloudflare_pages_project"))
+            stack.enter_context(mock.patch.object(dev, "sync_worker_secret"))
+            stack.enter_context(mock.patch.object(dev, "run_workers_deploy"))
+            stack.enter_context(mock.patch.object(dev, "run_pages_deploy", return_value="pages-alias.example"))
+            stack.enter_context(mock.patch.object(dev, "finalize_pages_custom_domain"))
+            stack.enter_context(mock.patch.object(dev, "update_deploy_stage_completion"))
+            stack.enter_context(mock.patch.object(dev, "run_workers_deploy_smoke"))
+            stack.enter_context(mock.patch.object(dev, "run_pages_deploy_smoke"))
+            dev.deploy_migration_target(
+                config,
+                target="production",
+                source_branch=None,
+                force=False,
+                upgrade=False,
+                preflight_only=False,
+                dry_run_only=False,
+            )
+
+        run_supabase_remote_push.assert_called_once()
+        assert_hosted_required_schema.assert_called_once_with(env_values)
 
     def test_get_cloudflare_pages_projects_raises_actionable_guidance_when_api_access_fails(self) -> None:
         env_values = {
@@ -1608,6 +1759,14 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 return {"genres": [{"slug": "utility"}]}
             if url.endswith("/age-rating-authorities"):
                 return {"ageRatingAuthorities": [{"code": "ESRB"}]}
+            if url.endswith("/spotlights/home"):
+                return {"entries": []}
+            if url.endswith("/internal/home-offering-spotlights"):
+                return {"entries": []}
+            if url.endswith("/internal/be-home/metrics"):
+                return {"metrics": {"communityActiveNowTotal": 0}}
+            if url.endswith("/studios") and method == "GET":
+                return {"studios": []}
             if "/catalog?pageNumber=1&pageSize=4&sort=title-asc" in url:
                 return {
                     "titles": [
@@ -1728,6 +1887,14 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 return {"genres": [{"slug": "utility"}]}
             if url.endswith("/age-rating-authorities"):
                 return {"ageRatingAuthorities": [{"code": "ESRB"}]}
+            if url.endswith("/spotlights/home"):
+                return {"entries": []}
+            if url.endswith("/internal/home-offering-spotlights"):
+                return {"entries": []}
+            if url.endswith("/internal/be-home/metrics"):
+                return {"metrics": {"communityActiveNowTotal": 0}}
+            if url.endswith("/studios") and method == "GET":
+                return {"studios": []}
             if "/catalog?pageNumber=1&pageSize=4&sort=title-asc" in url:
                 return {"titles": []}
             if url.endswith("/identity/me/notifications"):
@@ -1807,6 +1974,14 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 return {"genres": [{"slug": "utility"}]}
             if url.endswith("/age-rating-authorities"):
                 return {"ageRatingAuthorities": [{"code": "ESRB"}]}
+            if url.endswith("/spotlights/home"):
+                return {"entries": []}
+            if url.endswith("/internal/home-offering-spotlights"):
+                return {"entries": []}
+            if url.endswith("/internal/be-home/metrics"):
+                return {"metrics": {"communityActiveNowTotal": 0}}
+            if url.endswith("/studios") and method == "GET":
+                return {"studios": []}
             if "/catalog?pageNumber=1&pageSize=4&sort=title-asc" in url:
                 return {
                     "titles": [
