@@ -739,6 +739,17 @@ def infer_supabase_url_from_environment() -> str | None:
     return f"https://{project_ref}.supabase.co"
 
 
+def get_supabase_project_ref_from_url(supabase_url: str) -> str | None:
+    """Extract the default Supabase project ref from a hosted project URL when possible."""
+
+    hostname = (urllib.parse.urlparse(supabase_url).hostname or "").strip().lower()
+    if not hostname.endswith(".supabase.co"):
+        return None
+
+    project_ref = hostname[: -len(".supabase.co")].strip()
+    return project_ref or None
+
+
 def normalize_supabase_environment() -> None:
     """Normalize derived Supabase environment values for the current CLI process."""
 
@@ -5671,6 +5682,72 @@ def assert_supabase_secret_access(env_values: dict[str, str]) -> None:
         raise DevCliError(f"Supabase secret key probe failed: {detail or url}")
 
 
+def assert_supabase_project_alignment(env_values: dict[str, str]) -> None:
+    """Ensure the hosted Supabase URL points at the same project ref used for migrations."""
+
+    configured_project_ref = env_values["SUPABASE_PROJECT_REF"].strip()
+    supabase_url = env_values["SUPABASE_URL"].strip()
+    url_project_ref = get_supabase_project_ref_from_url(supabase_url)
+    write_step(
+        "Supabase runtime target: "
+        f"SUPABASE_PROJECT_REF={configured_project_ref}; "
+        f"SUPABASE_URL={supabase_url}; "
+        f"URL-derived project ref={url_project_ref or 'unavailable'}"
+    )
+    if not url_project_ref or url_project_ref == configured_project_ref:
+        return
+
+    raise DevCliError(
+        "Supabase deploy environment mismatch detected.\n"
+        f"SUPABASE_PROJECT_REF targets '{configured_project_ref}', but SUPABASE_URL points at '{url_project_ref}'.\n"
+        "The deploy flow migrates the project selected by SUPABASE_PROJECT_REF, while the Worker runtime uses SUPABASE_URL.\n"
+        "Update the environment so both values point at the same hosted Supabase project before retrying deploy."
+    )
+
+
+def assert_hosted_required_schema(env_values: dict[str, str]) -> None:
+    """Verify the hosted Supabase project behind SUPABASE_URL exposes the maintained runtime schema."""
+
+    required_tables = (
+        "titles",
+        "studios",
+        "home_spotlight_entries",
+        "home_offering_spotlight_entries",
+        "player_followed_studios",
+        "be_home_presence_sessions",
+        "be_home_device_identities",
+        "title_detail_views",
+        "title_get_clicks",
+    )
+    base_url = env_values["SUPABASE_URL"].rstrip("/")
+    headers = build_supabase_bearer_headers(api_key=env_values["SUPABASE_SECRET_KEY"])
+    failures: list[str] = []
+
+    for table_name in required_tables:
+        request = urllib.request.Request(
+            f"{base_url}/rest/v1/{table_name}?select=*&limit=1",
+            headers=headers,
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15):
+                continue
+        except urllib.error.HTTPError as ex:
+            detail = ex.read().decode("utf-8", errors="replace").strip()
+            failures.append(f"{table_name}: HTTP {ex.code}{f' ({detail[:200]})' if detail else ''}")
+        except (OSError, urllib.error.URLError, TimeoutError) as ex:
+            failures.append(f"{table_name}: {ex}")
+
+    if failures:
+        raise DevCliError(
+            "Hosted Supabase runtime schema verification failed after migration push.\n"
+            f"Checked runtime URL: {base_url}\n"
+            "The deploy flow may be migrating a different project than the Worker runtime uses, or the hosted Supabase origin may be unreachable.\n"
+            "Verify SUPABASE_PROJECT_REF, SUPABASE_URL, and the remote migration history, then rerun deploy.\n"
+            f"Failures:\n- " + "\n- ".join(failures)
+        )
+
+
 def assert_turnstile_secret_access(env_values: dict[str, str]) -> None:
     """Verify the configured Turnstile secret can reach siteverify without an invalid-secret response."""
 
@@ -5730,6 +5807,7 @@ def run_deploy_preflight(config: DevConfig, *, target: str, env_values: dict[str
     assert_worker_custom_domain_dns_prerequisites(env_values)
     assert_supabase_publishable_access(env_values)
     assert_supabase_secret_access(env_values)
+    assert_supabase_project_alignment(env_values)
     assert_turnstile_secret_access(env_values)
     assert_brevo_configuration(env_values)
     run_supabase_link(config, env_values=env_values, subprocess_env=subprocess_env)
@@ -6324,6 +6402,31 @@ def run_full_mvp_workers_deploy_smoke(*, target: str, env_values: dict[str, str]
         raise DevCliError("Workers smoke failed: /genres did not return a genre list.")
     if not isinstance(age_rating_payload, dict) or not isinstance(age_rating_payload.get("ageRatingAuthorities"), list):
         raise DevCliError("Workers smoke failed: /age-rating-authorities did not return an authority list.")
+
+    title_spotlights_payload = request_workers_deploy_smoke_json(
+        url=f"{base_url}/spotlights/home",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+    offering_spotlights_payload = request_workers_deploy_smoke_json(
+        url=f"{base_url}/internal/home-offering-spotlights",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+    metrics_payload = request_workers_deploy_smoke_json(
+        url=f"{base_url}/internal/be-home/metrics",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+    studios_payload = request_workers_deploy_smoke_json(
+        url=f"{base_url}/studios",
+        headers={"accept": "application/json", "user-agent": DEPLOY_SMOKE_USER_AGENT},
+    )
+    if not isinstance(title_spotlights_payload, dict) or not isinstance(title_spotlights_payload.get("entries"), list):
+        raise DevCliError("Workers smoke failed: /spotlights/home did not return an entries list.")
+    if not isinstance(offering_spotlights_payload, dict) or not isinstance(offering_spotlights_payload.get("entries"), list):
+        raise DevCliError("Workers smoke failed: /internal/home-offering-spotlights did not return an entries list.")
+    if not isinstance(metrics_payload, dict) or not isinstance(metrics_payload.get("metrics"), dict):
+        raise DevCliError("Workers smoke failed: /internal/be-home/metrics did not return a metrics payload.")
+    if not isinstance(studios_payload, dict) or not isinstance(studios_payload.get("studios"), list):
+        raise DevCliError("Workers smoke failed: /studios did not return a studios list.")
 
     request_workers_deploy_smoke_json(
         url=f"{base_url}/identity/user-name-availability?userName=deploy-smoke-check",
@@ -7140,6 +7243,7 @@ def deploy_migration_target(
             elif stage_name == "supabase_schema":
                 run_supabase_link(config, env_values=env_values, subprocess_env=subprocess_env)
                 run_supabase_remote_push(config, subprocess_env=subprocess_env)
+                assert_hosted_required_schema(env_values)
             elif stage_name == "supabase_storage":
                 run_supabase_bucket_provisioning(config, env_values=env_values, subprocess_env=subprocess_env)
             elif stage_name == "supabase_demo_seed":
