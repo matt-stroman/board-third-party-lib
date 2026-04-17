@@ -11,13 +11,13 @@ on:
         options:
           - staging
           - production
-      force:
-        description: "Rerun every deploy stage from scratch"
+      rerun_all_stages:
+        description: "Start over for this target and rerun every deploy stage from the beginning"
         required: true
         type: boolean
         default: false
-      upgrade:
-        description: "Allow a new source fingerprint to replace the saved deploy state"
+      replace_saved_stage_state:
+        description: "If the saved deploy state no longer matches this code/config, discard it and continue with a fresh deploy"
         required: true
         type: boolean
         default: false
@@ -194,10 +194,10 @@ jobs:
           if [[ "${{ inputs.target }}" == "staging" ]]; then
             args+=(--staging)
           fi
-          if [[ "${{ inputs.force }}" == "true" ]]; then
+          if [[ "${{ inputs.rerun_all_stages }}" == "true" ]]; then
             args+=(--force)
           fi
-          if [[ "${{ inputs.upgrade }}" == "true" ]]; then
+          if [[ "${{ inputs.replace_saved_stage_state }}" == "true" ]]; then
             args+=(--upgrade)
           fi
           if [[ "${{ inputs.preflight_only }}" == "true" ]]; then
