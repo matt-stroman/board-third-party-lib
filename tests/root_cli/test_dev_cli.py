@@ -57,23 +57,12 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             self.assertEqual("backend/apps/workers-api", config.migration_workers_root)
             self.assertEqual("backend/supabase", config.supabase_root)
             self.assertEqual("config/.env.local.example", config.local_env_example)
-            self.assertEqual("config/.env.pre-production.example", config.pre_production_env_example)
             self.assertEqual("config/.env.staging.example", config.staging_env_example)
             self.assertEqual("config/.env.example", config.production_env_example)
             self.assertEqual("config/.env.local", config.local_env_file)
-            self.assertEqual("config/.env.pre-production", config.pre_production_env_file)
             self.assertEqual("config/.env.staging", config.staging_env_file)
             self.assertEqual("config/.env", config.production_env_file)
             self.assertEqual("cloudflare/fallback-pages", config.cloudflare_fallback_pages_root)
-
-    def test_environment_path_helpers_support_pre_production(self) -> None:
-        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
-
-        self.assertEqual(pathlib.Path.cwd() / "config/.env.pre-production", dev.get_environment_file_path(config, target="pre-production"))
-        self.assertEqual(
-            pathlib.Path.cwd() / "config/.env.pre-production.example",
-            dev.get_environment_example_path(config, target="pre-production"),
-        )
 
     def test_apply_runtime_base_url_overrides_respects_local_port_env(self) -> None:
         args = self.create_args()
@@ -408,6 +397,15 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertIn('"DEPLOY_SMOKE_MODERATOR_EMAIL",', workflow)
         self.assertIn('"DEPLOY_SMOKE_SECRET",', workflow)
         self.assertIn('"DEPLOY_SMOKE_USER_PASSWORD",', workflow)
+
+    def test_staging_environment_example_keeps_cors_origins_staging_only(self) -> None:
+        env_example_path = pathlib.Path(__file__).resolve().parents[2] / "config" / ".env.staging.example"
+        env_example = env_example_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "ALLOWED_WEB_ORIGINS=http://localhost:5173,https://staging.boardenthusiasts.com",
+            env_example,
+        )
 
     def test_build_deploy_subprocess_environment_includes_supabase_oauth_credentials(self) -> None:
         environment = dev.build_deploy_subprocess_environment(
@@ -4071,4 +4069,3 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
