@@ -3378,7 +3378,8 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 github_repo=None,
             )
 
-        self.assertIn("staging or production", str(raised.exception))
+        self.assertIn("hosted targets", str(raised.exception))
+        self.assertIn("not local", str(raised.exception))
 
     def test_sync_api_workspace_without_api_key_skips_shared_mock_reprovision(self) -> None:
         config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
