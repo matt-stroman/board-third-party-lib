@@ -1966,7 +1966,7 @@ export const localMigrationEnvironment: MigrationEnvironmentLayout = {
   frontendBaseUrl: "http://127.0.0.1:4173",
   apiBaseUrl: "http://127.0.0.1:8787",
   supabaseProjectRef: "local-dev",
-  supabaseUrl: "http://127.0.0.1:55421",
+  supabaseUrl: "http://127.0.0.1:54321",
   supabasePublishableKeyVariable: "SUPABASE_PUBLISHABLE_KEY",
   supabaseSecretKeyVariable: "SUPABASE_SECRET_KEY",
   supabaseMediaBucket: migrationMediaBucket
@@ -1982,3 +1982,4 @@ export const stagingMigrationEnvironment: MigrationEnvironmentLayout = {
   supabaseSecretKeyVariable: "SUPABASE_SECRET_KEY",
   supabaseMediaBucket: migrationMediaBucket
 };
+

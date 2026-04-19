@@ -40,4 +40,5 @@ config/.env.*
 !.env.example
 !config/.env.example
 !config/.env.local.example
+!config/.env.pre-production.example
 !config/.env.staging.example
