@@ -5905,7 +5905,11 @@ def run_legacy_staging_dry_run(
 
 
 def sync_worker_secret(config: DevConfig, *, worker_config_path: Path, secret_name: str, secret_value: str, subprocess_env: dict[str, str]) -> None:
-    """Sync a single Cloudflare Worker secret to the target script."""
+    """Sync a single Cloudflare Worker secret to the target script.
+
+    Cloudflare's versioned Workers require the latest Worker version to already
+    be deployed before ``wrangler secret put`` can mutate its secrets.
+    """
 
     write_step(f"Syncing Cloudflare Worker secret {secret_name}")
     run_command(
@@ -7259,6 +7263,8 @@ def deploy_migration_target(
             elif stage_name == "pages_project":
                 ensure_cloudflare_pages_project(config, target=target, env=subprocess_env)
             elif stage_name == "workers_deploy":
+                write_step(f"Deploying Cloudflare Workers bundle for {target}")
+                run_workers_deploy(config, worker_config_path=worker_config_path, subprocess_env=subprocess_env)
                 for secret_name in ("SUPABASE_SECRET_KEY", "TURNSTILE_SECRET_KEY", "BREVO_API_KEY", "DEPLOY_SMOKE_SECRET"):
                     sync_worker_secret(
                         config,
@@ -7267,8 +7273,6 @@ def deploy_migration_target(
                         secret_value=env_values[secret_name],
                         subprocess_env=subprocess_env,
                     )
-                write_step(f"Deploying Cloudflare Workers bundle for {target}")
-                run_workers_deploy(config, worker_config_path=worker_config_path, subprocess_env=subprocess_env)
             elif stage_name == "pages_deploy":
                 write_step(f"Deploying Cloudflare Pages bundle for {target}")
                 pages_alias_target = run_pages_deploy(
