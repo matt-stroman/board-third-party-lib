@@ -192,11 +192,11 @@ SUPABASE_PROFILE_DESCRIPTIONS: dict[str, str] = {
 }
 
 LOCAL_SUPABASE_DB_HOST = "127.0.0.1"
-LOCAL_SUPABASE_DB_PORT = 55481
-LOCAL_SUPABASE_URL = "http://127.0.0.1:55421"
-LOCAL_SUPABASE_AUTH_URL = "http://127.0.0.1:55421/auth/v1/health"
-LOCAL_SUPABASE_STUDIO_PORT = 55423
-LOCAL_MAILPIT_PORT = 55424
+LOCAL_SUPABASE_DB_PORT = 54322
+LOCAL_SUPABASE_URL = "http://127.0.0.1:54321"
+LOCAL_SUPABASE_AUTH_URL = "http://127.0.0.1:54321/auth/v1/health"
+LOCAL_SUPABASE_STUDIO_PORT = 54323
+LOCAL_MAILPIT_PORT = 54324
 LOCAL_WORKERS_PORT = 8787
 LOCAL_FRONTEND_PORT = 4173
 SUPABASE_STATUS_TIMEOUT_SECONDS = 15
@@ -365,7 +365,7 @@ def get_int_environment_override(name: str, *, default: int) -> int:
 def get_local_supabase_api_port() -> int:
     """Return the effective local Supabase API port."""
 
-    return get_int_environment_override(LOCAL_SUPABASE_API_PORT_ENV, default=55421)
+    return get_int_environment_override(LOCAL_SUPABASE_API_PORT_ENV, default=54321)
 
 
 def get_local_supabase_db_port() -> int:
@@ -9220,4 +9220,5 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
 

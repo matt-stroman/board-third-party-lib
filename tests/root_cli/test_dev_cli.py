@@ -42,7 +42,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         return argparse.Namespace()
 
     def test_is_local_supabase_url_reports_expected_values(self) -> None:
-        self.assertTrue(dev.is_local_http_url("http://127.0.0.1:55421"))
+        self.assertTrue(dev.is_local_http_url("http://127.0.0.1:54321"))
         self.assertTrue(dev.is_local_http_url("https://localhost:7277"))
         self.assertFalse(dev.is_local_http_url("https://staging.boardenthusiasts.com"))
 
@@ -755,14 +755,14 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             environment = dev.build_migration_frontend_environment(
                 config,
                 runtime_env={
-                    "SUPABASE_URL": "http://127.0.0.1:55421",
+                    "SUPABASE_URL": "http://127.0.0.1:54321",
                     "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
                 },
                 landing_mode=True,
             )
 
         self.assertEqual("http://127.0.0.1:8787", environment["VITE_API_BASE_URL"])
-        self.assertEqual("http://127.0.0.1:55421", environment["VITE_SUPABASE_URL"])
+        self.assertEqual("http://127.0.0.1:54321", environment["VITE_SUPABASE_URL"])
         self.assertEqual("publishable-key", environment["VITE_SUPABASE_PUBLISHABLE_KEY"])
         self.assertEqual("site-key", environment["VITE_TURNSTILE_SITE_KEY"])
         self.assertEqual("true", environment["VITE_LANDING_MODE"])
@@ -2080,7 +2080,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
     def test_has_local_required_schema_includes_marketing_contacts(self) -> None:
         runtime_env = {
-            "SUPABASE_URL": "http://127.0.0.1:55421",
+            "SUPABASE_URL": "http://127.0.0.1:54321",
             "SUPABASE_SECRET_KEY": "secret-key",
         }
         requested_urls: list[str] = []
@@ -2101,12 +2101,12 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
         self.assertEqual(
             [
-                "http://127.0.0.1:55421/rest/v1/titles?select=*&limit=1",
-                "http://127.0.0.1:55421/rest/v1/genres?select=*&limit=1",
-                "http://127.0.0.1:55421/rest/v1/age_rating_authorities?select=*&limit=1",
-                "http://127.0.0.1:55421/rest/v1/marketing_contacts?select=*&limit=1",
-                "http://127.0.0.1:55421/rest/v1/catalog_media_type_definitions?select=*&limit=1",
-                "http://127.0.0.1:55421/rest/v1/catalog_media_entries?select=*&limit=1",
+                "http://127.0.0.1:54321/rest/v1/titles?select=*&limit=1",
+                "http://127.0.0.1:54321/rest/v1/genres?select=*&limit=1",
+                "http://127.0.0.1:54321/rest/v1/age_rating_authorities?select=*&limit=1",
+                "http://127.0.0.1:54321/rest/v1/marketing_contacts?select=*&limit=1",
+                "http://127.0.0.1:54321/rest/v1/catalog_media_type_definitions?select=*&limit=1",
+                "http://127.0.0.1:54321/rest/v1/catalog_media_entries?select=*&limit=1",
             ],
             requested_urls,
         )
@@ -2138,7 +2138,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
     def test_ensure_local_demo_seed_data_applies_local_migrations_before_seed_probe(self) -> None:
         config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
         runtime_env = {
-            "SUPABASE_URL": "http://127.0.0.1:55421",
+            "SUPABASE_URL": "http://127.0.0.1:54321",
             "SUPABASE_SECRET_KEY": "secret-key",
         }
 
@@ -2163,7 +2163,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
     def test_ensure_local_demo_seed_data_raises_when_required_schema_is_still_missing_after_migrations(self) -> None:
         config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
         runtime_env = {
-            "SUPABASE_URL": "http://127.0.0.1:55421",
+            "SUPABASE_URL": "http://127.0.0.1:54321",
             "SUPABASE_SECRET_KEY": "secret-key",
         }
 
@@ -2346,10 +2346,10 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
     def test_parse_env_assignments_unquotes_supabase_status_values(self) -> None:
         parsed = dev.parse_env_assignments(
-            'API_URL="http://127.0.0.1:55421"\nANON_KEY="anon"\nSERVICE_ROLE_KEY="service"\n'
+            'API_URL="http://127.0.0.1:54321"\nANON_KEY="anon"\nSERVICE_ROLE_KEY="service"\n'
         )
 
-        self.assertEqual("http://127.0.0.1:55421", parsed["API_URL"])
+        self.assertEqual("http://127.0.0.1:54321", parsed["API_URL"])
         self.assertEqual("anon", parsed["ANON_KEY"])
         self.assertEqual("service", parsed["SERVICE_ROLE_KEY"])
 
@@ -2437,7 +2437,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             config = dev.config_from_args(args, repo_root)
 
             runtime_env = {
-                "SUPABASE_URL": "http://127.0.0.1:55421",
+                "SUPABASE_URL": "http://127.0.0.1:54321",
                 "SUPABASE_SECRET_KEY": "secret-key",
             }
 
@@ -2463,7 +2463,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             config = dev.config_from_args(args, repo_root)
 
             runtime_env = {
-                "SUPABASE_URL": "http://127.0.0.1:55421",
+                "SUPABASE_URL": "http://127.0.0.1:54321",
                 "SUPABASE_SECRET_KEY": "secret-key",
             }
 
@@ -2640,7 +2640,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:55421",
+                        "SUPABASE_URL": "http://127.0.0.1:54321",
                         "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
@@ -2676,7 +2676,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:55421",
+                        "SUPABASE_URL": "http://127.0.0.1:54321",
                         "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
@@ -2712,7 +2712,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:55421",
+                        "SUPABASE_URL": "http://127.0.0.1:54321",
                         "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
@@ -2766,7 +2766,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:55421",
+                        "SUPABASE_URL": "http://127.0.0.1:54321",
                         "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
@@ -2907,7 +2907,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:55421",
+                        "SUPABASE_URL": "http://127.0.0.1:54321",
                         "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
@@ -2969,7 +2969,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:55421",
+                        "SUPABASE_URL": "http://127.0.0.1:54321",
                         "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
@@ -3031,7 +3031,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:55421",
+                        "SUPABASE_URL": "http://127.0.0.1:54321",
                         "SUPABASE_SECRET_KEY": "secret-key",
                     },
                 ),
@@ -3696,7 +3696,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             asset_root.mkdir(parents=True, exist_ok=True)
 
             runtime_env = {
-                "SUPABASE_URL": "http://127.0.0.1:55421",
+                "SUPABASE_URL": "http://127.0.0.1:54321",
                 "SUPABASE_SECRET_KEY": "service-role-key",
                 "SUPABASE_AVATARS_BUCKET": "avatars",
                 "SUPABASE_CARD_IMAGES_BUCKET": "card-images",
@@ -3722,7 +3722,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     "--",
                     "--additive",
                     "--supabase-url",
-                    "http://127.0.0.1:55421",
+                    "http://127.0.0.1:54321",
                     "--secret-key",
                     "service-role-key",
                     "--password",
@@ -3763,7 +3763,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     dev,
                     "get_local_supabase_runtime",
                     return_value={
-                        "SUPABASE_URL": "http://127.0.0.1:55421",
+                        "SUPABASE_URL": "http://127.0.0.1:54321",
                         "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
                     },
                 ),
@@ -3871,7 +3871,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                     side_effect=[
                         dev.DevCliError("local runtime unavailable"),
                         {
-                            "SUPABASE_URL": "http://127.0.0.1:55421",
+                            "SUPABASE_URL": "http://127.0.0.1:54321",
                             "SUPABASE_PUBLISHABLE_KEY": "publishable",
                             "SUPABASE_SECRET_KEY": "secret",
                             "SUPABASE_AVATARS_BUCKET": "avatars",
@@ -4070,3 +4070,4 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

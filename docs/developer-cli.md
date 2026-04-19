@@ -212,7 +212,7 @@ Profile notes:
 - `api down` stops the backend service only by default; add `--include-dependencies` to also stop auth and database services.
 - `web down` stops the frontend service only by default; add `--include-dependencies` to also stop API, auth, and database services.
 - `status` reports only the named service by default; add `--include-dependencies` to include dependency status output.
-- Local auth-facing profiles keep the Supabase email catcher available for signup and recovery flows. When `auth`, `api`, or `web` is running, open [http://127.0.0.1:55424](http://127.0.0.1:55424) to inspect local confirmation and recovery emails.
+- Local auth-facing profiles keep the Supabase email catcher available for signup and recovery flows. When `auth`, `api`, or `web` is running, open [http://127.0.0.1:54324](http://127.0.0.1:54324) to inspect local confirmation and recovery emails.
 - The maintained local Supabase config sets the sender to `Board Enthusiasts <noreply@boardenthusiasts.com>` in [`backend/supabase/config.toml`](../backend/supabase/config.toml). The checked-in branded HTML templates live under [`backend/supabase/templates/`](../backend/supabase/templates/). If a hosted Supabase project is used for staging or production, mirror both that sender identity and those template bodies in the hosted Auth email settings.
 - Hosted Supabase Auth redirect allowlists must include the maintained SPA callback routes, not just the site origin. At minimum mirror the local pattern for `/auth/signin` and `/auth/signin?mode=recovery` on each hosted frontend origin.
 - The maintained web UI now supports both the email link and the Supabase `{code}` value for signup confirmation and password recovery, and the checked-in templates surface both paths in the branded message body.
@@ -627,5 +627,6 @@ The root CLI can populate the maintained authenticated contract checks automatic
 - Tool executables are resolved from each developer's `PATH`; the CLI does not assume fixed install directories for `node`, `npx`, `postman`, `supabase`, `wrangler`, `docker`, or other required tools.
 - Migration workspace dependency installs are cached by lockfile fingerprint so routine commands do not reinstall the entire npm workspace unnecessarily.
 - The root-managed `.env` files are operator/developer inputs for the root CLI. Hosted runtime secrets still live in provider secret/config stores such as Cloudflare Workers secrets and hosted Supabase provider settings.
+
 
 
