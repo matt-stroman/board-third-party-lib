@@ -73,9 +73,11 @@ class DevConfig:
         migration_contract_root: Relative path to the shared TypeScript contract package.
         supabase_root: Relative path to the Supabase project folder.
         local_env_example: Relative path to the local env example.
+        pre_production_env_example: Relative path to the temporary pre-production env example.
         staging_env_example: Relative path to the staging env example.
         production_env_example: Relative path to the production env example.
         local_env_file: Relative path to the local env file.
+        pre_production_env_file: Relative path to the temporary pre-production env file.
         staging_env_file: Relative path to the staging env file.
         production_env_file: Relative path to the production env file.
         cloudflare_pages_template: Relative path to the Cloudflare Pages config template.
@@ -105,9 +107,11 @@ class DevConfig:
     migration_contract_root: str
     supabase_root: str
     local_env_example: str
+    pre_production_env_example: str
     staging_env_example: str
     production_env_example: str
     local_env_file: str
+    pre_production_env_file: str
     staging_env_file: str
     production_env_file: str
     cloudflare_pages_template: str
@@ -200,7 +204,11 @@ SUPABASE_STOP_TIMEOUT_SECONDS = 30
 SUPABASE_START_TIMEOUT_SECONDS = 300
 PROCESS_STOP_TIMEOUT_SECONDS = 15
 PROCESS_STATUS_TIMEOUT_SECONDS = 5
-SUPPORTED_ENVIRONMENT_TARGETS = ("local", "staging", "production")
+# TODO(pre-production): This temporary second staging environment exists only to
+# validate a clean rebuild on pre-production.boardenthusiasts.com. Once it is
+# verified, migrate DNS/routing back onto staging.boardenthusiasts.com and
+# remove the temporary target from the maintained tooling.
+SUPPORTED_ENVIRONMENT_TARGETS = ("local", "pre-production", "staging", "production")
 DEFAULT_CLOUDFLARE_FALLBACK_PAGES_PROJECT_NAME = "board-enthusiasts-fallback"
 GITHUB_ENVIRONMENT_SECRET_NAMES = frozenset(
     {
@@ -683,6 +691,8 @@ def get_environment_file_path(config: DevConfig, *, target: str) -> Path:
 
     if target == "local":
         return config.repo_root / config.local_env_file
+    if target == "pre-production":
+        return config.repo_root / config.pre_production_env_file
     if target == "staging":
         return config.repo_root / config.staging_env_file
     if target == "production":
@@ -695,6 +705,8 @@ def get_environment_example_path(config: DevConfig, *, target: str) -> Path:
 
     if target == "local":
         return config.repo_root / config.local_env_example
+    if target == "pre-production":
+        return config.repo_root / config.pre_production_env_example
     if target == "staging":
         return config.repo_root / config.staging_env_example
     if target == "production":
@@ -7194,6 +7206,17 @@ def deploy_migration_target(
 ) -> None:
     """Deploy the maintained stack to the requested hosted target."""
 
+    # TODO(pre-production): keep the temporary pre-production environment on the
+    # manual rebuild runbook until the clean-stack validation is complete. After
+    # verification, migrate DNS/routing back onto staging.boardenthusiasts.com
+    # and either remove this target or teach the hosted deploy flow about it.
+    if target == "pre-production":
+        raise DevCliError(
+            "Temporary pre-production is recognized for root environment management, "
+            "but the hosted deploy automation still supports only staging and production.\n"
+            "Use docs/pre-production-rebuild-runbook.md for the temporary rebuild steps, "
+            "then migrate the validated stack back onto staging.boardenthusiasts.com."
+        )
     if target not in {"staging", "production"}:
         raise DevCliError(f"Unsupported deploy target: {target}")
 
@@ -7359,7 +7382,7 @@ def sync_root_environment_file_to_github_environment(
     """Publish the checked-out root environment file into the matching GitHub Environment."""
 
     if target == "local":
-        raise DevCliError("GitHub Environment sync is supported only for staging or production targets, not local.")
+        raise DevCliError("GitHub Environment sync is supported only for hosted targets, not local.")
 
     github_cli_executable = resolve_github_cli_executable()
     env_path = get_environment_file_path(config, target=target)
@@ -8920,9 +8943,11 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
         migration_contract_root="packages/migration-contract",
         supabase_root="backend/supabase",
         local_env_example="config/.env.local.example",
+        pre_production_env_example="config/.env.pre-production.example",
         staging_env_example="config/.env.staging.example",
         production_env_example="config/.env.example",
         local_env_file="config/.env.local",
+        pre_production_env_file="config/.env.pre-production",
         staging_env_file="config/.env.staging",
         production_env_file="config/.env",
         cloudflare_pages_template="cloudflare/pages/wrangler.template.jsonc",

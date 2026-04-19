@@ -57,12 +57,23 @@ class DevCliMigrationHelperTests(unittest.TestCase):
             self.assertEqual("backend/apps/workers-api", config.migration_workers_root)
             self.assertEqual("backend/supabase", config.supabase_root)
             self.assertEqual("config/.env.local.example", config.local_env_example)
+            self.assertEqual("config/.env.pre-production.example", config.pre_production_env_example)
             self.assertEqual("config/.env.staging.example", config.staging_env_example)
             self.assertEqual("config/.env.example", config.production_env_example)
             self.assertEqual("config/.env.local", config.local_env_file)
+            self.assertEqual("config/.env.pre-production", config.pre_production_env_file)
             self.assertEqual("config/.env.staging", config.staging_env_file)
             self.assertEqual("config/.env", config.production_env_file)
             self.assertEqual("cloudflare/fallback-pages", config.cloudflare_fallback_pages_root)
+
+    def test_environment_path_helpers_support_pre_production(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        self.assertEqual(pathlib.Path.cwd() / "config/.env.pre-production", dev.get_environment_file_path(config, target="pre-production"))
+        self.assertEqual(
+            pathlib.Path.cwd() / "config/.env.pre-production.example",
+            dev.get_environment_example_path(config, target="pre-production"),
+        )
 
     def test_apply_runtime_base_url_overrides_respects_local_port_env(self) -> None:
         args = self.create_args()
@@ -476,7 +487,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 config,
                 env_values={
                     "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://staging.boardenthusiasts.com",
-                    "ALLOWED_WEB_ORIGINS": "http://localhost:4173,https://staging.boardenthusiasts.com,https://www.boardenthusiasts.com",
+                    "ALLOWED_WEB_ORIGINS": "http://localhost:4173,https://staging.boardenthusiasts.com",
                     "SUPABASE_AUTH_DISCORD_CLIENT_ID": "discord-client-id",
                     "SUPABASE_AUTH_GITHUB_CLIENT_ID": "github-client-id",
                     "SUPABASE_AUTH_GOOGLE_CLIENT_ID": "",
@@ -485,7 +496,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
 
         self.assertIn('site_url = "https://staging.boardenthusiasts.com"', rendered)
         self.assertIn('"https://staging.boardenthusiasts.com/auth/signin"', rendered)
-        self.assertIn('"https://www.boardenthusiasts.com/auth/signin?mode=recovery"', rendered)
+        self.assertNotIn('"https://www.boardenthusiasts.com/auth/signin?mode=recovery"', rendered)
         self.assertIn("[auth.external.github]\nenabled = true", rendered)
         self.assertIn("[auth.external.discord]\nenabled = true", rendered)
         self.assertIn("[auth.external.google]\nenabled = false", rendered)
