@@ -391,7 +391,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertEqual("StrongPassword!234", password)
 
     def test_manual_deploy_workflow_exports_and_writes_smoke_credentials(self) -> None:
-        workflow_path = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "manual-deploy-workflow.yml"
+        workflow_path = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "manual-deploy.yml"
         workflow = workflow_path.read_text(encoding="utf-8")
 
         self.assertIn("SUPABASE_AUTH_DISCORD_CLIENT_ID: ${{ vars.SUPABASE_AUTH_DISCORD_CLIENT_ID }}", workflow)
