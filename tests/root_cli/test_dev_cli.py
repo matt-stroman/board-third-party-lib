@@ -1456,6 +1456,104 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         run_supabase_remote_push.assert_called_once()
         assert_hosted_required_schema.assert_called_once_with(env_values)
 
+    def test_hosted_deploy_deploys_workers_before_syncing_worker_secrets(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+        env_values = {
+            "BOARD_ENTHUSIASTS_SPA_BASE_URL": "https://boardenthusiasts.com",
+            "BOARD_ENTHUSIASTS_WORKERS_BASE_URL": "https://api.boardenthusiasts.com",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_PROJECT_REF": "project-ref",
+            "SUPABASE_PUBLISHABLE_KEY": "publishable-key",
+            "SUPABASE_SECRET_KEY": "secret-key",
+            "SUPABASE_DB_PASSWORD": "db-password",
+            "SUPABASE_ACCESS_TOKEN": "supabase-access-token",
+            "SUPABASE_AVATARS_BUCKET": "avatars",
+            "SUPABASE_CARD_IMAGES_BUCKET": "cards",
+            "SUPABASE_HERO_IMAGES_BUCKET": "heroes",
+            "SUPABASE_LOGO_IMAGES_BUCKET": "logos",
+            "CLOUDFLARE_ACCOUNT_ID": "account-id",
+            "CLOUDFLARE_API_TOKEN": "cloudflare-token",
+            "VITE_TURNSTILE_SITE_KEY": "turnstile-site-key",
+            "TURNSTILE_SECRET_KEY": "turnstile-secret-key",
+            "BREVO_API_KEY": "brevo-api-key",
+            "BREVO_SIGNUPS_LIST_ID": "list-id",
+            "ALLOWED_WEB_ORIGINS": "https://boardenthusiasts.com",
+            "SUPPORT_REPORT_RECIPIENT": "support@boardenthusiasts.com",
+            "SUPPORT_REPORT_SENDER_EMAIL": "noreply@boardenthusiasts.com",
+            "SUPPORT_REPORT_SENDER_NAME": "Board Enthusiasts",
+            "DEPLOY_SMOKE_SECRET": "deploy-smoke-secret",
+            "DEPLOY_SMOKE_PLAYER_EMAIL": "player@example.com",
+            "DEPLOY_SMOKE_DEVELOPER_EMAIL": "developer@example.com",
+            "DEPLOY_SMOKE_MODERATOR_EMAIL": "moderator@example.com",
+            "DEPLOY_SMOKE_USER_PASSWORD": "deploy-smoke-password",
+            "VITE_LANDING_MODE": "false",
+        }
+        call_order: list[tuple[str, str | None]] = []
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(dev, "assert_command_available"))
+            stack.enter_context(mock.patch.object(dev, "ensure_migration_workspace_scaffolding"))
+            stack.enter_context(mock.patch.object(dev, "install_migration_workspace_dependencies"))
+            stack.enter_context(mock.patch.object(dev, "collect_present_environment_values", return_value={}))
+            stack.enter_context(mock.patch.object(dev, "require_environment_values", return_value=env_values))
+            stack.enter_context(mock.patch.object(dev, "build_deploy_subprocess_environment", return_value={"env": "value"}))
+            stack.enter_context(mock.patch.object(dev, "resolve_deploy_source_branch", return_value="main"))
+            stack.enter_context(mock.patch.object(dev, "run_deploy_preflight"))
+            stack.enter_context(mock.patch.object(dev, "run_deploy_dry_run"))
+            stack.enter_context(mock.patch.object(dev, "build_deploy_fingerprint", return_value="fingerprint"))
+            stack.enter_context(mock.patch.object(dev, "normalize_deploy_stage_state", return_value=(set(), {})))
+            stack.enter_context(
+                mock.patch.object(dev, "get_deploy_worker_config_path", return_value=pathlib.Path("wrangler.generated.jsonc"))
+            )
+            stack.enter_context(mock.patch.object(dev, "run_supabase_remote_config_push"))
+            stack.enter_context(mock.patch.object(dev, "run_supabase_link"))
+            stack.enter_context(mock.patch.object(dev, "run_supabase_remote_push"))
+            stack.enter_context(mock.patch.object(dev, "assert_hosted_required_schema"))
+            stack.enter_context(mock.patch.object(dev, "run_supabase_bucket_provisioning"))
+            stack.enter_context(mock.patch.object(dev, "run_supabase_hosted_demo_seeding"))
+            stack.enter_context(mock.patch.object(dev, "ensure_cloudflare_pages_project"))
+            stack.enter_context(mock.patch.object(dev, "run_pages_deploy", return_value="pages-alias.example"))
+            stack.enter_context(mock.patch.object(dev, "finalize_pages_custom_domain"))
+            stack.enter_context(mock.patch.object(dev, "update_deploy_stage_completion"))
+            stack.enter_context(mock.patch.object(dev, "run_workers_deploy_smoke"))
+            stack.enter_context(mock.patch.object(dev, "run_pages_deploy_smoke"))
+            stack.enter_context(mock.patch.object(dev, "write_step"))
+            stack.enter_context(
+                mock.patch.object(
+                    dev,
+                    "run_workers_deploy",
+                    side_effect=lambda *args, **kwargs: call_order.append(("deploy", None)),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    dev,
+                    "sync_worker_secret",
+                    side_effect=lambda *args, **kwargs: call_order.append(("secret", kwargs["secret_name"])),
+                )
+            )
+
+            dev.deploy_migration_target(
+                config,
+                target="production",
+                source_branch=None,
+                force=False,
+                upgrade=False,
+                preflight_only=False,
+                dry_run_only=False,
+            )
+
+        self.assertEqual(("deploy", None), call_order[0])
+        self.assertEqual(
+            [
+                ("secret", "SUPABASE_SECRET_KEY"),
+                ("secret", "TURNSTILE_SECRET_KEY"),
+                ("secret", "BREVO_API_KEY"),
+                ("secret", "DEPLOY_SMOKE_SECRET"),
+            ],
+            call_order[1:5],
+        )
+
     def test_get_cloudflare_pages_projects_raises_actionable_guidance_when_api_access_fails(self) -> None:
         env_values = {
             "CLOUDFLARE_ACCOUNT_ID": "account-id",
