@@ -3739,6 +3739,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
     def test_main_clean_all_runs_ordered_cleanups_after_single_confirmation(self) -> None:
         with (
             mock.patch("builtins.input", return_value="y"),
+            mock.patch.object(dev, "get_desktop_clean_paths", return_value=[pathlib.Path("desktop")]),
             mock.patch.object(dev, "get_web_clean_paths", return_value=[pathlib.Path("web")]),
             mock.patch.object(dev, "get_api_clean_paths", return_value=[pathlib.Path("api")]),
             mock.patch.object(dev, "get_database_clean_paths", side_effect=[[pathlib.Path("auth")], [pathlib.Path("database")]]),
@@ -3749,6 +3750,7 @@ class DevCliMigrationHelperTests(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(
             [
+                mock.call(mock.ANY, command_name="desktop", paths=[pathlib.Path("desktop")]),
                 mock.call(mock.ANY, command_name="web", paths=[pathlib.Path("web")]),
                 mock.call(mock.ANY, command_name="api", paths=[pathlib.Path("api")]),
                 mock.call(mock.ANY, command_name="auth", paths=[pathlib.Path("auth")]),
@@ -4163,6 +4165,131 @@ class DevCliMigrationHelperTests(unittest.TestCase):
                 dev.run_api_spec_lint(config)
 
             self.assertTrue(run_command.called)
+
+
+class DevCliDesktopWorkflowTests(unittest.TestCase):
+    """Covers the desktop-specific root CLI workflow helpers."""
+
+    @staticmethod
+    def create_args() -> argparse.Namespace:
+        """Create a minimal argument namespace for config construction."""
+
+        return argparse.Namespace()
+
+    def test_config_from_args_includes_desktop_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+
+            config = dev.config_from_args(self.create_args(), repo_root)
+
+            self.assertEqual("be-home-for-desktop", config.desktop_root)
+            self.assertEqual("be-home-for-desktop/package.json", config.desktop_package_json)
+            self.assertEqual("http://127.0.0.1:1420", config.desktop_base_url)
+
+    def test_apply_runtime_base_url_overrides_respects_local_desktop_port_env(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        with mock.patch.dict(
+            dev.os.environ,
+            {"BOARD_ENTHUSIASTS_LOCAL_DESKTOP_PORT": "51420"},
+            clear=False,
+        ):
+            overridden = dev.apply_runtime_base_url_overrides(config)
+
+        self.assertEqual("http://127.0.0.1:51420", overridden.desktop_base_url)
+
+    def test_desktop_parser_defaults_to_up_and_accepts_local_only(self) -> None:
+        parser = dev.build_parser()
+
+        desktop_args = parser.parse_args(["desktop", "--local-only", "--skip-install"])
+
+        self.assertEqual("desktop", desktop_args.command)
+        self.assertEqual("up", desktop_args.action)
+        self.assertTrue(desktop_args.local_only)
+        self.assertTrue(desktop_args.skip_install)
+
+    def test_main_desktop_up_passes_flags_to_desktop_stack_runner(self) -> None:
+        with mock.patch.object(dev, "run_local_desktop_stack") as run_local_desktop_stack:
+            exit_code = dev.main(["desktop", "--local-only", "--skip-install"])
+
+        self.assertEqual(0, exit_code)
+        run_local_desktop_stack.assert_called_once_with(
+            mock.ANY,
+            bootstrap=False,
+            install_dependencies=False,
+            local_only=True,
+        )
+
+    def test_main_desktop_down_without_dependencies_stops_only_desktop_service(self) -> None:
+        with (
+            mock.patch.object(dev, "stop_desktop_service") as stop_desktop_service,
+            mock.patch.object(dev, "stop_backend_service") as stop_backend_service,
+            mock.patch.object(dev, "stop_runtime_profile") as stop_runtime_profile,
+            mock.patch.object(dev, "is_managed_service_running", return_value=True),
+            mock.patch.object(dev, "save_runtime_profile_state") as save_runtime_profile_state,
+        ):
+            exit_code = dev.main(["desktop", "down"])
+
+        self.assertEqual(0, exit_code)
+        stop_desktop_service.assert_called_once()
+        stop_backend_service.assert_not_called()
+        stop_runtime_profile.assert_not_called()
+        save_runtime_profile_state.assert_called_once_with(
+            mock.ANY,
+            profile=dev.SUPABASE_PROFILE_API,
+        )
+
+    def test_get_desktop_clean_paths_includes_tauri_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = pathlib.Path(temp_dir)
+            config = dev.config_from_args(self.create_args(), repo_root)
+
+            paths = dev.get_desktop_clean_paths(config)
+
+        expected = {
+            repo_root / ".dev-cli-logs" / "be-home-for-desktop.log",
+            repo_root / "be-home-for-desktop" / "node_modules",
+            repo_root / "be-home-for-desktop" / "src-tauri" / "target",
+            repo_root / "be-home-for-desktop" / "src-tauri" / "gen",
+        }
+        self.assertTrue(expected.issubset(set(paths)))
+
+    def test_run_all_tests_includes_desktop_validation(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+
+        with (
+            mock.patch.object(dev, "restore_backend") as restore_backend,
+            mock.patch.object(dev, "run_migration_typecheck") as run_migration_typecheck,
+            mock.patch.object(dev, "run_tests") as run_tests,
+            mock.patch.object(dev, "run_root_python_tests") as run_root_python_tests,
+            mock.patch.object(dev, "restore_frontend") as restore_frontend,
+            mock.patch.object(dev, "run_frontend_tests") as run_frontend_tests,
+            mock.patch.object(dev, "restore_desktop_workspace") as restore_desktop_workspace,
+            mock.patch.object(dev, "run_desktop_tests") as run_desktop_tests,
+            mock.patch.object(dev, "run_api_spec_lint") as run_api_spec_lint,
+            mock.patch.object(dev, "run_api_contract_tests") as run_api_contract_tests,
+            mock.patch.object(dev, "run_contract_smoke") as run_contract_smoke,
+            mock.patch.object(dev, "run_workers_flow_smoke_command") as run_workers_flow_smoke_command,
+        ):
+            dev.run_all_tests(
+                config,
+                bootstrap=False,
+                environment_path=pathlib.Path("environment.json"),
+                base_url="http://127.0.0.1:8787",
+                contract_execution_mode="live",
+                report_path=pathlib.Path("report.xml"),
+                start_workers=False,
+            )
+
+        restore_backend.assert_called_once_with(config)
+        restore_frontend.assert_called_once_with(config)
+        restore_desktop_workspace.assert_called_once_with(config)
+        run_frontend_tests.assert_called_once_with(config, restore=False)
+        run_desktop_tests.assert_called_once_with(config, restore=False)
+        self.assertTrue(run_api_spec_lint.called)
+        self.assertTrue(run_api_contract_tests.called)
+        self.assertTrue(run_contract_smoke.called)
+        self.assertTrue(run_workers_flow_smoke_command.called)
 
 
 if __name__ == "__main__":

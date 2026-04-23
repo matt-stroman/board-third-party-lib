@@ -14,3 +14,7 @@
 	path = be-home
 	url = https://github.com/board-enthusiasts/be-home.git
 	branch = main
+[submodule "be-home-for-desktop"]
+	path = be-home-for-desktop
+	url = https://github.com/board-enthusiasts/be-home-for-desktop.git
+	branch = main
