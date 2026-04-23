@@ -3,7 +3,7 @@
 
 This script is the primary developer automation entry point for:
 - bootstrap/setup (`bootstrap`)
-- database/auth/API/web runtime profiles (`database`, `auth`, `api`, `web`)
+- database/auth/API/web/desktop runtime profiles (`database`, `auth`, `api`, `web`, `desktop`)
 - full-stack verification in one pass (`all-tests`)
 - repository verification (`verify`)
 - backend testing (`test`)
@@ -56,8 +56,11 @@ class DevConfig:
         repo_root: Repository root directory.
         frontend_root: Relative path to the frontend submodule root.
         frontend_package_json: Relative path to the frontend package manifest.
+        desktop_root: Relative path to the desktop utility submodule root.
+        desktop_package_json: Relative path to the desktop utility package manifest.
         backend_base_url: Default local backend base URL.
         frontend_base_url: Default local frontend base URL.
+        desktop_base_url: Default local desktop renderer URL.
         api_root: Relative path to the API submodule root.
         api_spec: Relative path to the OpenAPI specification file.
         api_contract_collection: Relative path to the Git-tracked contract test collection.
@@ -88,8 +91,11 @@ class DevConfig:
     repo_root: Path
     frontend_root: str
     frontend_package_json: str
+    desktop_root: str
+    desktop_package_json: str
     backend_base_url: str
     frontend_base_url: str
+    desktop_base_url: str
     api_root: str
     api_spec: str
     api_contract_collection: str
@@ -195,6 +201,7 @@ LOCAL_SUPABASE_STUDIO_PORT = 54323
 LOCAL_MAILPIT_PORT = 54324
 LOCAL_WORKERS_PORT = 8787
 LOCAL_FRONTEND_PORT = 4173
+LOCAL_DESKTOP_PORT = 1420
 SUPABASE_STATUS_TIMEOUT_SECONDS = 15
 SUPABASE_STOP_TIMEOUT_SECONDS = 30
 SUPABASE_START_TIMEOUT_SECONDS = 300
@@ -316,6 +323,7 @@ LOCAL_SUPABASE_STUDIO_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_SUPABASE_STUDIO_PORT"
 LOCAL_MAILPIT_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_MAILPIT_PORT"
 LOCAL_WORKERS_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_WORKERS_PORT"
 LOCAL_FRONTEND_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_FRONTEND_PORT"
+LOCAL_DESKTOP_PORT_ENV = "BOARD_ENTHUSIASTS_LOCAL_DESKTOP_PORT"
 
 
 def get_stack_state_path(config: DevConfig, *, stack_name: str) -> Path:
@@ -402,6 +410,12 @@ def get_local_frontend_port() -> int:
     return get_int_environment_override(LOCAL_FRONTEND_PORT_ENV, default=LOCAL_FRONTEND_PORT)
 
 
+def get_local_desktop_port() -> int:
+    """Return the effective local desktop renderer port."""
+
+    return get_int_environment_override(LOCAL_DESKTOP_PORT_ENV, default=LOCAL_DESKTOP_PORT)
+
+
 def get_local_workers_base_url() -> str:
     """Return the effective local Workers API base URL."""
 
@@ -412,6 +426,12 @@ def get_local_frontend_base_url() -> str:
     """Return the effective local frontend base URL."""
 
     return f"http://127.0.0.1:{get_local_frontend_port()}"
+
+
+def get_local_desktop_base_url() -> str:
+    """Return the effective local desktop renderer base URL."""
+
+    return f"http://127.0.0.1:{get_local_desktop_port()}"
 
 
 def get_runtime_profile_state_path(config: DevConfig) -> Path:
@@ -570,7 +590,9 @@ def get_database_clean_paths(config: DevConfig) -> list[Path]:
     paths = [
         get_runtime_profile_state_path(config),
         get_stack_state_path(config, stack_name="api"),
+        get_stack_state_path(config, stack_name="desktop"),
         get_stack_state_path(config, stack_name="web"),
+        logs_dir / "be-home-for-desktop.log",
         logs_dir / "workers-api.log",
         logs_dir / "migration-spa.log",
         config.repo_root / config.supabase_root / ".branches",
@@ -635,6 +657,30 @@ def get_web_clean_paths(config: DevConfig) -> list[Path]:
     paths.extend(collect_globbed_paths(config.repo_root, "*.tsbuildinfo"))
     paths.extend(collect_globbed_paths(frontend_root, "*.tsbuildinfo"))
     paths.extend(collect_globbed_paths(packages_root, "*/node_modules", "*/dist", "*/*.tsbuildinfo"))
+    return dedupe_paths(paths)
+
+
+def get_desktop_clean_paths(config: DevConfig) -> list[Path]:
+    """Return automation-managed local artifacts removed by `desktop clean`.
+
+    Args:
+        config: CLI configuration containing repository paths.
+
+    Returns:
+        Existing desktop runtime cleanup paths.
+    """
+
+    desktop_root = config.repo_root / config.desktop_root
+    paths = get_api_clean_paths(config) + [
+        get_stack_state_path(config, stack_name="desktop"),
+        config.repo_root / ".dev-cli-logs" / "be-home-for-desktop.log",
+        desktop_root / "node_modules",
+        desktop_root / "dist",
+        desktop_root / "coverage",
+        desktop_root / "src-tauri" / "target",
+        desktop_root / "src-tauri" / "gen",
+    ]
+    paths.extend(collect_globbed_paths(desktop_root, "*.tsbuildinfo"))
     return dedupe_paths(paths)
 
 
@@ -2044,8 +2090,9 @@ def stop_managed_stack_processes(config: DevConfig, *, stack_name: str) -> bool:
 
 
 def stop_all_managed_application_processes(config: DevConfig) -> None:
-    """Stop any tracked managed API/web application processes."""
+    """Stop any tracked managed desktop/web/API application processes."""
 
+    stop_desktop_service(config)
     stop_managed_stack_processes(config, stack_name="web")
     stop_managed_stack_processes(config, stack_name="api")
 
@@ -2158,6 +2205,32 @@ def print_frontend_service_status(config: DevConfig) -> None:
         print(f"  url: {url}")
 
 
+def print_desktop_service_status(config: DevConfig) -> None:
+    """Print status for the maintained desktop service only."""
+
+    state = load_stack_state(config, stack_name="desktop")
+    if state is None:
+        print("desktop: not running")
+        return
+
+    entry = state.get("desktop")
+    if not isinstance(entry, dict):
+        print("desktop: not running")
+        return
+
+    pid = int(entry.get("pid", 0))
+    running = is_process_running(pid)
+    print(f"desktop: {'running' if running else 'not running'}")
+    if pid > 0:
+        print(f"  pid: {pid}")
+    renderer_url = entry.get("renderer_url")
+    if isinstance(renderer_url, str) and renderer_url:
+        print(f"  renderer_url: {renderer_url}")
+    log_path = entry.get("log_path")
+    if isinstance(log_path, str) and log_path:
+        print(f"  log: {log_path}")
+
+
 def print_backend_service_status(config: DevConfig) -> None:
     """Print status for the maintained backend service only."""
 
@@ -2204,6 +2277,30 @@ def stop_frontend_service(config: DevConfig) -> bool:
     """Stop the maintained frontend service only."""
 
     return stop_managed_stack_processes(config, stack_name="web")
+
+
+def stop_desktop_service(config: DevConfig) -> bool:
+    """Stop the maintained desktop service only."""
+
+    state = load_stack_state(config, stack_name="desktop")
+    if state is None:
+        return False
+
+    entry = state.get("desktop")
+    if not isinstance(entry, dict):
+        clear_stack_state(config, stack_name="desktop")
+        return False
+
+    pid = int(entry.get("pid", 0))
+    if pid > 0:
+        if is_process_running(pid):
+            write_step("Stopping BE Home for Desktop")
+            stop_process_by_pid(pid)
+        else:
+            print(f"BE Home for Desktop is already stopped (PID {pid}).")
+
+    clear_stack_state(config, stack_name="desktop")
+    return True
 
 
 def stop_backend_service(config: DevConfig) -> bool:
@@ -2343,6 +2440,134 @@ def run_full_local_web_stack(
         clear_runtime_profile_state(config)
 
 
+def run_local_desktop_stack(
+    config: DevConfig,
+    *,
+    bootstrap: bool,
+    install_dependencies: bool,
+    local_only: bool,
+) -> None:
+    """Run the maintained local desktop stack together.
+
+    Args:
+        config: CLI configuration containing desktop and backend paths.
+        bootstrap: Whether to initialize submodules before running.
+        install_dependencies: Whether to install/update desktop npm dependencies before launch.
+        local_only: Whether to skip BE API/auth/database dependencies and run the desktop shell alone.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If required tools are unavailable or any launched process exits unexpectedly.
+    """
+
+    backend_url = config.migration_workers_base_url
+    desktop_url = config.desktop_base_url
+
+    if bootstrap:
+        ensure_submodules(config)
+
+    assert_command_available("npm")
+    assert_command_available("cargo")
+    ensure_desktop_workspace_scaffolding(config)
+    if install_dependencies:
+        install_desktop_workspace_dependencies(config)
+
+    backend_process: subprocess.Popen | None = None
+    desktop_process: subprocess.Popen | None = None
+    backend_log_path: Path | None = None
+    desktop_log_path: Path | None = None
+    runtime_env: dict[str, str] | None = None
+
+    try:
+        if local_only:
+            print("Local-only mode enabled. BE API/auth/database dependencies will not be started.")
+        else:
+            ensure_runtime_profile(config, profile=SUPABASE_PROFILE_API)
+            runtime_env = get_local_supabase_runtime(config)
+            ensure_local_demo_seed_data(config, runtime_env=runtime_env)
+
+            write_step("Starting maintained backend API in the background")
+            backend_process, backend_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
+            print(f"Backend log: {backend_log_path}")
+
+        clear_local_listener_port(url=desktop_url, description="BE Home for Desktop renderer")
+        ensure_local_url_port_available(url=desktop_url, description="BE Home for Desktop renderer")
+
+        write_step("Starting BE Home for Desktop in the background")
+        desktop_process, desktop_log_path = start_background_command_with_log(
+            cmd=build_desktop_tauri_command(action="dev"),
+            cwd=config.repo_root / config.desktop_root,
+            log_name="be-home-for-desktop.log",
+            config=config,
+            env=build_desktop_environment(config, runtime_env=runtime_env),
+        )
+        print(f"Desktop log: {desktop_log_path}")
+        wait_for_background_process_http_ready(
+            process=desktop_process,
+            url=desktop_url,
+            description="BE Home for Desktop renderer",
+            log_path=desktop_log_path,
+            timeout_seconds=120,
+        )
+
+        desktop_state: dict[str, object] = {
+            "started_at_utc": datetime.now(timezone.utc).isoformat(),
+            "desktop": {
+                "pid": desktop_process.pid,
+                "renderer_url": desktop_url,
+                "log_path": str(desktop_log_path),
+            },
+        }
+        desktop_state_path = save_stack_state(config, stack_name="desktop", state=desktop_state)
+
+        if backend_process is not None:
+            backend_state: dict[str, object] = {
+                "started_at_utc": datetime.now(timezone.utc).isoformat(),
+                "backend": {
+                    "pid": backend_process.pid,
+                    "url": backend_url,
+                    "log_path": str(backend_log_path),
+                },
+            }
+            api_state_path = save_stack_state(config, stack_name="api", state=backend_state)
+            print(f"Backend API ready at {backend_url}", flush=True)
+            print(f"API stack state: {api_state_path}", flush=True)
+
+        print(f"BE Home for Desktop renderer ready at {desktop_url}", flush=True)
+        print(f"Desktop stack state: {desktop_state_path}", flush=True)
+        print("Desktop stack is running. Press Ctrl+C to stop the desktop app and any managed dependencies.", flush=True)
+
+        while True:
+            time.sleep(2)
+
+            if backend_process is not None and backend_process.poll() is not None:
+                raise DevCliError(
+                    f"Backend API exited unexpectedly. Review log: {backend_log_path}"
+                )
+
+            if desktop_process.poll() is not None:
+                raise DevCliError(
+                    f"BE Home for Desktop exited unexpectedly (exit code {desktop_process.returncode or 0}). "
+                    f"Review log: {desktop_log_path}"
+                )
+    except KeyboardInterrupt:
+        print("\nStopping local desktop stack.")
+    finally:
+        clear_stack_state(config, stack_name="desktop")
+        if desktop_process is not None:
+            write_step("Stopping BE Home for Desktop")
+            stop_background_process(desktop_process)
+        if not local_only:
+            clear_stack_state(config, stack_name="api")
+            if backend_process is not None:
+                write_step("Stopping backend API")
+                stop_background_process(backend_process)
+            run_supabase_stack_command(config, action="stop")
+            clear_runtime_profile_state(config)
+
+
 def run_local_api_stack(
     config: DevConfig,
     *,
@@ -2437,6 +2662,16 @@ def show_web_command_status(config: DevConfig, *, include_dependencies: bool) ->
         print_database_service_status()
 
 
+def show_desktop_command_status(config: DevConfig, *, include_dependencies: bool) -> None:
+    """Show status for the desktop command."""
+
+    print_desktop_service_status(config)
+    if include_dependencies:
+        print_backend_service_status(config)
+        print_auth_service_status()
+        print_database_service_status()
+
+
 def handle_database_down(config: DevConfig, *, include_dependencies: bool) -> None:
     """Handle `database down`."""
 
@@ -2502,6 +2737,21 @@ def handle_web_down(config: DevConfig, *, include_dependencies: bool) -> None:
     if is_managed_service_running(config, stack_name="api", service_key="backend"):
         save_runtime_profile_state(config, profile=SUPABASE_PROFILE_API)
     print("Web runtime stopped. API, auth, and database remain available.")
+
+
+def handle_desktop_down(config: DevConfig, *, include_dependencies: bool) -> None:
+    """Handle `desktop down`."""
+
+    stop_desktop_service(config)
+    if include_dependencies:
+        stop_backend_service(config)
+        stop_runtime_profile(config)
+        print("Desktop runtime and dependencies stopped.")
+        return
+
+    if is_managed_service_running(config, stack_name="api", service_key="backend"):
+        save_runtime_profile_state(config, profile=SUPABASE_PROFILE_API)
+    print("Desktop runtime stopped. API, auth, and database remain available.")
 
 
 def summarize_removed_paths(paths: Sequence[Path], *, repo_root: Path) -> None:
@@ -2636,6 +2886,21 @@ def handle_web_clean(config: DevConfig) -> None:
     )
 
 
+def handle_desktop_clean(config: DevConfig) -> None:
+    """Handle `desktop clean`."""
+
+    run_clean_operation(
+        config,
+        command_name="desktop",
+        summary_lines=(
+            "Everything removed by `api clean`",
+            "Desktop npm install, dist outputs, coverage, and Tauri target/gen folders",
+            "Desktop runtime state and logs created while the local utility was running",
+        ),
+        paths=get_desktop_clean_paths(config),
+    )
+
+
 def handle_clean_all(config: DevConfig) -> None:
     """Handle `clean-all` by running each runtime cleanup from top to bottom.
 
@@ -2647,14 +2912,15 @@ def handle_clean_all(config: DevConfig) -> None:
     """
 
     summary_lines = (
-        "Everything removed by `web clean`, `api clean`, `auth clean`, and `database clean`",
-        "The clean steps run in this order: web, api, auth, database",
+        "Everything removed by `desktop clean`, `web clean`, `api clean`, `auth clean`, and `database clean`",
+        "The clean steps run in this order: desktop, web, api, auth, database",
         "Repeated lower-level clean steps will no-op once the higher-level cleanup already removed their artifacts",
     )
     if not confirm_clean_action(command_name="clean-all", summary_lines=summary_lines):
         return
 
     ordered_cleanups = (
+        ("desktop", get_desktop_clean_paths(config)),
         ("web", get_web_clean_paths(config)),
         ("api", get_api_clean_paths(config)),
         ("auth", get_database_clean_paths(config)),
@@ -2767,6 +3033,21 @@ def restore_frontend(config: DevConfig) -> None:
     install_migration_workspace_dependencies(config)
 
 
+def restore_desktop_workspace(config: DevConfig) -> None:
+    """Ensure maintained desktop workspace dependencies are installed.
+
+    Args:
+        config: CLI configuration containing maintained desktop paths.
+
+    Returns:
+        None.
+    """
+
+    assert_command_available("npm")
+    ensure_desktop_workspace_scaffolding(config)
+    install_desktop_workspace_dependencies(config)
+
+
 def run_frontend_tests(config: DevConfig, *, restore: bool = True) -> None:
     """Run maintained frontend tests.
 
@@ -2785,6 +3066,27 @@ def run_frontend_tests(config: DevConfig, *, restore: bool = True) -> None:
 
     write_step("Running frontend tests")
     run_command(build_workspace_npm_command(script_name="test", workspace_name=config.migration_spa_workspace_name), cwd=config.repo_root)
+
+
+def run_desktop_tests(config: DevConfig, *, restore: bool = True) -> None:
+    """Run maintained desktop utility tests.
+
+    Args:
+        config: CLI configuration containing maintained desktop paths.
+        restore: Whether to install desktop npm dependencies before running tests.
+
+    Returns:
+        None.
+    """
+
+    assert_command_available("npm")
+    assert_command_available("cargo")
+    ensure_desktop_workspace_scaffolding(config)
+    if restore:
+        install_desktop_workspace_dependencies(config)
+
+    write_step("Running BE Home for Desktop tests")
+    run_command(["npm", "run", "test"], cwd=config.repo_root / config.desktop_root)
 
 
 def run_migration_typecheck(config: DevConfig, *, restore: bool = True) -> None:
@@ -2855,6 +3157,39 @@ def build_migration_frontend_environment(
     )
 
 
+def build_desktop_environment(
+    config: DevConfig,
+    *,
+    runtime_env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Build the Tauri/Vite runtime environment for the desktop workspace.
+
+    Args:
+        config: CLI configuration containing maintained local URLs.
+        runtime_env: Optional local Supabase runtime values when BE services are running.
+
+    Returns:
+        Environment mapping with desktop runtime values injected.
+    """
+
+    extra = {
+        "TAURI_DEV_HOST": "127.0.0.1",
+        "VITE_APP_ENV": os.environ.get("BOARD_ENTHUSIASTS_APP_ENV", "local"),
+        "VITE_API_BASE_URL": config.migration_workers_base_url,
+    }
+    if runtime_env is not None:
+        extra.update(
+            {
+                "VITE_SUPABASE_URL": runtime_env["SUPABASE_URL"],
+                "VITE_SUPABASE_PUBLISHABLE_KEY": runtime_env["SUPABASE_PUBLISHABLE_KEY"],
+                "VITE_SUPABASE_AUTH_DISCORD_ENABLED": get_frontend_oauth_enabled_value(os.environ, provider="discord"),
+                "VITE_SUPABASE_AUTH_GITHUB_ENABLED": get_frontend_oauth_enabled_value(os.environ, provider="github"),
+                "VITE_SUPABASE_AUTH_GOOGLE_ENABLED": get_frontend_oauth_enabled_value(os.environ, provider="google"),
+            }
+        )
+    return build_subprocess_env(extra=extra)
+
+
 def build_workspace_npm_command(*, script_name: str, workspace_name: str) -> list[str]:
     """Build an ``npm run`` command scoped to a single npm workspace.
 
@@ -2867,6 +3202,19 @@ def build_workspace_npm_command(*, script_name: str, workspace_name: str) -> lis
     """
 
     return ["npm", "run", script_name, "--workspace", workspace_name]
+
+
+def build_desktop_tauri_command(*, action: str) -> list[str]:
+    """Build the `npm run tauri` command used for the desktop workspace.
+
+    Args:
+        action: Tauri CLI action to invoke.
+
+    Returns:
+        Command token list.
+    """
+
+    return ["npm", "run", "tauri", "--", action]
 
 
 def build_workers_wrangler_command(*, action: str) -> list[str]:
@@ -3049,6 +3397,112 @@ def install_migration_workspace_dependencies(config: DevConfig) -> None:
     write_step("Installing workspace npm dependencies")
     run_command(["npm", "install"], cwd=config.repo_root)
     record_migration_workspace_dependencies(config)
+
+
+def get_desktop_workspace_manifest_path(config: DevConfig) -> Path:
+    """Return the desktop workspace package manifest path."""
+
+    return config.repo_root / config.desktop_package_json
+
+
+def ensure_desktop_workspace_scaffolding(config: DevConfig) -> None:
+    """Ensure the maintained desktop workspace files exist before running commands.
+
+    Args:
+        config: CLI configuration containing workspace paths.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If required desktop workspace files are missing.
+    """
+
+    desktop_root = config.repo_root / config.desktop_root
+    required_paths = [
+        ("desktop workspace root", desktop_root),
+        ("desktop package manifest", config.repo_root / config.desktop_package_json),
+        ("desktop renderer source root", desktop_root / "src"),
+        ("desktop Tauri source root", desktop_root / "src-tauri"),
+    ]
+
+    missing = [f"{label}: {path}" for label, path in required_paths if not path.exists()]
+    if missing:
+        preview = "\n".join(missing)
+        raise DevCliError(f"Desktop workspace scaffolding is incomplete:\n{preview}")
+
+
+def get_desktop_workspace_install_state_path(config: DevConfig) -> Path:
+    """Return the state file used to track the current desktop npm install."""
+
+    return config.repo_root / ".dev-cli-logs" / "be-home-for-desktop-install.sha256"
+
+
+def get_desktop_workspace_install_fingerprint(config: DevConfig) -> str:
+    """Build a fingerprint for the current desktop npm dependency graph."""
+
+    manifest_path = get_desktop_workspace_manifest_path(config)
+    lock_path = manifest_path.with_name("package-lock.json")
+    fingerprint_source = lock_path if lock_path.exists() else manifest_path
+    return hashlib.sha256(fingerprint_source.read_bytes()).hexdigest()
+
+
+def has_current_desktop_workspace_dependencies(config: DevConfig) -> bool:
+    """Return whether the desktop npm install matches the current manifest state."""
+
+    desktop_root = config.repo_root / config.desktop_root
+    node_modules_path = desktop_root / "node_modules"
+    if not node_modules_path.exists():
+        return False
+
+    required_paths = (
+        node_modules_path / "react" / "package.json",
+        node_modules_path / "vite" / "package.json",
+        node_modules_path / "@tauri-apps" / "api" / "package.json",
+        node_modules_path / "@tauri-apps" / "cli" / "package.json",
+    )
+    if any(not path.exists() for path in required_paths):
+        return False
+
+    required_binaries = (
+        (node_modules_path / ".bin" / "vite").exists() or (node_modules_path / ".bin" / "vite.cmd").exists(),
+        (node_modules_path / ".bin" / "vitest").exists() or (node_modules_path / ".bin" / "vitest.cmd").exists(),
+        (node_modules_path / ".bin" / "tauri").exists() or (node_modules_path / ".bin" / "tauri.cmd").exists(),
+    )
+    if not all(required_binaries):
+        return False
+
+    state_path = get_desktop_workspace_install_state_path(config)
+    if not state_path.exists():
+        return False
+
+    recorded_fingerprint = state_path.read_text(encoding="utf-8").strip()
+    if not recorded_fingerprint:
+        return False
+
+    return recorded_fingerprint == get_desktop_workspace_install_fingerprint(config)
+
+
+def record_desktop_workspace_dependencies(config: DevConfig) -> None:
+    """Record the current desktop npm install fingerprint after a successful install."""
+
+    state_path = get_desktop_workspace_install_state_path(config)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(get_desktop_workspace_install_fingerprint(config), encoding="utf-8")
+
+
+def install_desktop_workspace_dependencies(config: DevConfig) -> None:
+    """Install npm dependencies for the maintained desktop workspace."""
+
+    assert_command_available("npm")
+    ensure_desktop_workspace_scaffolding(config)
+    if has_current_desktop_workspace_dependencies(config):
+        print("Desktop npm dependencies are already current.")
+        return
+
+    write_step("Installing desktop npm dependencies")
+    run_command(["npm", "install"], cwd=config.repo_root / config.desktop_root)
+    record_desktop_workspace_dependencies(config)
 
 
 def run_root_python_tests(config: DevConfig) -> None:
@@ -8137,7 +8591,7 @@ def run_all_tests(
     """Run the full cross-repository validation workflow in one command.
 
     Args:
-        config: CLI configuration containing backend, frontend, and API paths.
+        config: CLI configuration containing backend, frontend, desktop, and API paths.
         bootstrap: Whether to initialize submodules first when needed.
         environment_path: Postman environment file for contract runs.
         base_url: Base URL used for API contract execution.
@@ -8159,6 +8613,8 @@ def run_all_tests(
 
     restore_frontend(config)
     run_frontend_tests(config, restore=False)
+    restore_desktop_workspace(config)
+    run_desktop_tests(config, restore=False)
 
     run_api_spec_lint(config)
     run_api_contract_tests(
@@ -8216,7 +8672,7 @@ def build_parser() -> argparse.ArgumentParser:
     """
 
     parser = argparse.ArgumentParser(
-        description="Developer automation CLI for local backend/frontend/API workflows.",
+        description="Developer automation CLI for local backend/frontend/API/desktop workflows.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -8353,6 +8809,41 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not automatically open the frontend URL in the default browser",
     )
+    desktop = subparsers.add_parser(
+        "desktop",
+        parents=[shared],
+        help="Manage the local desktop utility plus its optional BE platform dependencies",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    desktop.add_argument(
+        "action",
+        choices=("up", "down", "status", "clean"),
+        nargs="?",
+        default="up",
+        help="Desktop runtime action",
+    )
+    desktop.add_argument(
+        "--include-dependencies",
+        action="store_true",
+        help="Include API, auth, and database dependency handling/status output",
+    )
+    desktop.add_argument(
+        "--bootstrap",
+        "-Bootstrap",
+        action="store_true",
+        help="Run submodule initialization checks before startup",
+    )
+    desktop.add_argument(
+        "--skip-install",
+        "-SkipInstall",
+        action="store_true",
+        help="Skip desktop npm installation before startup",
+    )
+    desktop.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Run only the desktop shell without starting BE API, auth, or database dependencies",
+    )
     test = subparsers.add_parser(
         "test",
         parents=[shared],
@@ -8364,7 +8855,7 @@ def build_parser() -> argparse.ArgumentParser:
     all_tests = subparsers.add_parser(
         "all-tests",
         parents=[shared],
-        help="Run maintained backend tests, root CLI tests, frontend tests, API lint, and API contract tests",
+        help="Run maintained backend tests, root CLI tests, frontend tests, desktop tests, API lint, and API contract tests",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     all_tests.add_argument(
@@ -8907,8 +9398,11 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
         repo_root=repo_root,
         frontend_root="frontend",
         frontend_package_json="frontend/package.json",
+        desktop_root="be-home-for-desktop",
+        desktop_package_json="be-home-for-desktop/package.json",
         backend_base_url="http://127.0.0.1:8787",
         frontend_base_url="http://127.0.0.1:4173",
+        desktop_base_url="http://127.0.0.1:1420",
         api_root="api",
         api_spec="api/postman/specs/board-enthusiasts-api.v1.openapi.yaml",
         api_contract_collection="api/postman/collections/board-enthusiasts-api.contract-tests.postman_collection.json",
@@ -8942,10 +9436,12 @@ def apply_runtime_base_url_overrides(config: DevConfig) -> DevConfig:
 
     local_workers_base_url = get_local_workers_base_url()
     local_frontend_base_url = get_local_frontend_base_url()
+    local_desktop_base_url = get_local_desktop_base_url()
     return replace(
         config,
         backend_base_url=local_workers_base_url,
         frontend_base_url=local_frontend_base_url,
+        desktop_base_url=local_desktop_base_url,
         migration_workers_base_url=local_workers_base_url,
         migration_spa_base_url=local_frontend_base_url,
     )
@@ -8981,6 +9477,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "bootstrap":
             ensure_submodules(config)
             restore_backend(config)
+            restore_desktop_workspace(config)
             print("Bootstrap complete.")
         elif args.command == "clean-all":
             handle_clean_all(config)
@@ -9031,6 +9528,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 handle_web_clean(config)
             else:
                 show_web_command_status(config, include_dependencies=args.include_dependencies)
+        elif args.command == "desktop":
+            if args.action == "up":
+                run_local_desktop_stack(
+                    config,
+                    bootstrap=args.bootstrap,
+                    install_dependencies=not args.skip_install,
+                    local_only=args.local_only,
+                )
+            elif args.action == "down":
+                handle_desktop_down(config, include_dependencies=args.include_dependencies)
+            elif args.action == "clean":
+                handle_desktop_clean(config)
+            else:
+                show_desktop_command_status(config, include_dependencies=args.include_dependencies)
         elif args.command == "test":
             run_tests(config, run_integration=not args.skip_integration)
         elif args.command == "all-tests":
