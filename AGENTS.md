@@ -59,6 +59,12 @@ Path: `be-home/`
 
 A Unity-based on-Board app that consumes the BE API so players can browse titles directly on Board.
 
+### BE Home for Desktop
+
+Path: `be-home-for-desktop/`
+
+A planned Tauri-based desktop utility that helps players download `bdb`, discover Board-capable APKs, and install/manage indie titles on Board through a guided UI rather than direct CLI usage.
+
 ## Technologies, Documentation, and Planning
 
 - Developer-facing documentation lives in the [docs folder](docs/).
@@ -80,7 +86,7 @@ A Unity-based on-Board app that consumes the BE API so players can browse titles
 - New backend behavior must start with failing unit/integration tests before production code is added.
 - When refactoring, do not leave commented out code or stale/unused code. That can always be recovered via version history. Prefer keeping the codebase current and clean.
 - Root developer automation must be exposed through `python ./scripts/dev.py ...`; do not require contributors to use ad hoc submodule-local entrypoints for routine setup, test, or sync workflows.
-- Keep the maintained stack rooted in the active workspace and submodule layout: backend-owned runtime code in `backend/`, web frontend runtime code in `frontend/`, on-Board frontend runtime code in `be-home/`, and shared root orchestration in `python ./scripts/dev.py ...`.
+- Keep the maintained stack rooted in the active workspace and submodule layout: backend-owned runtime code in `backend/`, web frontend runtime code in `frontend/`, on-Board frontend runtime code in `be-home/`, desktop utility runtime code in `be-home-for-desktop/`, and shared root orchestration in `python ./scripts/dev.py ...`.
 - Avoid divergent code paths for different environments whenever reasonably possible. Prefer configuring local and other non-production environments to emulate production behavior closely. Add environment-specific code only when there is no practical way to align the environment itself with production expectations.
 - Frontend workflows must survive routine auth/session refresh and browser tab focus changes without unmounting the active page or discarding in-progress UI state. When implementing protected-page flows, explicitly verify that auth refresh does not trigger loading gates that tear down the page, and preserve non-secret draft/modal state accordingly. Never persist secrets such as passwords or one-time codes in client storage.
 - Frontend workflows should present each user action in one clear place unless the product explicitly calls for duplication. Avoid redundant buttons, duplicate panels, repeated helper text, and multiple entry points for the same action.
@@ -104,3 +110,11 @@ Never commit directly to the `main` branch. Always work via GitHub feature branc
 5. Create PR for merge into `main` only when the Wave is feature complete and fully tested.
 6. Do not block locally waiting for remote checks.
 7. Branches from branches are okay if moving to a dependent Wave before another is merged to `main`, but prefer to keep this branch dependency structure thin. Prefer to finish getting things merged to `main` first, if possible.
+
+## Ticket and PR Dependency Hygiene
+
+- Work GitHub tickets in dependency order rather than skipping ahead to blocked work.
+- Keep linked issue threads updated as work moves into progress, PR open, and merge-ready states.
+- Open a dedicated PR for each ticket-sized change set instead of batching unrelated ticket work together.
+- Do not start a blocked or dependent ticket until every prerequisite ticket has at least an active PR open.
+- When a prerequisite PR is still unmerged and follow-on work must begin, branch the dependent work from that prerequisite branch rather than directly from `main` so the dependency chain stays explicit in git history.
