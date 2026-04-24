@@ -45,7 +45,7 @@ import zlib
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -202,6 +202,8 @@ LOCAL_MAILPIT_PORT = 54324
 LOCAL_WORKERS_PORT = 8787
 LOCAL_FRONTEND_PORT = 4173
 LOCAL_DESKTOP_PORT = 1420
+DESKTOP_APP_VENDOR_DIRECTORY = "Board Enthusiasts"
+DESKTOP_APP_PRODUCT_DIRECTORY = "BE Home for Desktop"
 SUPABASE_STATUS_TIMEOUT_SECONDS = 15
 SUPABASE_STOP_TIMEOUT_SECONDS = 30
 SUPABASE_START_TIMEOUT_SECONDS = 300
@@ -501,6 +503,14 @@ def get_clean_confirmation_notes(command_name: str) -> list[str]:
         notes.append(
             "This CLI does not currently provision a managed browser profile, browser cache, or trusted local HTTPS certs, so there is nothing additional to clear there today."
         )
+    if command_name == "desktop clean --app-state-only":
+        notes.extend(
+            (
+                "Desktop npm installs, build outputs, coverage, and Tauri artifacts are preserved.",
+                "BE API/auth/database dependencies and their local runtime state are preserved.",
+                "Desktop CLI logs are preserved unless the running desktop process needs to stop first.",
+            )
+        )
     return notes
 
 
@@ -520,6 +530,8 @@ def confirm_clean_action(*, command_name: str, summary_lines: Sequence[str]) -> 
     print(f"Warning: `{command_label}` permanently removes local automation-managed state for {target_scope}.")
     if command_name == "clean-all":
         print("This action is intended to reset your full local maintained stack close to a fresh checkout.")
+    elif command_name == "desktop clean --app-state-only":
+        print("This action is intended to reset only the desktop app-owned data close to a first-time user run for that area.")
     else:
         print("This action is intended to reset your local setup close to a fresh checkout for that area.")
     print("")
@@ -682,6 +694,103 @@ def get_desktop_clean_paths(config: DevConfig) -> list[Path]:
     ]
     paths.extend(collect_globbed_paths(desktop_root, "*.tsbuildinfo"))
     return dedupe_paths(paths)
+
+
+def lookup_environment_value(
+    environment: Mapping[str, str],
+    key: str,
+) -> str | None:
+    """Return an environment variable value with Windows-friendly key matching.
+
+    Args:
+        environment: Environment mapping to inspect.
+        key: Environment variable name to resolve.
+
+    Returns:
+        Matching environment value when present; otherwise ``None``.
+    """
+
+    value = environment.get(key)
+    if value:
+        return value
+
+    normalized_key = key.casefold()
+    for candidate_key, candidate_value in environment.items():
+        if candidate_key.casefold() == normalized_key and candidate_value:
+            return candidate_value
+    return None
+
+
+def resolve_desktop_app_state_root(
+    *,
+    environment: Mapping[str, str] | None = None,
+    platform_name: str | None = None,
+) -> Path:
+    """Resolve the BE Home for Desktop app-owned data root for the current machine.
+
+    Args:
+        environment: Optional environment mapping override for tests.
+        platform_name: Optional platform override for tests.
+
+    Returns:
+        Absolute path to the desktop app-managed data root.
+
+    Raises:
+        DevCliError: If the expected platform environment variable is unavailable.
+    """
+
+    resolved_environment = dict(os.environ) if environment is None else dict(environment)
+    resolved_platform = (platform_name or sys.platform).strip().lower()
+
+    if resolved_platform.startswith("win"):
+        local_app_data = lookup_environment_value(resolved_environment, "LOCALAPPDATA")
+        if not local_app_data:
+            raise DevCliError(
+                "Desktop app-managed state could not be resolved because the `LOCALAPPDATA` environment variable is unavailable."
+            )
+        return (
+            Path(local_app_data)
+            / DESKTOP_APP_VENDOR_DIRECTORY
+            / DESKTOP_APP_PRODUCT_DIRECTORY
+        )
+
+    home_directory = lookup_environment_value(resolved_environment, "HOME")
+    if not home_directory:
+        raise DevCliError(
+            "Desktop app-managed state could not be resolved because the `HOME` environment variable is unavailable."
+        )
+
+    home_path = Path(home_directory)
+    if resolved_platform == "darwin":
+        return (
+            home_path
+            / "Library"
+            / "Application Support"
+            / DESKTOP_APP_VENDOR_DIRECTORY
+            / DESKTOP_APP_PRODUCT_DIRECTORY
+        )
+
+    return (
+        home_path
+        / ".local"
+        / "share"
+        / DESKTOP_APP_VENDOR_DIRECTORY
+        / DESKTOP_APP_PRODUCT_DIRECTORY
+    )
+
+
+def get_desktop_app_state_clean_paths(config: DevConfig) -> list[Path]:
+    """Return app-owned desktop state removed by `desktop clean --app-state-only`.
+
+    Args:
+        config: CLI configuration containing repository paths.
+
+    Returns:
+        Existing desktop app-owned paths that simulate a first user launch when removed.
+    """
+
+    del config
+    return dedupe_paths([resolve_desktop_app_state_root()])
 
 
 def write_step(message: str) -> None:
@@ -2886,8 +2995,34 @@ def handle_web_clean(config: DevConfig) -> None:
     )
 
 
-def handle_desktop_clean(config: DevConfig) -> None:
-    """Handle `desktop clean`."""
+def handle_desktop_clean(config: DevConfig, *, app_state_only: bool = False) -> None:
+    """Handle `desktop clean`.
+
+    Args:
+        config: CLI configuration containing repository paths.
+        app_state_only: Whether to remove only desktop app-owned user-state data.
+
+    Returns:
+        None.
+    """
+
+    if app_state_only:
+        command_name = "desktop clean --app-state-only"
+        if not confirm_clean_action(
+            command_name=command_name,
+            summary_lines=(
+                "The desktop app's managed settings, cached manifests, downloaded bdb, and managed APK library",
+                "Other BE Home for Desktop app-owned data under the managed app-data root needed to simulate a first user run",
+                "Only the desktop shell is stopped first when this CLI is currently managing it",
+            ),
+        ):
+            return
+
+        stop_desktop_service(config)
+        removed_paths = remove_paths(get_desktop_app_state_clean_paths(config))
+        summarize_removed_paths(removed_paths, repo_root=config.repo_root)
+        print(f"`{command_name}` completed.")
+        return
 
     run_clean_operation(
         config,
@@ -8844,6 +8979,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run only the desktop shell without starting BE API, auth, or database dependencies",
     )
+    desktop.add_argument(
+        "--app-state-only",
+        "-AppStateOnly",
+        action="store_true",
+        help="When used with `desktop clean`, remove only the desktop app-managed data needed to simulate a first-time user run",
+    )
     test = subparsers.add_parser(
         "test",
         parents=[shared],
@@ -9539,7 +9680,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif args.action == "down":
                 handle_desktop_down(config, include_dependencies=args.include_dependencies)
             elif args.action == "clean":
-                handle_desktop_clean(config)
+                handle_desktop_clean(config, app_state_only=args.app_state_only)
             else:
                 show_desktop_command_status(config, include_dependencies=args.include_dependencies)
         elif args.command == "test":
