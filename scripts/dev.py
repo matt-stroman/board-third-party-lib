@@ -57,10 +57,10 @@ class DevConfig:
         frontend_root: Relative path to the frontend submodule root.
         frontend_package_json: Relative path to the frontend package manifest.
         desktop_root: Relative path to the desktop utility submodule root.
-        desktop_package_json: Relative path to the desktop utility package manifest.
+        desktop_package_json: Relative path to the desktop Unity package manifest.
         backend_base_url: Default local backend base URL.
         frontend_base_url: Default local frontend base URL.
-        desktop_base_url: Default local desktop renderer URL.
+        desktop_base_url: Legacy local desktop renderer URL retained for older helper compatibility.
         api_root: Relative path to the API submodule root.
         api_spec: Relative path to the OpenAPI specification file.
         api_contract_collection: Relative path to the Git-tracked contract test collection.
@@ -204,6 +204,113 @@ LOCAL_FRONTEND_PORT = 4173
 LOCAL_DESKTOP_PORT = 1420
 DESKTOP_APP_VENDOR_DIRECTORY = "Board Enthusiasts"
 DESKTOP_APP_PRODUCT_DIRECTORY = "BE Home for Desktop"
+UNITY_EDITOR_VERSION = "6000.4.0f1"
+UNITY_EDITOR_PATH_ENV = "UNITY_EDITOR_PATH"
+BE_UNITY_EDITOR_PATH_ENV = "BE_UNITY_EDITOR_PATH"
+UNITY_DESKTOP_BUILD_PATH_ENV = "BE_HOME_DESKTOP_BUILD_PATH"
+UNITY_SUPPORTED_USS_PROPERTIES = frozenset(
+    {
+        "align-content",
+        "align-items",
+        "align-self",
+        "all",
+        "aspect-ratio",
+        "background-color",
+        "background-image",
+        "background-position",
+        "background-position-x",
+        "background-position-y",
+        "background-repeat",
+        "background-size",
+        "border-bottom-color",
+        "border-bottom-left-radius",
+        "border-bottom-right-radius",
+        "border-bottom-width",
+        "border-color",
+        "border-left-color",
+        "border-left-width",
+        "border-radius",
+        "border-right-color",
+        "border-right-width",
+        "border-top-color",
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-top-width",
+        "border-width",
+        "bottom",
+        "color",
+        "cursor",
+        "display",
+        "filter",
+        "flex",
+        "flex-basis",
+        "flex-direction",
+        "flex-grow",
+        "flex-shrink",
+        "flex-wrap",
+        "font-size",
+        "height",
+        "justify-content",
+        "left",
+        "letter-spacing",
+        "margin",
+        "margin-bottom",
+        "margin-left",
+        "margin-right",
+        "margin-top",
+        "max-height",
+        "max-width",
+        "min-height",
+        "min-width",
+        "opacity",
+        "overflow",
+        "padding",
+        "padding-bottom",
+        "padding-left",
+        "padding-right",
+        "padding-top",
+        "position",
+        "right",
+        "rotate",
+        "scale",
+        "text-overflow",
+        "text-shadow",
+        "top",
+        "transform-origin",
+        "transition",
+        "transition-delay",
+        "transition-duration",
+        "transition-property",
+        "transition-timing-function",
+        "translate",
+        "-unity-background-image-tint-color",
+        "-unity-background-scale-mode",
+        "-unity-editor-text-rendering-mode",
+        "-unity-font",
+        "-unity-font-definition",
+        "-unity-font-style",
+        "-unity-material",
+        "-unity-overflow-clip-box",
+        "-unity-paragraph-spacing",
+        "-unity-slice-bottom",
+        "-unity-slice-left",
+        "-unity-slice-right",
+        "-unity-slice-scale",
+        "-unity-slice-top",
+        "-unity-slice-type",
+        "-unity-text-align",
+        "-unity-text-auto-size",
+        "-unity-text-generator",
+        "-unity-text-outline",
+        "-unity-text-outline-color",
+        "-unity-text-outline-width",
+        "-unity-text-overflow-position",
+        "visibility",
+        "white-space",
+        "width",
+        "word-spacing",
+    }
+)
 SUPABASE_STATUS_TIMEOUT_SECONDS = 15
 SUPABASE_STOP_TIMEOUT_SECONDS = 30
 SUPABASE_START_TIMEOUT_SECONDS = 300
@@ -506,7 +613,7 @@ def get_clean_confirmation_notes(command_name: str) -> list[str]:
     if command_name == "desktop clean --app-state-only":
         notes.extend(
             (
-                "Desktop npm installs, build outputs, coverage, and Tauri artifacts are preserved.",
+                "Unity project imports, player builds, and Unity logs are preserved.",
                 "BE API/auth/database dependencies and their local runtime state are preserved.",
                 "Desktop CLI logs are preserved unless the running desktop process needs to stop first.",
             )
@@ -686,13 +793,18 @@ def get_desktop_clean_paths(config: DevConfig) -> list[Path]:
     paths = get_api_clean_paths(config) + [
         get_stack_state_path(config, stack_name="desktop"),
         config.repo_root / ".dev-cli-logs" / "be-home-for-desktop.log",
-        desktop_root / "node_modules",
-        desktop_root / "dist",
-        desktop_root / "coverage",
-        desktop_root / "src-tauri" / "target",
-        desktop_root / "src-tauri" / "gen",
+        config.repo_root / ".dev-cli-logs" / "unity-desktop-editmode-results.xml",
+        config.repo_root / ".dev-cli-logs" / "unity-desktop-playmode-results.xml",
+        config.repo_root / ".dev-cli-logs" / "unity-desktop-editmode.log",
+        config.repo_root / ".dev-cli-logs" / "unity-desktop-playmode.log",
+        config.repo_root / ".dev-cli-logs" / "unity-desktop-build.log",
+        desktop_root / "Library",
+        desktop_root / "Temp",
+        desktop_root / "Obj",
+        desktop_root / "Build",
+        desktop_root / "Builds",
+        desktop_root / "Logs",
     ]
-    paths.extend(collect_globbed_paths(desktop_root, "*.tsbuildinfo"))
     return dedupe_paths(paths)
 
 
@@ -2561,7 +2673,7 @@ def run_local_desktop_stack(
     Args:
         config: CLI configuration containing desktop and backend paths.
         bootstrap: Whether to initialize submodules before running.
-        install_dependencies: Whether to install/update desktop npm dependencies before launch.
+        install_dependencies: Whether to import the desktop Unity project before launch.
         local_only: Whether to skip BE API/auth/database dependencies and run the desktop shell alone.
 
     Returns:
@@ -2572,13 +2684,10 @@ def run_local_desktop_stack(
     """
 
     backend_url = config.migration_workers_base_url
-    desktop_url = config.desktop_base_url
 
     if bootstrap:
         ensure_submodules(config)
 
-    assert_command_available("npm")
-    assert_command_available("cargo")
     ensure_desktop_workspace_scaffolding(config)
     if install_dependencies:
         install_desktop_workspace_dependencies(config)
@@ -2601,31 +2710,24 @@ def run_local_desktop_stack(
             backend_process, backend_log_path = start_migration_workers_process(config, runtime_env=runtime_env)
             print(f"Backend log: {backend_log_path}")
 
-        clear_local_listener_port(url=desktop_url, description="BE Home for Desktop renderer")
-        ensure_local_url_port_available(url=desktop_url, description="BE Home for Desktop renderer")
-
         write_step("Starting BE Home for Desktop in the background")
         desktop_process, desktop_log_path = start_background_command_with_log(
-            cmd=build_desktop_tauri_command(action="dev"),
-            cwd=config.repo_root / config.desktop_root,
+            cmd=build_unity_editor_command(
+                batchmode=False,
+                project_path=config.repo_root / config.desktop_root,
+                extra_args=["-logFile", str(config.repo_root / ".dev-cli-logs" / "be-home-for-desktop.log")],
+            ),
+            cwd=config.repo_root,
             log_name="be-home-for-desktop.log",
             config=config,
             env=build_desktop_environment(config, runtime_env=runtime_env),
         )
         print(f"Desktop log: {desktop_log_path}")
-        wait_for_background_process_http_ready(
-            process=desktop_process,
-            url=desktop_url,
-            description="BE Home for Desktop renderer",
-            log_path=desktop_log_path,
-            timeout_seconds=120,
-        )
 
         desktop_state: dict[str, object] = {
             "started_at_utc": datetime.now(timezone.utc).isoformat(),
             "desktop": {
                 "pid": desktop_process.pid,
-                "renderer_url": desktop_url,
                 "log_path": str(desktop_log_path),
             },
         }
@@ -2644,7 +2746,7 @@ def run_local_desktop_stack(
             print(f"Backend API ready at {backend_url}", flush=True)
             print(f"API stack state: {api_state_path}", flush=True)
 
-        print(f"BE Home for Desktop renderer ready at {desktop_url}", flush=True)
+        print("BE Home for Desktop Unity editor launched.", flush=True)
         print(f"Desktop stack state: {desktop_state_path}", flush=True)
         print("Desktop stack is running. Press Ctrl+C to stop the desktop app and any managed dependencies.", flush=True)
 
@@ -3029,7 +3131,7 @@ def handle_desktop_clean(config: DevConfig, *, app_state_only: bool = False) -> 
         command_name="desktop",
         summary_lines=(
             "Everything removed by `api clean`",
-            "Desktop npm install, dist outputs, coverage, and Tauri target/gen folders",
+            "Desktop Unity Library, Temp, Obj, player builds, and Unity logs",
             "Desktop runtime state and logs created while the local utility was running",
         ),
         paths=get_desktop_clean_paths(config),
@@ -3169,7 +3271,7 @@ def restore_frontend(config: DevConfig) -> None:
 
 
 def restore_desktop_workspace(config: DevConfig) -> None:
-    """Ensure maintained desktop workspace dependencies are installed.
+    """Ensure the maintained desktop Unity project is imported.
 
     Args:
         config: CLI configuration containing maintained desktop paths.
@@ -3178,7 +3280,6 @@ def restore_desktop_workspace(config: DevConfig) -> None:
         None.
     """
 
-    assert_command_available("npm")
     ensure_desktop_workspace_scaffolding(config)
     install_desktop_workspace_dependencies(config)
 
@@ -3203,25 +3304,122 @@ def run_frontend_tests(config: DevConfig, *, restore: bool = True) -> None:
     run_command(build_workspace_npm_command(script_name="test", workspace_name=config.migration_spa_workspace_name), cwd=config.repo_root)
 
 
+def validate_unity_uss_properties(paths: Sequence[Path]) -> None:
+    """Validate USS files use Unity 6.4-supported properties only.
+
+    Args:
+        paths: USS files to validate.
+
+    Returns:
+        None.
+
+    Raises:
+        DevCliError: If an unsupported property is found.
+    """
+
+    unsupported: list[str] = []
+    property_pattern = re.compile(r"(?:^|[;{])\s*([A-Za-z_-][A-Za-z0-9_-]*)\s*:", re.MULTILINE)
+    comment_pattern = re.compile(r"/\*.*?\*/", re.DOTALL)
+    for path in paths:
+        if not path.exists():
+            continue
+
+        content = comment_pattern.sub("", path.read_text(encoding="utf-8"))
+        for match in property_pattern.finditer(content):
+            property_name = match.group(1)
+            if property_name.startswith("--"):
+                continue
+            if property_name not in UNITY_SUPPORTED_USS_PROPERTIES:
+                unsupported.append(f"{path}: {property_name}")
+
+    if unsupported:
+        preview = "\n".join(unsupported)
+        raise DevCliError(f"Unity USS property review failed. Unsupported properties:\n{preview}")
+
+
+def validate_desktop_unity_uss_properties(config: DevConfig) -> None:
+    """Validate shared and desktop USS files against Unity 6.4 supported properties."""
+
+    desktop_root = config.repo_root / config.desktop_root
+    uss_paths = [
+        *desktop_root.glob("Assets/**/*.uss"),
+        *(config.repo_root / "unity-shared").glob("Runtime/**/*.uss"),
+    ]
+    validate_unity_uss_properties(uss_paths)
+
+
 def run_desktop_tests(config: DevConfig, *, restore: bool = True) -> None:
-    """Run maintained desktop utility tests.
+    """Run maintained Unity desktop utility tests.
 
     Args:
         config: CLI configuration containing maintained desktop paths.
-        restore: Whether to install desktop npm dependencies before running tests.
+        restore: Whether to import the Unity project before running tests.
 
     Returns:
         None.
     """
 
-    assert_command_available("npm")
-    assert_command_available("cargo")
     ensure_desktop_workspace_scaffolding(config)
     if restore:
         install_desktop_workspace_dependencies(config)
 
-    write_step("Running BE Home for Desktop tests")
-    run_command(["npm", "run", "test"], cwd=config.repo_root / config.desktop_root)
+    validate_desktop_unity_uss_properties(config)
+    desktop_root = config.repo_root / config.desktop_root
+    write_step("Running BE Home for Desktop Unity EditMode tests")
+    run_unity_batch_command(
+        config,
+        project_path=desktop_root,
+        extra_args=[
+            "-runTests",
+            "-testPlatform",
+            "editmode",
+            "-testResults",
+            str(config.repo_root / ".dev-cli-logs" / "unity-desktop-editmode-results.xml"),
+        ],
+        log_name="unity-desktop-editmode.log",
+    )
+    write_step("Running BE Home for Desktop Unity PlayMode tests")
+    run_unity_batch_command(
+        config,
+        project_path=desktop_root,
+        extra_args=[
+            "-runTests",
+            "-testPlatform",
+            "playmode",
+            "-testResults",
+            str(config.repo_root / ".dev-cli-logs" / "unity-desktop-playmode-results.xml"),
+        ],
+        log_name="unity-desktop-playmode.log",
+    )
+
+
+def run_desktop_build(config: DevConfig, *, restore: bool = True) -> None:
+    """Build the maintained Unity desktop utility player.
+
+    Args:
+        config: CLI configuration containing maintained desktop paths.
+        restore: Whether to import the Unity project before building.
+
+    Returns:
+        None.
+    """
+
+    ensure_desktop_workspace_scaffolding(config)
+    if restore:
+        install_desktop_workspace_dependencies(config)
+
+    validate_desktop_unity_uss_properties(config)
+    desktop_root = config.repo_root / config.desktop_root
+    build_path = desktop_root / "Build" / "Windows" / "BE Home for Desktop.exe"
+    env = build_subprocess_env(extra={UNITY_DESKTOP_BUILD_PATH_ENV: str(build_path)})
+    write_step("Building BE Home for Desktop Windows player")
+    run_unity_batch_command(
+        config,
+        project_path=desktop_root,
+        extra_args=["-quit", "-executeMethod", "BE.Home.Desktop.Editor.BeHomeDesktopProjectBuilder.BuildWindows"],
+        log_name="unity-desktop-build.log",
+        env=env,
+    )
 
 
 def run_migration_typecheck(config: DevConfig, *, restore: bool = True) -> None:
@@ -3297,7 +3495,7 @@ def build_desktop_environment(
     *,
     runtime_env: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Build the Tauri/Vite runtime environment for the desktop workspace.
+    """Build the Unity desktop runtime environment.
 
     Args:
         config: CLI configuration containing maintained local URLs.
@@ -3308,18 +3506,14 @@ def build_desktop_environment(
     """
 
     extra = {
-        "TAURI_DEV_HOST": "127.0.0.1",
-        "VITE_APP_ENV": os.environ.get("BOARD_ENTHUSIASTS_APP_ENV", "local"),
-        "VITE_API_BASE_URL": config.migration_workers_base_url,
+        "BE_APP_ENV": os.environ.get("BOARD_ENTHUSIASTS_APP_ENV", "local"),
+        "BE_API_BASE_URL": config.migration_workers_base_url,
     }
     if runtime_env is not None:
         extra.update(
             {
-                "VITE_SUPABASE_URL": runtime_env["SUPABASE_URL"],
-                "VITE_SUPABASE_PUBLISHABLE_KEY": runtime_env["SUPABASE_PUBLISHABLE_KEY"],
-                "VITE_SUPABASE_AUTH_DISCORD_ENABLED": get_frontend_oauth_enabled_value(os.environ, provider="discord"),
-                "VITE_SUPABASE_AUTH_GITHUB_ENABLED": get_frontend_oauth_enabled_value(os.environ, provider="github"),
-                "VITE_SUPABASE_AUTH_GOOGLE_ENABLED": get_frontend_oauth_enabled_value(os.environ, provider="google"),
+                "BE_SUPABASE_URL": runtime_env["SUPABASE_URL"],
+                "BE_SUPABASE_PUBLISHABLE_KEY": runtime_env["SUPABASE_PUBLISHABLE_KEY"],
             }
         )
     return build_subprocess_env(extra=extra)
@@ -3339,17 +3533,100 @@ def build_workspace_npm_command(*, script_name: str, workspace_name: str) -> lis
     return ["npm", "run", script_name, "--workspace", workspace_name]
 
 
-def build_desktop_tauri_command(*, action: str) -> list[str]:
-    """Build the `npm run tauri` command used for the desktop workspace.
+def resolve_unity_editor_path() -> Path:
+    """Resolve the Unity editor executable used for Unity 6.4 workflows.
+
+    Returns:
+        Absolute Unity editor executable path.
+
+    Raises:
+        DevCliError: If Unity cannot be found.
+    """
+
+    configured_path = lookup_environment_value(os.environ, BE_UNITY_EDITOR_PATH_ENV) or lookup_environment_value(
+        os.environ,
+        UNITY_EDITOR_PATH_ENV,
+    )
+    if configured_path:
+        editor_path = Path(configured_path).expanduser()
+        if editor_path.exists():
+            return editor_path
+        raise DevCliError(f"Configured Unity editor path does not exist: {editor_path}")
+
+    unity_from_path = shutil.which("Unity") or shutil.which("Unity.exe")
+    if unity_from_path:
+        return Path(unity_from_path)
+
+    candidates = []
+    if os.name == "nt":
+        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+        candidates.append(Path(program_files) / "Unity" / "Hub" / "Editor" / UNITY_EDITOR_VERSION / "Editor" / "Unity.exe")
+    elif sys.platform == "darwin":
+        candidates.append(Path("/Applications/Unity/Hub/Editor") / UNITY_EDITOR_VERSION / "Unity.app/Contents/MacOS/Unity")
+    else:
+        candidates.append(Path.home() / "Unity" / "Hub" / "Editor" / UNITY_EDITOR_VERSION / "Editor" / "Unity")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise DevCliError(
+        f"Unity {UNITY_EDITOR_VERSION} was not found. Set {BE_UNITY_EDITOR_PATH_ENV} or {UNITY_EDITOR_PATH_ENV} to the Unity editor executable."
+    )
+
+
+def build_unity_editor_command(*, batchmode: bool, project_path: Path, extra_args: Sequence[str]) -> list[str]:
+    """Build a Unity editor command line.
 
     Args:
-        action: Tauri CLI action to invoke.
+        batchmode: Whether to include Unity batchmode.
+        project_path: Unity project path.
+        extra_args: Additional Unity arguments.
 
     Returns:
         Command token list.
     """
 
-    return ["npm", "run", "tauri", "--", action]
+    command = [str(resolve_unity_editor_path())]
+    if batchmode:
+        command.append("-batchmode")
+    command.extend(["-projectPath", str(project_path)])
+    command.extend(extra_args)
+    return command
+
+
+def run_unity_batch_command(
+    config: DevConfig,
+    *,
+    project_path: Path,
+    extra_args: Sequence[str],
+    log_name: str,
+    env: dict[str, str] | None = None,
+) -> None:
+    """Run a Unity batchmode command with the shared log directory.
+
+    Args:
+        config: CLI configuration containing the repository root.
+        project_path: Unity project path.
+        extra_args: Additional Unity arguments.
+        log_name: Log filename under `.dev-cli-logs`.
+        env: Optional environment variables.
+
+    Returns:
+        None.
+    """
+
+    log_path = config.repo_root / ".dev-cli-logs" / log_name
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    run_command(
+        build_unity_editor_command(
+            batchmode=True,
+            project_path=project_path,
+            extra_args=[*extra_args, "-logFile", str(log_path)],
+        ),
+        cwd=project_path,
+        env=env,
+    )
 
 
 def build_workers_wrangler_command(*, action: str) -> list[str]:
@@ -3535,13 +3812,13 @@ def install_migration_workspace_dependencies(config: DevConfig) -> None:
 
 
 def get_desktop_workspace_manifest_path(config: DevConfig) -> Path:
-    """Return the desktop workspace package manifest path."""
+    """Return the desktop Unity package manifest path."""
 
     return config.repo_root / config.desktop_package_json
 
 
 def ensure_desktop_workspace_scaffolding(config: DevConfig) -> None:
-    """Ensure the maintained desktop workspace files exist before running commands.
+    """Ensure the maintained desktop Unity project files exist before running commands.
 
     Args:
         config: CLI configuration containing workspace paths.
@@ -3555,10 +3832,10 @@ def ensure_desktop_workspace_scaffolding(config: DevConfig) -> None:
 
     desktop_root = config.repo_root / config.desktop_root
     required_paths = [
-        ("desktop workspace root", desktop_root),
-        ("desktop package manifest", config.repo_root / config.desktop_package_json),
-        ("desktop renderer source root", desktop_root / "src"),
-        ("desktop Tauri source root", desktop_root / "src-tauri"),
+        ("desktop Unity project root", desktop_root),
+        ("desktop Unity Assets root", desktop_root / "Assets"),
+        ("desktop Unity package manifest", get_desktop_workspace_manifest_path(config)),
+        ("desktop Unity project version", desktop_root / "ProjectSettings" / "ProjectVersion.txt"),
     ]
 
     missing = [f"{label}: {path}" for label, path in required_paths if not path.exists()]
@@ -3568,43 +3845,36 @@ def ensure_desktop_workspace_scaffolding(config: DevConfig) -> None:
 
 
 def get_desktop_workspace_install_state_path(config: DevConfig) -> Path:
-    """Return the state file used to track the current desktop npm install."""
+    """Return the state file used to track the current desktop Unity import."""
 
-    return config.repo_root / ".dev-cli-logs" / "be-home-for-desktop-install.sha256"
+    return config.repo_root / ".dev-cli-logs" / "be-home-for-desktop-unity.sha256"
 
 
 def get_desktop_workspace_install_fingerprint(config: DevConfig) -> str:
-    """Build a fingerprint for the current desktop npm dependency graph."""
+    """Build a fingerprint for the current desktop Unity dependency graph."""
 
     manifest_path = get_desktop_workspace_manifest_path(config)
-    lock_path = manifest_path.with_name("package-lock.json")
-    fingerprint_source = lock_path if lock_path.exists() else manifest_path
-    return hashlib.sha256(fingerprint_source.read_bytes()).hexdigest()
+    lock_path = manifest_path.with_name("packages-lock.json")
+    version_path = config.repo_root / config.desktop_root / "ProjectSettings" / "ProjectVersion.txt"
+    hash_state = hashlib.sha256()
+    for path in (manifest_path, lock_path, version_path):
+        if path.exists():
+            hash_state.update(path.read_bytes())
+    return hash_state.hexdigest()
 
 
 def has_current_desktop_workspace_dependencies(config: DevConfig) -> bool:
-    """Return whether the desktop npm install matches the current manifest state."""
+    """Return whether the desktop Unity import matches the current manifest state."""
 
     desktop_root = config.repo_root / config.desktop_root
-    node_modules_path = desktop_root / "node_modules"
-    if not node_modules_path.exists():
+    if not (desktop_root / "Library").exists():
         return False
 
     required_paths = (
-        node_modules_path / "react" / "package.json",
-        node_modules_path / "vite" / "package.json",
-        node_modules_path / "@tauri-apps" / "api" / "package.json",
-        node_modules_path / "@tauri-apps" / "cli" / "package.json",
+        desktop_root / "Packages" / "packages-lock.json",
+        desktop_root / "Library" / "PackageCache",
     )
     if any(not path.exists() for path in required_paths):
-        return False
-
-    required_binaries = (
-        (node_modules_path / ".bin" / "vite").exists() or (node_modules_path / ".bin" / "vite.cmd").exists(),
-        (node_modules_path / ".bin" / "vitest").exists() or (node_modules_path / ".bin" / "vitest.cmd").exists(),
-        (node_modules_path / ".bin" / "tauri").exists() or (node_modules_path / ".bin" / "tauri.cmd").exists(),
-    )
-    if not all(required_binaries):
         return False
 
     state_path = get_desktop_workspace_install_state_path(config)
@@ -3619,7 +3889,7 @@ def has_current_desktop_workspace_dependencies(config: DevConfig) -> bool:
 
 
 def record_desktop_workspace_dependencies(config: DevConfig) -> None:
-    """Record the current desktop npm install fingerprint after a successful install."""
+    """Record the current desktop Unity import fingerprint after a successful import."""
 
     state_path = get_desktop_workspace_install_state_path(config)
     state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3627,16 +3897,20 @@ def record_desktop_workspace_dependencies(config: DevConfig) -> None:
 
 
 def install_desktop_workspace_dependencies(config: DevConfig) -> None:
-    """Install npm dependencies for the maintained desktop workspace."""
+    """Import the maintained Unity desktop project in batchmode when needed."""
 
-    assert_command_available("npm")
     ensure_desktop_workspace_scaffolding(config)
     if has_current_desktop_workspace_dependencies(config):
-        print("Desktop npm dependencies are already current.")
+        print("Desktop Unity project import is already current.")
         return
 
-    write_step("Installing desktop npm dependencies")
-    run_command(["npm", "install"], cwd=config.repo_root / config.desktop_root)
+    write_step("Importing desktop Unity project")
+    run_unity_batch_command(
+        config,
+        project_path=config.repo_root / config.desktop_root,
+        extra_args=["-quit", "-executeMethod", "BE.Home.Desktop.Editor.BeHomeDesktopProjectBuilder.ConfigureProject"],
+        log_name="unity-desktop-import.log",
+    )
     record_desktop_workspace_dependencies(config)
 
 
@@ -8563,6 +8837,11 @@ def run_doctor(config: DevConfig) -> None:
             "Optional stack workflow command missing from PATH: wrangler (run `python ./scripts/dev.py bootstrap` to install workspace tooling)"
         )
 
+    try:
+        print(f"Found (desktop workflow): Unity {UNITY_EDITOR_VERSION} at {resolve_unity_editor_path()}")
+    except DevCliError as ex:
+        issues.append(str(ex))
+
     for label, path in get_maintained_submodule_paths(config):
         if not test_submodule_initialized(path):
             issues.append(f"{label} submodule is not initialized (run: git submodule update --init --recursive)")
@@ -8584,6 +8863,9 @@ def run_doctor(config: DevConfig) -> None:
         ("Migration root package", config.repo_root / config.migration_root_package_json),
         ("Frontend workspace", config.repo_root / config.migration_spa_root),
         ("Frontend package manifest", config.repo_root / config.frontend_package_json),
+        ("Desktop Unity project", config.repo_root / config.desktop_root),
+        ("Desktop Unity package manifest", get_desktop_workspace_manifest_path(config)),
+        ("Desktop Unity project version", config.repo_root / config.desktop_root / "ProjectSettings" / "ProjectVersion.txt"),
         ("Workers workspace", config.repo_root / config.migration_workers_root),
         ("Workers Wrangler config", config.repo_root / config.migration_workers_root / "wrangler.jsonc"),
         ("Supabase project root", config.repo_root / config.supabase_root),
@@ -8952,7 +9234,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     desktop.add_argument(
         "action",
-        choices=("up", "down", "status", "clean"),
+        choices=("up", "down", "status", "clean", "test", "build"),
         nargs="?",
         default="up",
         help="Desktop runtime action",
@@ -8972,7 +9254,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-install",
         "-SkipInstall",
         action="store_true",
-        help="Skip desktop npm installation before startup",
+        help="Skip desktop Unity project import before startup, tests, or build",
     )
     desktop.add_argument(
         "--local-only",
@@ -9540,7 +9822,7 @@ def config_from_args(args: argparse.Namespace, repo_root: Path) -> DevConfig:
         frontend_root="frontend",
         frontend_package_json="frontend/package.json",
         desktop_root="be-home-for-desktop",
-        desktop_package_json="be-home-for-desktop/package.json",
+        desktop_package_json="be-home-for-desktop/Packages/manifest.json",
         backend_base_url="http://127.0.0.1:8787",
         frontend_base_url="http://127.0.0.1:4173",
         desktop_base_url="http://127.0.0.1:1420",
@@ -9681,6 +9963,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 handle_desktop_down(config, include_dependencies=args.include_dependencies)
             elif args.action == "clean":
                 handle_desktop_clean(config, app_state_only=args.app_state_only)
+            elif args.action == "test":
+                run_desktop_tests(config, restore=not args.skip_install)
+            elif args.action == "build":
+                run_desktop_build(config, restore=not args.skip_install)
             else:
                 show_desktop_command_status(config, include_dependencies=args.include_dependencies)
         elif args.command == "test":

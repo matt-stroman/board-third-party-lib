@@ -63,7 +63,13 @@ A Unity-based on-Board app that consumes the BE API so players can browse titles
 
 Path: `be-home-for-desktop/`
 
-A planned Tauri-based desktop utility that helps players download `bdb`, discover Board-capable APKs, and install/manage indie titles on Board through a guided UI rather than direct CLI usage.
+A Unity-based desktop utility that helps players download `bdb`, discover Board-capable APKs, and install/manage indie titles on Board through a guided UI rather than direct CLI usage.
+
+### Shared Unity Package
+
+Path: `unity-shared/`
+
+A Unity package named `com.be.unity.shared` for reusable UI Toolkit theme primitives, contracts, logging abstractions, and platform-neutral helpers shared by `be-home/` and `be-home-for-desktop/`.
 
 ## Technologies, Documentation, and Planning
 
