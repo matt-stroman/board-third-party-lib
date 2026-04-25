@@ -4208,6 +4208,15 @@ class DevCliDesktopWorkflowTests(unittest.TestCase):
         self.assertTrue(desktop_args.local_only)
         self.assertTrue(desktop_args.skip_install)
 
+    def test_desktop_parser_accepts_app_state_only_clean(self) -> None:
+        parser = dev.build_parser()
+
+        desktop_args = parser.parse_args(["desktop", "clean", "--app-state-only"])
+
+        self.assertEqual("desktop", desktop_args.command)
+        self.assertEqual("clean", desktop_args.action)
+        self.assertTrue(desktop_args.app_state_only)
+
     def test_main_desktop_up_passes_flags_to_desktop_stack_runner(self) -> None:
         with mock.patch.object(dev, "run_local_desktop_stack") as run_local_desktop_stack:
             exit_code = dev.main(["desktop", "--local-only", "--skip-install"])
@@ -4219,6 +4228,13 @@ class DevCliDesktopWorkflowTests(unittest.TestCase):
             install_dependencies=False,
             local_only=True,
         )
+
+    def test_main_desktop_clean_passes_app_state_only_flag_to_handler(self) -> None:
+        with mock.patch.object(dev, "handle_desktop_clean") as handle_desktop_clean:
+            exit_code = dev.main(["desktop", "clean", "--app-state-only"])
+
+        self.assertEqual(0, exit_code)
+        handle_desktop_clean.assert_called_once_with(mock.ANY, app_state_only=True)
 
     def test_main_desktop_down_without_dependencies_stops_only_desktop_service(self) -> None:
         with (
@@ -4253,6 +4269,44 @@ class DevCliDesktopWorkflowTests(unittest.TestCase):
             repo_root / "be-home-for-desktop" / "src-tauri" / "gen",
         }
         self.assertTrue(expected.issubset(set(paths)))
+
+    def test_resolve_desktop_app_state_root_uses_windows_local_app_data_case_insensitively(self) -> None:
+        root = dev.resolve_desktop_app_state_root(
+            environment={"LocalAppData": r"C:\Users\matt\AppData\Local"},
+            platform_name="windows",
+        )
+
+        self.assertEqual(
+            pathlib.Path(r"C:\Users\matt\AppData\Local")
+            / "Board Enthusiasts"
+            / "BE Home for Desktop",
+            root,
+        )
+
+    def test_handle_desktop_clean_app_state_only_skips_api_cleanup(self) -> None:
+        config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
+        app_state_path = pathlib.Path("desktop-app-state")
+
+        with (
+            mock.patch.object(dev, "confirm_clean_action", return_value=True) as confirm_clean_action,
+            mock.patch.object(dev, "stop_desktop_service") as stop_desktop_service,
+            mock.patch.object(dev, "get_desktop_app_state_clean_paths", return_value=[app_state_path]) as get_desktop_app_state_clean_paths,
+            mock.patch.object(dev, "remove_paths", return_value=[app_state_path]) as remove_paths,
+            mock.patch.object(dev, "summarize_removed_paths") as summarize_removed_paths,
+            mock.patch.object(dev, "clean_supabase_local_state") as clean_supabase_local_state,
+        ):
+            dev.handle_desktop_clean(config, app_state_only=True)
+
+        confirm_clean_action.assert_called_once()
+        self.assertEqual(
+            "desktop clean --app-state-only",
+            confirm_clean_action.call_args.kwargs["command_name"],
+        )
+        stop_desktop_service.assert_called_once_with(config)
+        get_desktop_app_state_clean_paths.assert_called_once_with(config)
+        remove_paths.assert_called_once_with([app_state_path])
+        summarize_removed_paths.assert_called_once_with([app_state_path], repo_root=config.repo_root)
+        clean_supabase_local_state.assert_not_called()
 
     def test_run_all_tests_includes_desktop_validation(self) -> None:
         config = dev.config_from_args(self.create_args(), pathlib.Path.cwd())
