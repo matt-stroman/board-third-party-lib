@@ -18,3 +18,7 @@
 	path = be-home-for-desktop
 	url = https://github.com/board-enthusiasts/be-home-for-desktop.git
 	branch = main
+[submodule "unity-shared"]
+	path = unity-shared
+	url = https://github.com/board-enthusiasts/unity-shared.git
+	branch = main

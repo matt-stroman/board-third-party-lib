@@ -8,6 +8,8 @@ Current implementation status:
 - the maintained executable API contract now lives in the [`api`](api) submodule and targets the Workers/Supabase surface only
 - the maintained frontend runtime now lives in the [`frontend`](frontend) submodule as a React + TypeScript SPA
 - the maintained on-Board frontend now lives in the [`be-home`](be-home) submodule as a Unity app that consumes the BE API on Board itself
+- the maintained desktop utility now lives in the [`be-home-for-desktop`](be-home-for-desktop) submodule as a Unity desktop app
+- shared Unity code lives in the [`unity-shared`](unity-shared) submodule as the `com.be.unity.shared` package
 
 ## Table of Contents
 
@@ -18,7 +20,7 @@ Current implementation status:
 
 ## Getting started in this repository
 
-This repository currently tracks `api`, `backend`, `frontend`, and `be-home` as top-level git submodules.
+This repository currently tracks `api`, `backend`, `frontend`, `be-home`, `be-home-for-desktop`, and `unity-shared` as top-level git submodules.
 
 Quick start (maintained local stack from the repository root):
 

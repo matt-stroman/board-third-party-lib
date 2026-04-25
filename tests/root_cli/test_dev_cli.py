@@ -4183,7 +4183,7 @@ class DevCliDesktopWorkflowTests(unittest.TestCase):
             config = dev.config_from_args(self.create_args(), repo_root)
 
             self.assertEqual("be-home-for-desktop", config.desktop_root)
-            self.assertEqual("be-home-for-desktop/package.json", config.desktop_package_json)
+            self.assertEqual("be-home-for-desktop/Packages/manifest.json", config.desktop_package_json)
             self.assertEqual("http://127.0.0.1:1420", config.desktop_base_url)
 
     def test_apply_runtime_base_url_overrides_respects_local_desktop_port_env(self) -> None:
@@ -4217,6 +4217,16 @@ class DevCliDesktopWorkflowTests(unittest.TestCase):
         self.assertEqual("clean", desktop_args.action)
         self.assertTrue(desktop_args.app_state_only)
 
+    def test_desktop_parser_accepts_unity_test_and_build_actions(self) -> None:
+        parser = dev.build_parser()
+
+        test_args = parser.parse_args(["desktop", "test", "--skip-install"])
+        build_args = parser.parse_args(["desktop", "build"])
+
+        self.assertEqual("test", test_args.action)
+        self.assertTrue(test_args.skip_install)
+        self.assertEqual("build", build_args.action)
+
     def test_main_desktop_up_passes_flags_to_desktop_stack_runner(self) -> None:
         with mock.patch.object(dev, "run_local_desktop_stack") as run_local_desktop_stack:
             exit_code = dev.main(["desktop", "--local-only", "--skip-install"])
@@ -4235,6 +4245,20 @@ class DevCliDesktopWorkflowTests(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         handle_desktop_clean.assert_called_once_with(mock.ANY, app_state_only=True)
+
+    def test_main_desktop_test_passes_restore_flag_to_unity_tests(self) -> None:
+        with mock.patch.object(dev, "run_desktop_tests") as run_desktop_tests:
+            exit_code = dev.main(["desktop", "test", "--skip-install"])
+
+        self.assertEqual(0, exit_code)
+        run_desktop_tests.assert_called_once_with(mock.ANY, restore=False)
+
+    def test_main_desktop_build_passes_restore_flag_to_unity_build(self) -> None:
+        with mock.patch.object(dev, "run_desktop_build") as run_desktop_build:
+            exit_code = dev.main(["desktop", "build", "--skip-install"])
+
+        self.assertEqual(0, exit_code)
+        run_desktop_build.assert_called_once_with(mock.ANY, restore=False)
 
     def test_main_desktop_down_without_dependencies_stops_only_desktop_service(self) -> None:
         with (
@@ -4255,7 +4279,7 @@ class DevCliDesktopWorkflowTests(unittest.TestCase):
             profile=dev.SUPABASE_PROFILE_API,
         )
 
-    def test_get_desktop_clean_paths_includes_tauri_artifacts(self) -> None:
+    def test_get_desktop_clean_paths_includes_unity_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = pathlib.Path(temp_dir)
             config = dev.config_from_args(self.create_args(), repo_root)
@@ -4264,11 +4288,31 @@ class DevCliDesktopWorkflowTests(unittest.TestCase):
 
         expected = {
             repo_root / ".dev-cli-logs" / "be-home-for-desktop.log",
-            repo_root / "be-home-for-desktop" / "node_modules",
-            repo_root / "be-home-for-desktop" / "src-tauri" / "target",
-            repo_root / "be-home-for-desktop" / "src-tauri" / "gen",
+            repo_root / ".dev-cli-logs" / "unity-desktop-editmode-results.xml",
+            repo_root / ".dev-cli-logs" / "unity-desktop-playmode-results.xml",
+            repo_root / "be-home-for-desktop" / "Library",
+            repo_root / "be-home-for-desktop" / "Temp",
+            repo_root / "be-home-for-desktop" / "Build",
         }
         self.assertTrue(expected.issubset(set(paths)))
+
+    def test_validate_unity_uss_properties_rejects_unsupported_property(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            uss_path = pathlib.Path(temp_dir) / "bad.uss"
+            uss_path.write_text(".bad { gap: 8px; }\n", encoding="utf-8")
+
+            with self.assertRaises(dev.DevCliError):
+                dev.validate_unity_uss_properties([uss_path])
+
+    def test_build_unity_editor_command_uses_resolved_editor_path(self) -> None:
+        with mock.patch.object(dev, "resolve_unity_editor_path", return_value=pathlib.Path("Unity.exe")):
+            command = dev.build_unity_editor_command(
+                batchmode=True,
+                project_path=pathlib.Path("be-home-for-desktop"),
+                extra_args=["-quit"],
+            )
+
+        self.assertEqual(["Unity.exe", "-batchmode", "-projectPath", "be-home-for-desktop", "-quit"], command)
 
     def test_resolve_desktop_app_state_root_uses_windows_local_app_data_case_insensitively(self) -> None:
         root = dev.resolve_desktop_app_state_root(
